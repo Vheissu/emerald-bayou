@@ -501,7 +501,7 @@ export class ResidentContracts {
     this.game.toast('FWC pursuit', 'Lose the patrol in the cuts or make the blue-light handoff.', 3); this.persist();
   }
 
-  departPoint(x, z, heading, distance = 420) {
+  makeDeparturePoint(x, z, heading, distance = 420) {
     for (const da of [0.35, -0.35, 0.75, -0.75, 1.2, -1.2]) {
       const h = heading + da, tx = x - Math.sin(h) * distance, tz = z - Math.cos(h) * distance;
       if (this.safeWater(tx, tz)) return { x: tx, z: tz };
@@ -511,7 +511,7 @@ export class ResidentContracts {
 
   patrolDepart(a) {
     const A = this.rigs.patrolAgent; if (!A.active) this.restoreAgent(A, a, true);
-    const q = this.departPoint(A.x, A.z, A.heading); a.departX = q.x; a.departZ = q.z;
+    const q = this.makeDeparturePoint(A.x, A.z, A.heading); a.departX = q.x; a.departZ = q.z;
   }
 
   surrenderCal(a, forced = false) {
@@ -530,7 +530,7 @@ export class ResidentContracts {
     this.reputation.change('runners', a.runBonus ? 1.25 : 0.85, 'resident-runner-handoff', `Cal Rook’s sealed parcel reached ${a.dest.recipient}.`, true);
     if (a.runBonus) this.reputation.change('fwc', -0.55, 'resident-runner-escape', 'The tower hull carried unmanifested cargo through a directed stop.', false);
     this.law.hotCargoT = 0; this.law.setPursuit(false); this.law.cool(a.runBonus ? 0.2 : 0.55);
-    const R = this.rigs.receiverAgent; this.setAgent(R, a.dest.x, a.dest.z, a.dest.heading, 0.5); const out = this.departPoint(a.dest.x, a.dest.z, a.dest.heading); a.departX = out.x; a.departZ = out.z;
+    const R = this.rigs.receiverAgent; this.setAgent(R, a.dest.x, a.dest.z, a.dest.heading, 0.5); const out = this.makeDeparturePoint(a.dest.x, a.dest.z, a.dest.heading); a.departX = out.x; a.departZ = out.z;
     this.call('CH 72', `${a.dest.recipient} · ${regionAt(a.dest.x, a.dest.z).name.toUpperCase()}`, a.runBonus ? 'Seal is mine and Soto is not. Cal added the trouble money.' : 'Seal is clean. Cal’s number is good.', 3, `finish:${a.id}`);
     this.game.bountyToast(`Unmanifested handoff <b>+$${reward}</b>`); this.audio.complete(); this.resolve(a, 'delivered', true);
   }
