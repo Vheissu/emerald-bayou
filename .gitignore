@@ -1,0 +1,10 @@
+node_modules/
+dist/
+
+# Meshy GLBs — shipped as a release asset, not in the repo.
+# See the Assets section of the README.
+public/models/*.glb
+public/models/src/
+
+.DS_Store
+*.log

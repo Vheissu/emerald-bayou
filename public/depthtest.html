@@ -1,0 +1,18 @@
+<!doctype html><html><body style="margin:0"><script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+const r = new THREE.WebGLRenderer(); r.setSize(600, 400); document.body.appendChild(r.domElement);
+const cam = new THREE.PerspectiveCamera(50, 1.5, 0.3, 5000); cam.position.set(0, 3, 10); cam.lookAt(0, 0, 0);
+const scene = new THREE.Scene();
+scene.add(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial({ color: 0xff0000 })));
+const plane = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ color: 0x00ff00 })); plane.rotation.x = -Math.PI / 2; plane.position.y = -1; scene.add(plane);
+const dt = new THREE.DepthTexture(600, 400); dt.format = THREE.DepthFormat; dt.type = THREE.UnsignedIntType;
+const rt = new THREE.WebGLRenderTarget(600, 400, { type: THREE.HalfFloatType, depthTexture: dt, depthBuffer: true });
+const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({ uniforms: { tDepth: { value: dt }, tColor: { value: rt.texture } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: 'uniform sampler2D tDepth, tColor; varying vec2 vUv; void main(){ float d = texture2D(tDepth, vUv).r; float z = 2.0*0.3*5000.0/(5000.3 - (d*2.0-1.0)*4999.7); gl_FragColor = vec4(vec3(1.0 - z/50.0), 1.0); if (d >= 1.0) gl_FragColor = vec4(1.0,0.0,0.0,1.0); if (vUv.x < 0.3) gl_FragColor = vec4(d, fract(d*100.0), fract(d*1000.0), 1.0); }', depthTest: false }));
+const qs = new THREE.Scene(); qs.add(q); const oc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+function f() { r.setRenderTarget(rt); r.clear(); r.render(scene, cam); r.setRenderTarget(null); r.render(qs, oc); }
+r.setAnimationLoop(f);
+window.__t = { r, rt, dt };
+</script></body></html>
