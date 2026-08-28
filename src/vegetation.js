@@ -301,8 +301,12 @@ export class Vegetation {
     const occupy = (x, z, r) => occ.push({ x, z, r });
 
     const placeTrunk = (tr, x, y, z, h, r, lean = 0.02) => {
-      if (tier <= 1) chunk.colliders.push({ x, z, r: r * 1.5 + 0.1 });
-      p.set(x, y, z); e.set((tr() - 0.5) * lean, tr() * Math.PI * 2, (tr() - 0.5) * lean); q.setFromEuler(e); s.set(r, h, r);
+      if (tier === 0) chunk.colliders.push({ x, z, r: r * 1.5 + 0.1 });
+      // Beyond 1.9 km the trunk is sub-pixel behind its crown. Keeping a matrix for every one only duplicates the
+      // forest on the CPU/GPU without adding a readable silhouette.
+      const pitch = (tr() - 0.5) * lean, yaw = tr() * Math.PI * 2, roll = (tr() - 0.5) * lean;
+      if (tier === 4) return;
+      p.set(x, y, z); e.set(pitch, yaw, roll); q.setFromEuler(e); s.set(r, h, r);
       m.compose(p, q, s); B.trunks.add(m);
     };
     const placeBranch = (x, y, z, len, r, yaw, tilt) => {
@@ -317,14 +321,17 @@ export class Vegetation {
     // crown cards; far tiers draw fewer, larger cards (the same silhouette from a distance)
     const crownCards = (tr, batch, cx, cy, cz, rx, ry, n, size, tnt) => {
       const crown = new THREE.Vector4(cx, cy, cz, rx);
-      if (tier === 4) {
-        for (let i = 0; i < 2; i++) {
-          p.set(cx, cy, cz); e.set(0, i * Math.PI / 2 + tr() * 0.4, 0); q.setFromEuler(e); s.set(rx * 2.1, ry * 2.2, 1); m.compose(p, q, s);
+      if (tier >= 3) {
+        const cards = tier === 4 ? 2 : 3;
+        const width = tier === 4 ? rx * 3.15 : rx * 2.05, height = tier === 4 ? ry * 2.9 : ry * 2.25;
+        const yaw = tr() * Math.PI;
+        for (let i = 0; i < cards; i++) {
+          p.set(cx, cy, cz); e.set(0, yaw + i * Math.PI / cards, 0); q.setFromEuler(e); s.set(width, height, 1); m.compose(p, q, s);
           col.copy(tnt).multiplyScalar(0.85); batch.add(m, col, crown);
         }
         return;
       }
-      const cnt = tier === 2 ? Math.ceil(n * 0.5) : tier === 3 ? Math.max(6, Math.ceil(n * 0.2)) : n, sz0 = tier === 2 ? size * 1.35 : tier === 3 ? size * 2.2 : size;
+      const cnt = tier === 2 ? Math.ceil(n * 0.5) : n, sz0 = tier === 2 ? size * 1.35 : size;
       for (let i = 0; i < cnt; i++) {
         const a = tr() * Math.PI * 2, rr = Math.sqrt(tr()) * rx, yy = (tr() - 0.5) * 2 * ry * (1 - rr / rx * 0.35);
         p.set(cx + Math.cos(a) * rr, cy + yy, cz + Math.sin(a) * rr);
@@ -364,13 +371,13 @@ export class Vegetation {
       if (tier <= 1) for (let b = 0; b < 5; b++) placeBranch(x, h + H * (0.4 + tr() * 0.35), z, crx * (0.7 + tr() * 0.6), r * 0.5, tr() * Math.PI * 2, 0.9 + tr() * 0.9);
       if (conical) {
         crownCards(tr, B.cyp, x, cy - cry * 0.5, z, crx, cry * 0.5, 22 + Math.floor(tr() * 8), 1.6 + H * 0.05, tnt);
-        if (tier < 4) {
+        if (tier < 3) {
           crownCards(tr, B.cyp, x, cy + cry * 0.15, z, crx * 0.72, cry * 0.45, 16 + Math.floor(tr() * 6), 1.5 + H * 0.045, tnt);
           crownCards(tr, B.cyp, x, cy + cry * 0.7, z, crx * 0.4, cry * 0.35, 8 + Math.floor(tr() * 4), 1.3 + H * 0.04, tnt);
         }
       } else {
         crownCards(tr, B.cyp, x, cy, z, crx, cry, 34 + Math.floor(tr() * 10), 1.7 + H * 0.05, tnt);
-        if (tier < 4) crownCards(tr, B.cyp, x, cy - cry * 0.9, z, crx * 0.75, cry * 0.35, 9 + Math.floor(tr() * 5), 1.6 + H * 0.04, tnt);
+        if (tier < 3) crownCards(tr, B.cyp, x, cy - cry * 0.9, z, crx * 0.75, cry * 0.35, 9 + Math.floor(tr() * 5), 1.6 + H * 0.04, tnt);
       }
       mossOn(tr, x, cy - cry * 0.85, z, crx * 0.9, 8 + Math.floor(tr() * 8));
       if (tier === 0 && h < 0.5 && h > -1.2) for (let k = 0; k < 4 + tr() * 6; k++) {
@@ -392,11 +399,15 @@ export class Vegetation {
     const palm = (tr, x, z, h) => {
       const H = 5 + tr() * 7;
       placeTrunk(tr, x, h - 0.2, z, H * 0.8, 0.22 + tr() * 0.1, 0.12);
-      if (tier < 4) palmCrown(tr, B.palm, x, h + H * 0.8 - 0.2, z, 11 + Math.floor(tr() * 4), 2.6 + tr() * 1.2, 0.45, 1.7, this.palmTint);
+      if (tier < 4) palmCrown(tr, B.palm, x, h + H * 0.8 - 0.2, z, tier === 3 ? 4 : 11 + Math.floor(tr() * 4), 2.6 + tr() * 1.2, 0.45, 1.7, this.palmTint);
     };
     // exact ground height for trees so every LOD agrees on where a tree stands; the grid is only a cheap prefilter
     let placed = 0;
     const treeRand = () => mulberry32(hash2(ci * 31 + placed, cj * 17 + placed) ^ 0x51ed27);
+    // At the horizon, one enlarged deterministic crown represents a small stand. Every placement is still evaluated
+    // and occupies the same space, so stepping into a finer ring reveals the exact underlying forest instead of a
+    // differently seeded one.
+    const keepTree = (x, z, salt) => tier < 4 || hash2(Math.floor(x * 4) + salt, Math.floor(z * 4) - salt) % 3 === 0;
 
     // --- cypress: banks & shallows ---
     for (let t = 0; t < 64; t++) {
@@ -409,7 +420,8 @@ export class Vegetation {
       const spacing = 2.6 + rand() * 2.6;
       if (!free(x, z, spacing)) continue;
       occupy(x, z, spacing);
-      cypress(treeRand(), x, z, h); placed++;
+      const tr = treeRand(); placed++;
+      if (keepTree(x, z, 131)) cypress(tr, x, z, h);
     }
     // --- live oaks: higher ground, thicker on the hammocks ---
     for (let t = 0; t < 30; t++) {
@@ -420,7 +432,8 @@ export class Vegetation {
       if (h < 0.9 || h > 6 || excl(x, z)) continue;
       if (nearHome && Math.abs(x - T.riverCenterX(z)) > 170 && rand() < 0.7) continue;
       if (!free(x, z, 7)) continue; occupy(x, z, 7);
-      oak(treeRand(), x, z, h); placed++;
+      const tr = treeRand(); placed++;
+      if (keepTree(x, z, 271)) oak(tr, x, z, h);
     }
     // --- sabal palms ---
     for (let t = 0; t < 12; t++) {
@@ -430,7 +443,8 @@ export class Vegetation {
       const h = hf.compute(x, z);
       if (h < 0.3 || h > 5 || excl(x, z)) continue;
       if (!free(x, z, 3)) continue; occupy(x, z, 3);
-      palm(treeRand(), x, z, h); placed++;
+      const tr = treeRand(); placed++;
+      if (keepTree(x, z, 389)) palm(tr, x, z, h);
     }
     // --- the tower island: cypress at the shore, palms & oaks around the tower ---
     if (T.island.x >= x0 && T.island.x < x0 + CELL && T.island.y >= z0 && T.island.y < z0 + CELL) {

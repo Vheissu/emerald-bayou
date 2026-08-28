@@ -5,11 +5,15 @@ export { WORLD_HALF, HOME_X, HOME_Z };
 export const MAP_SIZE = WORLD_HALF * 2;
 export const WATER_LEVEL = 0;
 
-// Streaming terrain: a quadtree of square chunks around the camera. Level 0 chunks are 100 m at 1.56 m sampling,
-// each level up doubles the size (and the sample spacing) to 3.2 km tiles at the horizon. Height grids come from a
+// Streaming terrain: a quadtree of square chunks around the camera. Level 0 chunks are 100 m at 1.56 m sampling;
+// larger tiles use progressively cheaper aligned grids out to the 3.2 km horizon tier. Height grids come from a
 // pool of workers; the main thread only turns them into geometry. Physics reads the same level-0 grids the renderer
 // draws, so the hull sits exactly on what you see.
-const ROOT = 3200, LEVELS = 6, SEGS = 64, FAR = 7200;
+const ROOT = 3200, LEVELS = 6, FAR = 7200;
+// Keep high-resolution shoreline shape close to the boat, then spend vertices according to projected size. The
+// world and streaming range do not shrink: distant wetland tiles simply stop retaining a near-field 65x65 grid.
+// Powers of two keep every coarser edge sample aligned with the finer ring beside it.
+const SEGS_BY_LEVEL = [64, 32, 32, 32, 16, 8];
 // how far (in multiples of its size) a node of each level keeps subdividing: the fine rings are tight, the far ones wide
 const SPLIT_K = [0, 2.2, 1.8, 1.4, 1.2, 1.0]; // full detail to 440 m, mid to 720 m, trees-only to 1.1 km, sparse to 1.9 km, crossed cards to 3.2 km
 const PREFETCH = 1.35; // children are built this far ahead of the ring reaching them
@@ -38,13 +42,13 @@ class WorkerPool {
 
 class Chunk {
   constructor(level, i, j) {
-    this.level = level; this.i = i; this.j = j; this.size = SIZE(level); this.x0 = i * this.size; this.z0 = j * this.size;
+    this.level = level; this.i = i; this.j = j; this.size = SIZE(level); this.segs = SEGS_BY_LEVEL[level]; this.x0 = i * this.size; this.z0 = j * this.size;
     this.key = `${level}:${i}:${j}`;
     this.h = null; this.nrm = null; this.bio = null; this.mesh = null; this.veg = null; this.colliders = [];
     this.requested = false; this.ready = false; this.used = 0; this.prio = 0; this.build = null;
   }
   sample(x, z, arr = this.h) {
-    const n = SEGS, step = this.size / n;
+    const n = this.segs, step = this.size / n;
     const fx = (x - this.x0) / step, fz = (z - this.z0) / step;
     let i = Math.floor(fx), j = Math.floor(fz);
     if (i < 0) i = 0; else if (i > n - 1) i = n - 1;
@@ -69,7 +73,7 @@ export class Terrain {
     this.streamT = 0; this.camPos = new THREE.Vector2();
     this.visible = new Set();
     this.stats = { chunks: 0, visible: 0, inFlight: 0 };
-    this.buildIndex();
+    this.indices = new Map();
   }
   // ---- queries ----
   heightAt(x, z) {
@@ -96,8 +100,9 @@ export class Terrain {
   onDispose(fn) { this.hooks.dispose = fn; }
 
   // ---- geometry ----
-  buildIndex() {
-    const n = SEGS, w = n + 1; const idx = [];
+  indexFor(n) {
+    let cached = this.indices.get(n); if (cached) return cached;
+    const w = n + 1; const idx = [];
     for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
       const a = j * w + i, b = a + 1, c = a + w, d = c + 1;
       idx.push(a, c, b, b, c, d);
@@ -112,8 +117,9 @@ export class Terrain {
       k += w;
     };
     edge(t => t, false); edge(t => n * w + t, true); edge(t => t * w, true); edge(t => t * w + n, false);
-    this.index = new THREE.BufferAttribute(new Uint32Array(idx), 1);
-    this.skirtCount = 4 * w;
+    cached = { index: new THREE.BufferAttribute(new Uint32Array(idx), 1), skirtCount: 4 * w };
+    this.indices.set(n, cached);
+    return cached;
   }
   buildMesh(tex) {
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
@@ -169,7 +175,7 @@ export class Terrain {
     return this.group;
   }
   makeGeometry(c) {
-    const n = SEGS, w = n + 1, step = c.size / n, count = w * w + this.skirtCount;
+    const n = c.segs, w = n + 1, step = c.size / n, shared = this.indexFor(n), count = w * w + shared.skirtCount;
     const pos = new Float32Array(count * 3), nrm = new Float32Array(count * 3);
     for (let j = 0; j < w; j++) for (let i = 0; i < w; i++) {
       const k = j * w + i;
@@ -183,7 +189,7 @@ export class Terrain {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-    geo.setIndex(this.index);
+    geo.setIndex(shared.index);
     const cy = (c.minH + c.maxH) / 2;
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(c.x0 + c.size / 2, cy, c.z0 + c.size / 2), Math.hypot(c.size / 2, c.size / 2, (c.maxH - c.minH) / 2 + drop));
     geo.boundingBox = new THREE.Box3(new THREE.Vector3(c.x0, c.minH - drop, c.z0), new THREE.Vector3(c.x0 + c.size, c.maxH, c.z0 + c.size));
@@ -271,13 +277,13 @@ export class Terrain {
     const fi = this.finalize.indexOf(c); if (fi >= 0) this.finalize.splice(fi, 1);
     if (c.mesh) { this.group.remove(c.mesh); c.mesh.geometry.dispose(); }
     if (this.hooks.dispose) this.hooks.dispose(c);
-    c.h = null; c.mesh = null; c.veg = null; c.disposed = true;
+    c.h = null; c.nrm = null; c.bio = null; c.mesh = null; c.veg = null; c.disposed = true;
   }
   pump() {
     while (this.queue.length && this.pool.inFlight < this.pool.capacity) {
       const c = this.queue.shift();
       if (c.disposed) continue;
-      this.pool.request({ kind: 'grid', x0: c.x0, z0: c.z0, size: c.size, n: SEGS }).then(m => {
+      this.pool.request({ kind: 'grid', x0: c.x0, z0: c.z0, size: c.size, n: c.segs }).then(m => {
         if (c.disposed) return;
         c.h = m.h; c.nrm = m.nrm; c.bio = m.bio; c.minH = m.minH; c.maxH = m.maxH;
         this.finalize.push(c);
@@ -310,9 +316,29 @@ export class Terrain {
     this.stats.chunks = this.chunks.size; this.stats.visible = this.visible.size; this.stats.inFlight = this.pool.inFlight;
   }
   settled() { return this.queue.length === 0 && this.finalize.length === 0 && !this.building && this.pool.inFlight === 0 && this.visible.size > 0; }
+  memoryStats() {
+    const levels = {}; let terrainGrid = 0, terrainGeometry = 0, vegetation = 0, vegetationInstances = 0, vegetationMeshes = 0, colliders = 0;
+    for (const c of this.chunks.values()) {
+      const l = levels[c.level] ||= { chunks: 0, visible: 0, terrainGrid: 0, terrainGeometry: 0, vegetation: 0, vegetationInstances: 0, vegetationMeshes: 0, colliders: 0 };
+      l.chunks++; if (this.visible.has(c)) l.visible++;
+      const grid = (c.h?.byteLength || 0) + (c.nrm?.byteLength || 0) + (c.bio?.byteLength || 0);
+      const geometry = (c.mesh?.geometry?.attributes.position?.array?.byteLength || 0) + (c.mesh?.geometry?.attributes.normal?.array?.byteLength || 0);
+      let veg = 0, instances = 0, meshes = 0;
+      if (c.veg) for (const m of c.veg.children) {
+        meshes++; instances += m.count || 0;
+        veg += (m.instanceMatrix?.array?.byteLength || 0) + (m.instanceColor?.array?.byteLength || 0) + (m.geometry.getAttribute('aCrown')?.array?.byteLength || 0);
+      }
+      terrainGrid += grid; terrainGeometry += geometry; vegetation += veg; vegetationInstances += instances; vegetationMeshes += meshes; colliders += c.colliders.length;
+      l.terrainGrid += grid; l.terrainGeometry += geometry; l.vegetation += veg; l.vegetationInstances += instances; l.vegetationMeshes += meshes; l.colliders += c.colliders.length;
+    }
+    return { chunks: this.chunks.size, visible: this.visible.size, terrainGrid, terrainGeometry, vegetation, vegetationInstances, vegetationMeshes, colliders, levels };
+  }
   finish(c) {
     this.building = null; c.build = null; c.ready = true;
     if (c.veg) { c.veg.visible = false; this.group.add(c.veg); }
     if (this.hooks.done) this.hooks.done(c);
+    // Normals and biome weights have done their job once geometry and foliage are baked. Only level 0 keeps heights,
+    // because boat physics samples that ring; all higher levels render from their GPU buffers from here on.
+    c.nrm = null; c.bio = null; if (c.level > 0) c.h = null;
   }
 }
