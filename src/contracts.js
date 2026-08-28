@@ -511,7 +511,7 @@ export class ResidentContracts {
 
   patrolDepart(a) {
     const A = this.rigs.patrolAgent; if (!A.active) this.restoreAgent(A, a, true);
-    const q = this.makeDeparturePoint(A.x, A.z, A.heading); a.departX = q.x; a.departZ = q.z;
+    const q = this.makeDeparturePoint(A.x, A.z, A.heading); a.departX = q.x; a.departZ = q.z; a.patrolStage = 'departing';
   }
 
   surrenderCal(a, forced = false) {
