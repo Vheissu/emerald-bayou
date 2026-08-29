@@ -73,6 +73,8 @@ On clear, low-wind nights, dense fog can settle over the backcountry before dawn
 
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
 
+The renderer budgets its internal drawing buffer toward three million pixels instead of blindly doubling every Retina dimension. Dense displays use two hardware samples plus the final FXAA pass; smaller buffers keep four samples. The map, streaming distance, simulation and asset detail stay unchanged while the largest HDR and depth attachments remain bounded.
+
 Wildlife lives its own life. Alligators bask on banks and slide in when you get close, and the bull will charge an idle hull inside 16 m. Mullet jump near the boat, bait boils off the bow in the shallows, ibis and pelicans run lines low over the water, and vultures circle high. When you get more than 700 m away it all quietly relocates ahead of you.
 
 On some calm nights, a plankton bloom reaches Mangrove Reach. The water stays black until something moves through it: hull wakes, fish, paddles and splashes leave blue fire behind them. The bloom runs through the existing wake and particle buffers, so it adds no extra scene assets.

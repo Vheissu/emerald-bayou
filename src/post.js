@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+import { msaaSamplesFor } from './renderquality.js';
 
 const QUAD_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 
@@ -16,7 +17,7 @@ export class Pipeline {
     this.size = size;
     const w = size.x, h = size.y;
     const depthA = new THREE.DepthTexture(w, h); depthA.format = THREE.DepthFormat; depthA.type = THREE.UnsignedIntType;
-    this.sceneRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthTexture: depthA, depthBuffer: true, samples: 4 });
+    this.sceneRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthTexture: depthA, depthBuffer: true, samples: msaaSamplesFor(w, h) });
     const depthB = new THREE.DepthTexture(w, h); depthB.format = THREE.DepthFormat; depthB.type = THREE.UnsignedIntType;
     // The opaque scene has already been resolved from 4x MSAA before it reaches this target. Water and spray are
     // full-screen or alpha-soft, and the composite is followed by FXAA, so a second multisample colour + depth pair
@@ -151,10 +152,21 @@ export class Pipeline {
   }
   resize(w, h) {
     this.size.set(w, h);
+    const samples = msaaSamplesFor(w, h), sameSize = this.sceneRT.width === w && this.sceneRT.height === h;
+    if (this.sceneRT.samples !== samples) { this.sceneRT.samples = samples; if (sameSize) this.sceneRT.dispose(); }
     this.sceneRT.setSize(w, h); this.compRT.setSize(w, h); this.ldrRT.setSize(w, h); this.aaRT.setSize(w, h);
     this.final.material.uniforms.resolution.value.set(w, h); this.final.material.uniforms.maxCoc.value = h * 0.0022;
     this.bloomA.setSize(Math.floor(w / 4), Math.floor(h / 4)); this.bloomB.setSize(Math.floor(w / 4), Math.floor(h / 4));
     this.fxaa.material.uniforms.resolution.value.set(1 / w, 1 / h);
+  }
+  memoryStats() {
+    const width = this.size.x, height = this.size.y, pixels = width * height, samples = this.sceneRT.samples;
+    // Approximate WebGL attachment bytes: RGBA16F + D32 resolve targets, their multisample renderbuffers, the second
+    // HDR/depth composite, two RGBA8 passes and two quarter-resolution RGBA16F bloom targets.
+    const sceneBytes = pixels * 12 * (1 + samples);
+    const compositeBytes = pixels * 12, postBytes = pixels * 8;
+    const bloomBytes = Math.floor(width / 4) * Math.floor(height / 4) * 16;
+    return { width, height, pixels, samples, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
   }
   // scene: opaque world. overlays: array of scenes rendered on top (water, fx)
   render(scene, camera, overlays, mode = 'full') {

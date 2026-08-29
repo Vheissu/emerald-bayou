@@ -35,10 +35,11 @@ import { RadioDirector } from './radio.js';
 import { WorldIncidents } from './incidents.js';
 import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
+import { MAX_DRAW_PIXELS, pixelRatioFor } from './renderquality.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -206,7 +207,7 @@ async function init() {
   game.incidents = incidents; game.story = story; radio.incidents = incidents; radio.story = story;
   const aftermath = new StormRecovery({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, incidents, encounters, story, radio, reputation, condition });
   game.aftermath = aftermath; radio.aftermath = aftermath;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, mode: 'full' };
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, ...pipeline.memoryStats() }) };
 
   // ---- input ----
   const keys = {};
@@ -226,12 +227,15 @@ async function init() {
     lastX = e.clientX; lastY = e.clientY;
   });
   window.addEventListener('wheel', e => { camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
-  window.addEventListener('resize', () => {
+  let resizeTimer = 0;
+  const resize = () => {
+    renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio));
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
     const s = new THREE.Vector2(); renderer.getDrawingBufferSize(s);
     pipeline.resize(s.x, s.y); water.resize(s.x, s.y); plume.mat.uniforms.resolution.value.set(s.x, s.y);
-  });
+  };
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = window.setTimeout(resize, 120); });
   const startEl = document.getElementById('start');
   let started = false;
   startEl.addEventListener('click', () => { audio.start(); started = true; startEl.classList.add('hidden'); });
