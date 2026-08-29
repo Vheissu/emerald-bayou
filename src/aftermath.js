@@ -6,6 +6,7 @@ import { regionAt } from './regions.js';
 import { WORLD_HALF } from './heightfield.js';
 import { cachedResource, sharedResource } from './cache.js';
 import { emitWakeStamp } from './wakestamps.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -617,12 +618,12 @@ export class StormRecovery {
   pushMarkers() {
     for (const mark of this.markers()) {
       const d = Math.hypot(mark.x - this.phys.pos.x, mark.z - this.phys.pos.y); if (d > 1450 && !this.blocking()) continue;
-      this.game.mapMarkers.push({ x: mark.x, z: mark.z, kind: mark.color === '#f07a2e' ? 'hazard' : 'dot', color: mark.color, clamp: this.blocking() });
+      emitMapMarker(this.game, mark.x, mark.z, mark.color === '#f07a2e' ? 'hazard' : 'dot', mark.color, 0, this.blocking());
     }
     for (const site of this.sites) {
       if (site.type !== 'blockage' || site.stage !== 'marked') continue;
       const A = this.rigs.get(site.id).agent;
-      if (A.active) this.game.mapMarkers.push({ x: A.x, z: A.z, kind: 'boat', heading: A.heading, color: '#5aa7ff' });
+      if (A.active) emitMapMarker(this.game, A.x, A.z, 'boat', '#5aa7ff', A.heading);
     }
     if (this.towSite) this.game.wpTarget = { x: this.towSite.clearX, z: this.towSite.clearZ, label: 'clear-water pocket', color: '#f07a2e', recovery: true };
     else if (this.passengerSite) this.game.wpTarget = { x: this.passengerSite.destX, z: this.passengerSite.destZ, label: 'FWC recovery', color: '#79d6a0', recovery: true };

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { buildSkiff } from './npc.js';
 import { regionAt } from './regions.js';
 import { emitWakeStamp } from './wakestamps.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -311,7 +312,7 @@ export class FalsePassage {
       this.stopChaser(true); this.P.call(patrol ? 'FWC TAC' : 'CH 72', patrol ? 'WARDEN SOTO · FWC 27' : 'CAL ROOK · LOST KEY', patrol ? 'Tower Boat is out of sight in the back cuts. Units keep the call open.' : 'You bought some water. It does not make the debt disappear.', 2, 'passage-chase-lost');
       return;
     }
-    this.P.game.mapMarkers.push({ x: A.x, z: A.z, kind: 'hazard', color: patrol ? '#5b8fff' : '#e0523e', clamp: d > 155 });
+    emitMapMarker(this.P.game, A.x, A.z, 'hazard', patrol ? '#5b8fff' : '#e0523e', 0, d > 155);
   }
 
   updateDelivery(dt, t) {

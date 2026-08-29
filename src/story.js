@@ -8,6 +8,7 @@ import { StormLine } from './stormline.js';
 import { StoryResidents } from './residents.js';
 import { ResidentContracts } from './contracts.js';
 import { emitWakeStamp } from './wakestamps.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -397,7 +398,7 @@ export class StoryDirector {
   pushMarker() {
     for (const m of this.markers()) {
       const complete = !m.story;
-      this.game.mapMarkers.push({ x: m.x, z: m.z, kind: complete ? 'dot' : 'objective', color: m.color, clamp: !complete });
+      emitMapMarker(this.game, m.x, m.z, complete ? 'dot' : 'objective', m.color, 0, !complete);
     }
   }
 

@@ -5,6 +5,7 @@ import { WORLD_HALF } from './heightfield.js';
 import { regionAt } from './regions.js';
 import { fmtDist } from './game.js';
 import { emitWakeStamp } from './wakestamps.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const RESIDENTS = ['leon', 'june', 'cal'];
@@ -570,7 +571,7 @@ export class ResidentContracts {
       this.incidents.updateAgent(A, dt, t, a.departX, a.departZ, 10.5, 4); this.updatePatrolLights(t, false);
       if (Math.hypot(A.x - a.departX, A.z - a.departZ) < 8 || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 900) { A.active = false; A.mesh.visible = false; this.rigs.blue.light.intensity = this.rigs.red.light.intensity = this.rigs.search.intensity = 0; }
     }
-    if (A.active) { this.addBoatObstacle(A, this.patrolObs, A.x, A.z, A.heading); this.game.mapMarkers.push({ x: A.x, z: A.z, kind: 'boat', heading: A.heading, color: '#5aa7ff' }); }
+    if (A.active) { this.addBoatObstacle(A, this.patrolObs, A.x, A.z, A.heading); emitMapMarker(this.game, A.x, A.z, 'boat', '#5aa7ff', A.heading); }
   }
 
   updateCal(a, dt, t) {

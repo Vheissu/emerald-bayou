@@ -4,6 +4,7 @@ import { kayak } from './markers.js';
 import { WORLD_HALF } from './heightfield.js';
 import { regionAt } from './regions.js';
 import { emitWakeStamp } from './wakestamps.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -514,17 +515,17 @@ export class WorldIncidents {
     const e = this.active; if (!e || this.game.state || e.resolved) return;
     if (e.type === 'pursuit') {
       const r = this.rigs.runner.agent, p = this.rigs.patrol.agent;
-      this.game.mapMarkers.push({ x: r.x, z: r.z, kind: 'hazard', color: '#e0554a', clamp: true });
-      this.game.mapMarkers.push({ x: p.x, z: p.z, kind: 'boat', heading: p.heading, color: '#5aa7ff' });
+      emitMapMarker(this.game, r.x, r.z, 'hazard', '#e0554a', 0, true);
+      emitMapMarker(this.game, p.x, p.z, 'boat', '#5aa7ff', p.heading);
     } else if (e.type === 'search') {
       const p = this.rigs.patrol.agent;
-      this.game.mapMarkers.push({ x: e.x, z: e.z, kind: 'hazard', color: '#f07a2e', clamp: true });
-      this.game.mapMarkers.push({ x: p.x, z: p.z, kind: 'boat', heading: p.heading, color: '#5aa7ff' });
+      emitMapMarker(this.game, e.x, e.z, 'hazard', '#f07a2e', 0, true);
+      emitMapMarker(this.game, p.x, p.z, 'boat', '#5aa7ff', p.heading);
     } else {
       const v = this.rigs.victim.agent, r = this.rigs.runner.agent, p = this.rigs.patrol.agent;
-      this.game.mapMarkers.push({ x: v.x, z: v.z, kind: 'hazard', color: '#f07a2e', clamp: true });
-      this.game.mapMarkers.push({ x: r.x, z: r.z, kind: 'boat', heading: r.heading, color: '#e0554a' });
-      if (p.active) this.game.mapMarkers.push({ x: p.x, z: p.z, kind: 'boat', heading: p.heading, color: '#5aa7ff' });
+      emitMapMarker(this.game, v.x, v.z, 'hazard', '#f07a2e', 0, true);
+      emitMapMarker(this.game, r.x, r.z, 'boat', '#e0554a', r.heading);
+      if (p.active) emitMapMarker(this.game, p.x, p.z, 'boat', '#5aa7ff', p.heading);
     }
   }
 
