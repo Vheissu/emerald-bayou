@@ -28,8 +28,18 @@ test('the eye calms wind and rain without erasing surge or the rough sea', () =>
   assert.ok(front.values.wind > 38 && back.values.wind > 38);
   assert.ok(eye.values.wind < 4 && eye.values.rain < 0.02);
   assert.ok(eye.values.sea > 1.5 && eye.values.surge === HURRICANE.surge);
+  assert.ok(front.values.surge < eye.values.surge && back.values.surge > eye.values.surge);
   assert.ok(eye.values.cloud > 0.55 && eye.values.storm < 0.35);
   assert.ok(eye.passage.pressureHpa < front.passage.pressureHpa);
+});
+
+test('surge builds through the leading bands, peaks behind the eye and drains through trailing bands', () => {
+  const outer = conditionsAt(0.05), front = conditionsAt(0.3), eye = conditionsAt(0.5), back = conditionsAt(0.7), trailing = conditionsAt(0.95);
+  assert.ok(outer.values.surge < front.values.surge && front.values.surge < eye.values.surge);
+  assert.ok(back.values.surge > eye.values.surge);
+  assert.ok(trailing.values.surge < eye.values.surge && trailing.values.surge > 0);
+  assert.ok(front.passage.surgeTrend > 0);
+  assert.ok(trailing.passage.surgeTrend < 0);
 });
 
 test('backside winds reverse while the passage functions retain their caller-owned objects', () => {
@@ -39,6 +49,20 @@ test('backside winds reverse while the passage functions retain their caller-own
   assert.equal(hurricanePassage(0.7, passage), passage);
   assert.ok(passage.windShift > Math.PI * 0.99);
   assert.equal(applyHurricanePassage(values, passage, 1), values);
+});
+
+test('surge motion contributes to the navigable flood and ebb without changing total water height', () => {
+  const minutes = 12.42 / 4 * 60;
+  const astronomical = Object.create(Environment.prototype), flooding = Object.create(Environment.prototype), draining = Object.create(Environment.prototype);
+  for (const environment of [astronomical, flooding, draining]) Object.assign(environment, { minutes, values: { surge: 0.9 }, surgeRate: 0 });
+  flooding.surgeRate = 0.18; draining.surgeRate = -0.18;
+  astronomical.syncClockAndTide(); flooding.syncClockAndTide(); draining.syncClockAndTide();
+  assert.equal(flooding.waterLevel, astronomical.waterLevel);
+  assert.equal(draining.waterLevel, astronomical.waterLevel);
+  assert.ok(flooding.tideRate > astronomical.tideRate);
+  assert.ok(draining.tideRate < astronomical.tideRate);
+  assert.match(flooding.tideLabel(), /^Rising /);
+  assert.match(draining.tideLabel(), /^Falling /);
 });
 
 test('leaving the backside carries its reversed wind into the next weather state', () => {

@@ -8,6 +8,7 @@ const FT = 3.28084;
 const MPS_TO_MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
+const smoothSlope = (a, b, v) => { const t = (v - a) / (b - a); return t > 0 && t < 1 ? 6 * t * (1 - t) / (b - a) : 0; };
 const lerp = (a, b, t) => a + (b - a) * t;
 
 export function surfaceMistEnvelope({ hour = 12, fog = 0, rain = 0, wind = 0, storm = 0 } = {}) {
@@ -54,6 +55,13 @@ export function hurricanePassage(progress = 0, out = {}) {
   const background = p < 0.5 ? leadingBands : trailingBands;
   const rainBands = p < 0.5 ? lerp(0.54, 0.8, smooth(0, 0.18, p)) : lerp(0.78, 0.44, smooth(0.82, 1, p));
   const seaBands = p < 0.5 ? lerp(0.66, 0.84, smooth(0, 0.18, p)) : lerp(0.86, 0.7, smooth(0.82, 1, p));
+  // Storm surge is accumulated water, so it lags the first violent wind, remains through the eye and reaches its
+  // local maximum on the backside before draining through the trailing bands. The slope is retained as a current
+  // contribution: rising surge floods the cuts and draining surge strengthens the ebb.
+  const surgeRise = smooth(0.02, 0.46, p), surgeBack = smooth(0.5, 0.67, p), surgeDrain = smooth(0.76, 0.9, p), surgeTrail = smooth(0.79, 1, p);
+  const surgeShoulder = surgeBack * (1 - surgeDrain), surgeBase = 0.16 + surgeRise * 0.84 + surgeShoulder * 0.1, surgeFall = 1 - surgeTrail * 0.62;
+  const shoulderSlope = smoothSlope(0.5, 0.67, p) * (1 - surgeDrain) - surgeBack * smoothSlope(0.76, 0.9, p);
+  const surgeSlope = (smoothSlope(0.02, 0.46, p) * 0.84 + shoulderSlope * 0.1) * surgeFall - surgeBase * smoothSlope(0.79, 1, p) * 0.62;
   out.progress = p;
   out.phase = p < 0.16 ? 'outer-bands' : p < 0.42 ? 'front-eyewall' : p < 0.58 ? 'eye' : p < 0.91 ? 'back-eyewall' : 'trailing-bands';
   out.eye = eye;
@@ -61,6 +69,8 @@ export function hurricanePassage(progress = 0, out = {}) {
   out.windScale = lerp(background, 1.08, eyewall);
   out.rainScale = lerp(rainBands, 1.12, eyewall);
   out.seaScale = lerp(seaBands, 1.06, eyewall);
+  out.surgeScale = surgeBase * surgeFall;
+  out.surgeTrend = clamp(surgeSlope * 0.052, -0.24, 0.24);
   out.windShift = Math.PI * smooth(0.39, 0.61, p);
   out.pressureHpa = Math.round(p <= 0.5 ? lerp(1004, 976, smooth(0, 0.5, p)) : lerp(976, 1001, smooth(0.5, 1, p)));
   return out;
@@ -77,6 +87,7 @@ export function applyHurricanePassage(values, passage, blend = 1) {
   const exposure = lerp(values.exposure, 0.97, eye);
   const lightning = lerp(values.lightning, 0.035, eye);
   const storm = lerp(clamp(0.72 + passage.windScale * 0.26), 0.32, eye);
+  const surge = Math.max(0, Number(values.surge) || 0) * clamp(Number(passage.surgeScale) || 1, 0, 1.25);
   values.wind = lerp(values.wind, wind, t);
   values.rain = lerp(values.rain, rain, t);
   values.sea = lerp(values.sea, sea, t);
@@ -86,6 +97,7 @@ export function applyHurricanePassage(values, passage, blend = 1) {
   values.exposure = lerp(values.exposure, exposure, t);
   values.lightning = lerp(values.lightning, lightning, t);
   values.storm = lerp(values.storm, storm, t);
+  values.surge = lerp(values.surge, surge, t);
   return values;
 }
 
@@ -248,10 +260,10 @@ export class Environment {
     const [durationLo, durationHi] = WEATHER[this.key].duration, inferredDuration = (durationLo + durationHi) * 0.5;
     this.weatherDuration = Number.isFinite(savedDuration) && savedDuration >= this.remaining ? clamp(savedDuration, 1, 600) : Math.max(this.remaining, inferredDuration);
     this.windAngle = Number.isFinite(savedWind) ? Math.atan2(Math.sin(savedWind), Math.cos(savedWind)) : 0.7;
-    this.localWindAngle = this.windAngle; this.hurricaneBlend = 0;
-    this.hurricane = { phase: '', progress: 0, eye: 0, eyewall: 0, windScale: 1, rainScale: 1, seaScale: 1, windShift: 0, pressureHpa: 1004 };
+    this.localWindAngle = this.windAngle; this.hurricaneBlend = 0; this.surgeRate = 0;
+    this.hurricane = { phase: '', progress: 0, eye: 0, eyewall: 0, windScale: 1, rainScale: 1, seaScale: 1, surgeScale: 1, surgeTrend: 0, windShift: 0, pressureHpa: 1004 };
     this.lastHurricanePhase = ''; this.updateHurricanePassage(false);
-    this.gust = 1; this.waterLevel = 0; this.tideRate = 0; this.daylight = 0; this.night = 1; this.syncClockAndTide(); this.persistT = 10;
+    this.gust = 1; this.waterLevel = 0; this.astronomicalTideRate = 0; this.tideRate = 0; this.daylight = 0; this.night = 1; this.syncClockAndTide(); this.persistT = 10;
     this.rainbowMoisture = smooth(0.08, 0.72, this.values.rain); this.rainbow = 0; this.rainbowOverride = null;
     this.navVisibility = { port: true, starboard: true, stern: true }; this.hornCooldown = 0;
     this.precip = new Precipitation(this.fxScene, this.effectBudget);
@@ -321,7 +333,8 @@ export class Environment {
     const absHours = this.minutes / 60, tidePhase = absHours / 12.42 * Math.PI * 2;
     const astronomical = (Math.sin(tidePhase) * 0.34 + Math.sin(tidePhase * 0.5 + 0.8) * 0.08) * this.tideRange;
     this.waterLevel = astronomical + (this.values.surge || 0);
-    this.tideRate = (Math.cos(tidePhase) * 0.34 + Math.cos(tidePhase * 0.5 + 0.8) * 0.04) * this.tideRange;
+    this.astronomicalTideRate = (Math.cos(tidePhase) * 0.34 + Math.cos(tidePhase * 0.5 + 0.8) * 0.04) * this.tideRange;
+    this.tideRate = clamp(this.astronomicalTideRate + (Number(this.surgeRate) || 0), -0.5, 0.5);
   }
   clockLabel() {
     const h = Math.floor(this.hour), m = Math.floor((this.hour - h) * 60), ap = h >= 12 ? 'PM' : 'AM', hh = h % 12 || 12;
@@ -335,7 +348,8 @@ export class Environment {
   }
   tideLabel() {
     const tideFt = this.waterLevel * FT;
-    return `${this.tideRate >= 0 ? 'Rising' : 'Falling'} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
+    const motion = Math.abs(this.tideRate) < 0.015 ? 'Slack' : this.tideRate > 0 ? 'Rising' : 'Falling';
+    return `${motion} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
   }
   lunarSnapshot() { return { age: this.lunarAge, phase: this.lunarPhase, name: lunarPhaseName(this.lunarPhase), illumination: this.moonIllumination, tideRange: this.tideRange, altitude: this.moonDir?.y || 0 }; }
   persistState(write = true) {
@@ -366,18 +380,19 @@ export class Environment {
   }
   hurricaneSnapshot() {
     const H = this.hurricane;
-    return { phase: H.phase, progress: H.progress, eye: H.eye, eyewall: H.eyewall, pressureHpa: H.pressureHpa, windShift: H.windShift, duration: this.weatherDuration, remaining: this.remaining };
+    return { phase: H.phase, progress: H.progress, eye: H.eye, eyewall: H.eyewall, pressureHpa: H.pressureHpa, windShift: H.windShift, surgeScale: H.surgeScale, surge: this.values.surge, surgeRate: this.surgeRate, waterLevel: this.waterLevel, tideRate: this.tideRate, duration: this.weatherDuration, remaining: this.remaining };
   }
   updateHurricanePassage(announce = false) {
     const H = this.hurricane;
     if (this.key !== 'hurricane') {
-      H.phase = ''; H.progress = 0; H.eye = 0; H.eyewall = 0; H.windScale = 1; H.rainScale = 1; H.seaScale = 1; H.windShift = 0; H.pressureHpa = 1004;
-      this.hurricaneBlend = 0; this.localWindAngle = this.windAngle; this.lastHurricanePhase = '';
+      H.phase = ''; H.progress = 0; H.eye = 0; H.eyewall = 0; H.windScale = 1; H.rainScale = 1; H.seaScale = 1; H.surgeScale = 1; H.surgeTrend = 0; H.windShift = 0; H.pressureHpa = 1004;
+      this.hurricaneBlend = 0; this.surgeRate = 0; this.localWindAngle = this.windAngle; this.lastHurricanePhase = '';
       return H;
     }
     hurricanePassage(1 - this.remaining / Math.max(1, this.weatherDuration), H);
     this.hurricaneBlend = smooth(0.5, 1, this.mix);
     applyHurricanePassage(this.values, H, this.hurricaneBlend);
+    this.surgeRate = H.surgeTrend * this.hurricaneBlend;
     this.localWindAngle = this.windAngle + H.windShift * this.hurricaneBlend;
     if (H.phase !== this.lastHurricanePhase) {
       this.lastHurricanePhase = H.phase;
@@ -596,10 +611,11 @@ export class Environment {
     const h = Math.floor(this.hour), m = Math.floor((this.hour - h) * 60), ap = h >= 12 ? 'PM' : 'AM', hh = h % 12 || 12;
     const from = ((this.localWindAngle + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2), dirs = ['E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'];
     const dir = dirs[Math.round(from / (Math.PI * 2) * 8) % 8];
-    const tideFt = this.waterLevel * FT, tide = `${this.tideRate >= 0 ? 'Rising' : 'Falling'} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
+    const tide = this.tideLabel();
     const lunarRange = this.tideRange > 0.94 ? ' · spring tide' : this.tideRange < 0.76 ? ' · neap tide' : '';
     const pressure = this.key === 'hurricane' ? ` · ${this.hurricane.pressureHpa} hPa` : '';
+    const surge = V.surge > 0.14 ? ` · surge +${(V.surge * FT).toFixed(1)} ft` : '';
     const current = this.currentField ? ` · ${this.currentField.hud()}` : '';
-    this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${this.weatherLabel()}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${pressure}${current}</div>`;
+    this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${this.weatherLabel()}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${pressure}${surge}${current}</div>`;
   }
 }
