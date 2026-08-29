@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as TEX from './textures.js';
+import { sharedResource } from './cache.js';
 
 function box(w, h, d, x, y, z, ry = 0, rz = 0) {
   const g = new THREE.BoxGeometry(w, h, d);
@@ -105,7 +106,22 @@ export function buildTower() {
   return group;
 }
 
-export function buildDock(length = 14, width = 2.0) {
+const dockCache = new Map();
+let sharedDockMaterials = null;
+
+function dockMaterials() {
+  if (sharedDockMaterials) return sharedDockMaterials;
+  const woodTex = sharedResource(TEX.plank()); woodTex.repeat.set(1, 4);
+  sharedDockMaterials = {
+    frameMat: sharedResource(new THREE.MeshStandardMaterial({ color: 0x3a352f, roughness: 0.85 })),
+    plankMat: sharedResource(new THREE.MeshStandardMaterial({ map: woodTex, color: 0x9a8f80, roughness: 0.9 })),
+  };
+  return sharedDockMaterials;
+}
+
+function dockResources(length, width) {
+  const key = `${length}:${width}`;
+  if (dockCache.has(key)) return dockCache.get(key);
   const parts = [], plankParts = [];
   const n = Math.ceil(length / 3);
   for (let i = 0; i <= n; i++) {
@@ -118,12 +134,19 @@ export function buildDock(length = 14, width = 2.0) {
     for (let i = 0; i <= n * 2; i++) parts.push(box(0.08, 1.0, 0.08, sx * width / 2, 1.25, -(i / (n * 2)) * length));
     parts.push(box(0.06, 0.06, length, sx * width / 2, 1.75, -length / 2));
   }
-  const woodTex = TEX.plank(); woodTex.repeat.set(1, 4);
-  const frameGeo = mergeGeometries(parts.map(g => g.toNonIndexed()), false);
-  const plankGeo = mergeGeometries(plankParts.map(g => g.toNonIndexed()), false);
+  const frameGeo = sharedResource(mergeGeometries(parts.map(g => g.toNonIndexed()), false));
+  const plankGeo = sharedResource(mergeGeometries(plankParts.map(g => g.toNonIndexed()), false));
+  const { frameMat, plankMat } = dockMaterials();
+  const resources = { frameGeo, plankGeo, frameMat, plankMat };
+  dockCache.set(key, resources);
+  return resources;
+}
+
+export function buildDock(length = 14, width = 2.0) {
+  const { frameGeo, plankGeo, frameMat, plankMat } = dockResources(length, width);
   const g = new THREE.Group();
-  const a = new THREE.Mesh(frameGeo, new THREE.MeshStandardMaterial({ color: 0x3a352f, roughness: 0.85 })); a.castShadow = true; a.receiveShadow = true;
-  const b = new THREE.Mesh(plankGeo, new THREE.MeshStandardMaterial({ map: woodTex, color: 0x9a8f80, roughness: 0.9 })); b.castShadow = true; b.receiveShadow = true;
+  const a = new THREE.Mesh(frameGeo, frameMat); a.castShadow = true; a.receiveShadow = true;
+  const b = new THREE.Mesh(plankGeo, plankMat); b.castShadow = true; b.receiveShadow = true;
   g.add(a, b);
   return g;
 }

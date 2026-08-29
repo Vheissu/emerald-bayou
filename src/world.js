@@ -18,15 +18,20 @@ const FIRST = ['Turner', 'Cooter', 'Mullet', 'Lostman', 'Chokoloskee', 'Sawgrass
 const SECOND = ['Camp', 'Landing', 'Fish Camp', 'Station', 'Bend', 'Dock', 'Camp', 'Landing'];
 const hash2 = (i, j) => { let h = (i * 374761393 + j * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return (h ^ (h >>> 16)) >>> 0; };
 
-// Removing an Object3D does not release its WebGL buffers. Dispose only geometry that is no longer referenced by a
-// retained render tree; shared skiffs, people, models and cached props remain live and are never invalidated.
+// Removing an Object3D does not release its WebGL buffers. Release geometry only when no retained render tree uses
+// it; pooled CPU objects remain reusable and Three.js can upload them again. Per-site mutable materials opt in below.
 export function disposeDetachedGeometries(root, ...retainedRoots) {
-  const retained = new Set(), disposed = new Set();
-  for (const retainedRoot of retainedRoots) retainedRoot?.traverse?.(o => { if (o.geometry) retained.add(o.geometry); });
+  const retained = new Set(), retainedMaterials = new Set(), disposed = new Set(), disposedMaterials = new Set();
+  const addMaterials = (value, set) => { if (Array.isArray(value)) for (const material of value) material && set.add(material); else if (value) set.add(value); };
+  for (const retainedRoot of retainedRoots) retainedRoot?.traverse?.(o => { if (o.geometry) retained.add(o.geometry); addMaterials(o.material, retainedMaterials); });
   root?.traverse?.(o => {
     const geometry = o.geometry;
-    if (!geometry || retained.has(geometry) || disposed.has(geometry)) return;
-    disposed.add(geometry); geometry.dispose();
+    if (geometry && !retained.has(geometry) && !disposed.has(geometry)) { disposed.add(geometry); geometry.dispose(); }
+    const materials = Array.isArray(o.material) ? o.material : [o.material];
+    for (const material of materials) {
+      if (!material?.userData?.streamOwned || retainedMaterials.has(material) || disposedMaterials.has(material)) continue;
+      disposedMaterials.add(material); material.dispose();
+    }
   });
   return disposed.size;
 }

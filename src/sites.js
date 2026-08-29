@@ -5,25 +5,34 @@ import { buildSkiff } from './npc.js';
 import * as TEX from './textures.js';
 import { person, animatePerson, wave, aim, fishingUpdate, cooler, chair, bucket, fishingLine } from './folk.js';
 import { spawn, SPEC } from './models.js';
+import { cachedResource, sharedResource } from './cache.js';
 
 // The people who live out here: stilt houses with a dock and a washing line, public boat ramps with a truck and an
 // empty trailer, tin-roof boathouses over the water, duck blinds in the shallows. One per ~800 m cell, seeded, placed
 // against the procedural bank the same way the fish camps are, built only while the boat is near.
 export const SITE_CELL = 800;
 
-const wood = new THREE.MeshStandardMaterial({ color: 0x6b5641, roughness: 0.95 });
-const greyWood = new THREE.MeshStandardMaterial({ color: 0x8e877a, roughness: 0.95 });
-const tin = new THREE.MeshStandardMaterial({ color: 0x8d9391, roughness: 0.5, metalness: 0.6 });
-const rustTin = new THREE.MeshStandardMaterial({ color: 0x7d6a58, roughness: 0.7, metalness: 0.45 });
-const concrete = new THREE.MeshStandardMaterial({ color: 0x9d9a92, roughness: 0.95 });
-const gravel = new THREE.MeshStandardMaterial({ color: 0x7e7a70, roughness: 1 });
-const rubber = new THREE.MeshStandardMaterial({ color: 0x1c1d1c, roughness: 0.9 });
-const steel = new THREE.MeshStandardMaterial({ color: 0x5c5f5c, roughness: 0.4, metalness: 0.8 });
-const reedMat = new THREE.MeshStandardMaterial({ color: 0x9a8a55, roughness: 1 });
-const white = new THREE.MeshStandardMaterial({ color: 0xe8e4da, roughness: 0.6 });
+const geometryCache = new Map(), materialCache = new Map(), tintCache = new Map();
+const geometry = (kind, args, create) => cachedResource(geometryCache, `${kind}:${args.join(':')}`, create);
+const boxGeometry = (w, h, d) => geometry('box', [w, h, d], () => new THREE.BoxGeometry(w, h, d));
+const cylinderGeometry = (r0, r1, h, seg = 8) => geometry('cylinder', [r0, r1, h, seg], () => new THREE.CylinderGeometry(r0, r1, h, seg));
+const sphereGeometry = (r, w, h) => geometry('sphere', [r, w, h], () => new THREE.SphereGeometry(r, w, h));
+const torusGeometry = (r, tube, radial, tubular) => geometry('torus', [r, tube, radial, tubular], () => new THREE.TorusGeometry(r, tube, radial, tubular));
+const material = (key, params) => cachedResource(materialCache, key, () => new THREE.MeshStandardMaterial(params));
+
+const wood = material('wood', { color: 0x6b5641, roughness: 0.95 });
+const greyWood = material('grey-wood', { color: 0x8e877a, roughness: 0.95 });
+const tin = material('tin', { color: 0x8d9391, roughness: 0.5, metalness: 0.6 });
+const rustTin = material('rust-tin', { color: 0x7d6a58, roughness: 0.7, metalness: 0.45 });
+const concrete = material('concrete', { color: 0x9d9a92, roughness: 0.95 });
+const gravel = material('gravel', { color: 0x7e7a70, roughness: 1 });
+const rubber = material('rubber', { color: 0x1c1d1c, roughness: 0.9 });
+const steel = material('steel', { color: 0x5c5f5c, roughness: 0.4, metalness: 0.8 });
+const reedMat = material('reed', { color: 0x9a8a55, roughness: 1 });
+const white = material('white', { color: 0xe8e4da, roughness: 0.6 });
 const sh = (o) => { o.castShadow = true; o.receiveShadow = true; return o; };
-const box = (w, h, d, x, y, z, m = wood) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); return sh(b); };
-const cyl = (r0, r1, h, x, y, z, m = wood, seg = 8) => { const c = new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, h, seg), m); c.position.set(x, y, z); return sh(c); };
+const box = (w, h, d, x, y, z, m = wood) => { const b = new THREE.Mesh(boxGeometry(w, h, d), m); b.position.set(x, y, z); return sh(b); };
+const cyl = (r0, r1, h, x, y, z, m = wood, seg = 8) => { const c = new THREE.Mesh(cylinderGeometry(r0, r1, h, seg), m); c.position.set(x, y, z); return sh(c); };
 
 let signCache = new Map();
 function signTex(lines) {
@@ -32,27 +41,30 @@ function signTex(lines) {
   g.fillStyle = '#e9e2cf'; g.fillRect(0, 0, 256, 128); g.strokeStyle = '#2f5a3a'; g.lineWidth = 8; g.strokeRect(6, 6, 244, 116);
   g.fillStyle = '#2f5a3a'; g.textAlign = 'center'; g.textBaseline = 'middle';
   lines.forEach((l, i) => { g.font = `${i === 0 ? 'bold 34px' : '600 21px'} "Avenir Next Condensed", "Arial Narrow", Impact, sans-serif`; g.fillText(l, 128, lines.length === 1 ? 64 : 40 + i * 38); });
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; signCache.set(key, t); return t;
+  const t = sharedResource(new THREE.CanvasTexture(c)); t.colorSpace = THREE.SRGBColorSpace; signCache.set(key, t); return t;
 }
 function signPost(lines, h = 2.2) {
   const g = new THREE.Group();
   g.add(cyl(0.05, 0.06, h, 0, h / 2, 0, greyWood, 6));
-  const board = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 0.04), [greyWood, greyWood, greyWood, greyWood, new THREE.MeshStandardMaterial({ map: signTex(lines), roughness: 0.7 }), greyWood]);
+  const signKey = lines.join('|');
+  const board = new THREE.Mesh(boxGeometry(1.2, 0.6, 0.04), [greyWood, greyWood, greyWood, greyWood, material(`sign:${signKey}`, { map: signTex(lines), roughness: 0.7 }), greyWood]);
   board.position.set(0, h - 0.35, 0.03); sh(board); g.add(board);
   return g;
 }
 
 function truck(rr) {
   const g = new THREE.Group();
-  const paint = new THREE.MeshStandardMaterial({ color: [0xd9d5c8, 0xa12f22, 0x2a4f7a, 0x4d5a3c, 0x1f1f1f][Math.floor(rr() * 5)], roughness: 0.35, metalness: 0.5 });
+  const paintColor = [0xd9d5c8, 0xa12f22, 0x2a4f7a, 0x4d5a3c, 0x1f1f1f][Math.floor(rr() * 5)];
+  const paint = material(`truck-paint:${paintColor}`, { color: paintColor, roughness: 0.35, metalness: 0.5 });
   g.add(box(2.0, 0.55, 5.4, 0, 0.75, 0, paint)); // chassis / bed sides
   g.add(box(1.85, 0.06, 2.6, 0, 1.0, 1.2, rubber)); // bed floor
   g.add(box(1.9, 0.75, 1.7, 0, 1.4, -0.9, paint)); // cab
-  g.add(box(1.7, 0.6, 1.5, 0, 1.75, -0.9, new THREE.MeshStandardMaterial({ color: 0x1a2530, roughness: 0.2, metalness: 0.6 }))); // glass
+  g.add(box(1.7, 0.6, 1.5, 0, 1.75, -0.9, material('truck-glass', { color: 0x1a2530, roughness: 0.2, metalness: 0.6 }))); // glass
   g.add(box(1.9, 0.5, 1.6, 0, 0.98, -2.6, paint)); // hood
   g.userData.wheels = [];
   for (const sx of [-1, 1]) for (const sz of [-1.9, 1.7]) { const w = cyl(0.42, 0.42, 0.32, sx * 0.95, 0.42, sz, rubber, 12); w.rotation.z = Math.PI / 2; g.add(w); g.userData.wheels.push(w); }
   const lampM = new THREE.MeshStandardMaterial({ color: 0x6a1a12, emissive: 0xff2a1a, emissiveIntensity: 0, roughness: 0.4 });
+  lampM.userData.streamOwned = true;
   for (const sx of [-0.8, 0.8]) g.add(box(0.18, 0.22, 0.04, sx, 0.85, 2.72, lampM));
   g.userData.lamps = lampM;
   return g;
@@ -63,7 +75,7 @@ function trailer() {
   g.add(box(0.1, 0.1, 2.2, 0, 0.5, -3.4, steel)); g.add(box(1.5, 0.1, 0.1, 0, 0.55, 0.5, steel));
   g.userData.wheels = [];
   for (const sx of [-1, 1]) { const w = cyl(0.3, 0.3, 0.22, sx * 0.85, 0.3, 0.6, rubber, 12); w.rotation.z = Math.PI / 2; g.add(w); g.userData.wheels.push(w); }
-  for (const sx of [-0.35, 0.35]) g.add(box(0.12, 0.08, 4.0, sx, 0.62, 0, new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.9 }))); // bunks
+  for (const sx of [-0.35, 0.35]) g.add(box(0.12, 0.08, 4.0, sx, 0.62, 0, material('trailer-bunk', { color: 0x8a8a8a, roughness: 0.9 }))); // bunks
   g.add(cyl(0.04, 0.04, 0.9, 0, 1.0, -4.3, steel, 6)); // winch post
   return g;
 }
@@ -76,19 +88,26 @@ function trailBoat(rr) {
   const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(name === 'boat_dreams' ? 0.45 : 0, SPEC[name].y + (name === 'boat_dreams' ? 0.35 : 0.05), name === 'boat_dreams' ? 0.4 : 0.5); d.rotation.y = Math.PI; g.add(d); g.userData.people = [d];
   return g;
 }
-function recolor(group, from, to) { group.traverse(o => { if (o.isMesh && o.material && o.material.color && o.material.color.getHex() === from) { o.material = o.material.clone(); o.material.color.setHex(to); } }); }
+function recolor(group, from, to) {
+  group.traverse(o => {
+    if (!o.isMesh || !o.material?.color || o.material.color.getHex() !== from) return;
+    const source = o.material, key = `${source.uuid}:${to}`;
+    o.material = cachedResource(tintCache, key, () => { const tinted = source.clone(); tinted.color.setHex(to); return tinted; });
+  });
+}
 // ---- kinds ----
 function stiltHouse(rr, T, s) {
   const g = new THREE.Group();
   const H = 1.7, W = 6.2, D = 5.0;
   for (const sx of [-2.6, 0, 2.6]) for (const sz of [-2.1, 2.1]) g.add(cyl(0.11, 0.13, H + 0.6, sx, H / 2 - 0.2, sz));
   g.add(box(W, 0.14, D, 0, H, 0));
-  const wall = new THREE.MeshStandardMaterial({ color: [0x9aa08a, 0xb8b09a, 0x7f8c7a, 0xa88f72][Math.floor(rr() * 4)], roughness: 0.95 });
+  const wallColor = [0x9aa08a, 0xb8b09a, 0x7f8c7a, 0xa88f72][Math.floor(rr() * 4)];
+  const wall = material(`house-wall:${wallColor}`, { color: wallColor, roughness: 0.95 });
   g.add(box(W - 0.6, 2.3, D - 0.6, 0, H + 1.22, 0, wall));
   // windows and a screen door on the porch side (+z)
-  const glass = new THREE.MeshStandardMaterial({ color: 0x22302a, roughness: 0.3, metalness: 0.3 });
+  const glass = material('house-glass', { color: 0x22302a, roughness: 0.3, metalness: 0.3 });
   for (const sx of [-1.7, 1.7]) g.add(box(1.0, 0.8, 0.06, sx, H + 1.5, D / 2 - 0.27, glass));
-  g.add(box(0.85, 1.9, 0.06, 0, H + 1.05, D / 2 - 0.27, new THREE.MeshStandardMaterial({ color: 0x3a3530, roughness: 1 })));
+  g.add(box(0.85, 1.9, 0.06, 0, H + 1.05, D / 2 - 0.27, material('house-door', { color: 0x3a3530, roughness: 1 })));
   // porch deck out the front with a rail
   g.add(box(W, 0.12, 2.2, 0, H, D / 2 + 1.1));
   for (const sx of [-W / 2 + 0.1, -W / 4, 0, W / 4, W / 2 - 0.1]) g.add(box(0.08, 1.0, 0.08, sx, H + 0.55, D / 2 + 2.1));
@@ -100,12 +119,12 @@ function stiltHouse(rr, T, s) {
   for (let i = 0; i < 5; i++) g.add(box(0.9, 0.05, 0.3, -W / 2 - 0.5, H - i * 0.34, -1.2 + i * 0.32));
   // propane tank, water butt, a satellite dish
   g.add(cyl(0.35, 0.35, 1.4, W / 2 + 0.9, 0.7, -1.4, white, 12).rotateZ(Math.PI / 2));
-  g.add(cyl(0.45, 0.45, 1.0, -W / 2 - 1.3, 0.5, 1.5, new THREE.MeshStandardMaterial({ color: 0x3a4d3f, roughness: 0.9 }), 12));
+  g.add(cyl(0.45, 0.45, 1.0, -W / 2 - 1.3, 0.5, 1.5, material('water-butt', { color: 0x3a4d3f, roughness: 0.9 }), 12));
   const dish = cyl(0.35, 0.35, 0.04, W / 2 - 0.4, H + 3.2, -1.5, white, 16); dish.rotation.x = -0.9; g.add(dish);
   // washing line with three towels
   const lx = -W / 2 - 3.5; g.add(cyl(0.04, 0.05, 2.0, lx, 1.0, -2.5, greyWood, 6)); g.add(cyl(0.04, 0.05, 2.0, lx, 1.0, 2.5, greyWood, 6));
   const line = cyl(0.008, 0.008, 5.0, lx, 1.9, 0, steel, 4); line.rotation.x = Math.PI / 2; g.add(line);
-  const tCols = [0xd9553a, 0x3c6aa3, 0xe8e0c8, 0x8ab06a]; for (let i = 0; i < 3; i++) { const tw = box(0.05, 0.7, 0.8, lx, 1.55, -1.6 + i * 1.6, new THREE.MeshStandardMaterial({ color: tCols[(i + Math.floor(rr() * 4)) % 4], roughness: 1, side: THREE.DoubleSide })); tw.userData.towel = true; g.add(tw); }
+  const tCols = [0xd9553a, 0x3c6aa3, 0xe8e0c8, 0x8ab06a]; for (let i = 0; i < 3; i++) { const towelColor = tCols[(i + Math.floor(rr() * 4)) % 4]; const tw = box(0.05, 0.7, 0.8, lx, 1.55, -1.6 + i * 1.6, material(`towel:${towelColor}`, { color: towelColor, roughness: 1, side: THREE.DoubleSide })); tw.userData.towel = true; g.add(tw); }
   g.userData.towels = g.children.filter(c => c.userData.towel);
   // somebody on the porch more often than not, in a chair, watching the water
   g.userData.people = [];
@@ -193,7 +212,7 @@ function boathouse(rr) {
   const walk = buildDock(L, 0.9); walk.position.set(W / 2 + 0.55, 0, L / 2); g.add(walk);
   const skiff = buildSkiff({ crew: false }); skiff.position.set(-0.4, -0.05, 0); skiff.rotation.y = (rr() - 0.5) * 0.1; skiff.rotation.order = 'YXZ'; g.add(skiff); g.userData.skiff = skiff;
   // a life ring on a post and a lamp
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.07, 8, 20), new THREE.MeshStandardMaterial({ color: 0xe25a2a, roughness: 0.7 })); ring.position.set(W / 2 + 0.05, 1.9, -L / 2 + 0.05); ring.rotation.y = Math.PI / 2; g.add(sh(ring));
+  const ring = new THREE.Mesh(torusGeometry(0.28, 0.07, 8, 20), material('life-ring', { color: 0xe25a2a, roughness: 0.7 })); ring.position.set(W / 2 + 0.05, 1.9, -L / 2 + 0.05); ring.rotation.y = Math.PI / 2; g.add(sh(ring));
   g.userData.people = [];
   if (rr() < 0.55) { const p = person(rr, { pose: 'crouch' }); p.position.set(W / 2 + 0.55, 0.81, 0.6); p.rotation.y = -Math.PI / 2; g.add(p); g.userData.people.push(p); const bk = bucket(); bk.position.set(W / 2 + 0.55, 0.81, 1.5); g.add(bk); }
   return g;
@@ -207,9 +226,9 @@ function duckBlind(rr) {
   if (rr() < 0.7) for (const sx of [-0.55, 0.55]) { const p = person(rr, { pose: 'crouch', gun: true }); p.position.set(sx, 1.15, 0.1); p.rotation.y = Math.PI; g.add(p); g.userData.people.push(p); }
   g.userData.shotT = 20 + rr() * 60;
   // decoys bobbing around it
-  const dark = new THREE.MeshStandardMaterial({ color: 0x2f2a24, roughness: 0.9 });
+  const dark = material('decoy-body', { color: 0x2f2a24, roughness: 0.9 });
   g.userData.decoys = [];
-  for (let i = 0; i < 5; i++) { const d = new THREE.Group(); const b = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), dark); b.scale.set(1, 0.6, 1.6); d.add(b); const h = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), new THREE.MeshStandardMaterial({ color: 0x2f6b3a, roughness: 0.8 })); h.position.set(0, 0.16, -0.22); d.add(h); const a = rr() * 6.28, r = 3 + rr() * 4; d.position.set(Math.cos(a) * r, 0, Math.sin(a) * r); d.rotation.y = rr() * 6.28; d.userData.ph = rr() * 6; g.add(d); g.userData.decoys.push(d); }
+  for (let i = 0; i < 5; i++) { const d = new THREE.Group(); const b = new THREE.Mesh(sphereGeometry(0.16, 8, 6), dark); b.scale.set(1, 0.6, 1.6); d.add(b); const h = new THREE.Mesh(sphereGeometry(0.08, 8, 6), material('decoy-head', { color: 0x2f6b3a, roughness: 0.8 })); h.position.set(0, 0.16, -0.22); d.add(h); const a = rr() * 6.28, r = 3 + rr() * 4; d.position.set(Math.cos(a) * r, 0, Math.sin(a) * r); d.rotation.y = rr() * 6.28; d.userData.ph = rr() * 6; g.add(d); g.userData.decoys.push(d); }
   return g;
 }
 

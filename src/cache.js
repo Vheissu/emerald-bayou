@@ -12,3 +12,16 @@ export function trimOldest(map, limit, keep = null) {
   }
   return removed;
 }
+
+// Streamed scenery can reuse immutable resource objects without keeping the scenery itself alive. Geometry data
+// remains available for a later GPU upload even after Three.js releases an unused WebGL buffer.
+export function sharedResource(resource) {
+  if (resource) resource.userData = { ...(resource.userData || {}), sharedResource: true };
+  return resource;
+}
+
+export function cachedResource(cache, key, create) {
+  let resource = cache.get(key);
+  if (!resource) { resource = sharedResource(create()); cache.set(key, resource); }
+  return resource;
+}
