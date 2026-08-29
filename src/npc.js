@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { loadDriver } from './airboat.js';
+import { person } from './folk.js';
+import { mulberry32 } from './noise.js';
 
 function skiffHullGeometry() {
   const stations = [
@@ -27,7 +30,7 @@ const SKIFF_GEO = {
   bowRail: new THREE.BoxGeometry(1.0, 0.07, 0.08), rib: new THREE.BoxGeometry(1.38, 0.045, 0.075), bench: new THREE.BoxGeometry(1.43, 0.09, 0.34),
   cowl: new THREE.CapsuleGeometry(0.22, 0.28, 4, 8), stripe: new THREE.BoxGeometry(0.455, 0.055, 0.46), leg: new THREE.BoxGeometry(0.12, 0.86, 0.18),
   tiller: new THREE.CylinderGeometry(0.02, 0.02, 0.74, 6), hub: new THREE.CylinderGeometry(0.045, 0.045, 0.24, 8), blade: new THREE.BoxGeometry(0.04, 0.34, 0.075),
-  torso: new THREE.CapsuleGeometry(0.17, 0.4, 4, 8), head: new THREE.SphereGeometry(0.11, 10, 8), hat: new THREE.CylinderGeometry(0.12, 0.13, 0.1, 10),
+  torso: new THREE.CapsuleGeometry(0.17, 0.4, 4, 8), head: new THREE.SphereGeometry(0.11, 10, 8), nose: new THREE.SphereGeometry(0.026, 6, 5), hat: new THREE.CylinderGeometry(0.12, 0.13, 0.1, 10), brim: new THREE.BoxGeometry(0.15, 0.018, 0.12),
   legBody: new THREE.CapsuleGeometry(0.06, 0.3, 4, 6), arm: new THREE.CapsuleGeometry(0.048, 0.32, 4, 6), net: new THREE.SphereGeometry(0.4, 10, 7),
   netCoil: new THREE.TorusGeometry(0.25, 0.028, 5, 14), fuel: new THREE.BoxGeometry(0.35, 0.3, 0.25), cleat: new THREE.BoxGeometry(0.14, 0.055, 0.045),
 };
@@ -40,15 +43,22 @@ const SKIFF_MAT = {
   net: new THREE.MeshStandardMaterial({ color: 0x8a7a4a, roughness: 1, wireframe: true }), rope: new THREE.MeshStandardMaterial({ color: 0xa58e59, roughness: 1 }), fuel: new THREE.MeshStandardMaterial({ color: 0xc03a2b, roughness: 0.6 }),
 };
 const skiffPart = (geo, mat) => { const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; return m; };
+let skiffSerial = 0;
 function skiffCrew(x, z, cap, driver = false) {
   const p = new THREE.Group(); p.position.set(x, 0.5, z);
   const torso = skiffPart(SKIFF_GEO.torso, SKIFF_MAT.shirt); torso.position.y = 0.42; p.add(torso);
-  const head = skiffPart(SKIFF_GEO.head, SKIFF_MAT.skin); head.position.y = 0.82; p.add(head);
-  const hat = skiffPart(SKIFF_GEO.hat, cap); hat.position.y = 0.92; p.add(hat);
+  const headPivot = new THREE.Group(); headPivot.position.y = 0.82; p.add(headPivot);
+  const head = skiffPart(SKIFF_GEO.head, SKIFF_MAT.skin); headPivot.add(head);
+  const nose = skiffPart(SKIFF_GEO.nose, SKIFF_MAT.skin); nose.position.set(0, 0, -0.104); headPivot.add(nose);
+  const hat = skiffPart(SKIFF_GEO.hat, cap); hat.position.y = 0.1; headPivot.add(hat);
+  const brim = skiffPart(SKIFF_GEO.brim, cap); brim.position.set(0, 0.105, -0.085); brim.rotation.x = 0.12; headPivot.add(brim);
+  const arms = [];
   for (const sx of [-1, 1]) {
     const leg = skiffPart(SKIFF_GEO.legBody, SKIFF_MAT.pants); leg.position.set(sx * 0.1, 0.12, -0.15); leg.rotation.x = -1.1; p.add(leg);
     const arm = skiffPart(SKIFF_GEO.arm, SKIFF_MAT.skin); arm.position.set(sx * 0.19, 0.48, driver ? 0.06 : -0.03); arm.rotation.x = driver ? -1.22 : -0.72; arm.rotation.z = sx * (driver ? -0.35 : -0.18); p.add(arm);
+    arms.push(arm);
   }
+  p.userData.skiffCrew = { driver, torso, head: headPivot, arms, baseX: arms.map(a => a.rotation.x), baseZ: arms.map(a => a.rotation.z), phase: driver ? 0.4 : 2.1 };
   return p;
 }
 
@@ -74,11 +84,16 @@ export function buildSkiff({ crew = true } = {}) {
   for (const r of [0, Math.PI / 2]) { const blade = skiffPart(SKIFF_GEO.blade, SKIFF_MAT.motor); blade.position.z = 0.07; blade.rotation.z = r; prop.add(blade); }
   motor.add(prop); motor.userData.prop = prop;
   g.add(motor);
-  if (crew) { g.add(skiffCrew(0.16, 1.18, SKIFF_MAT.capRed, true)); g.add(skiffCrew(-0.1, -0.68, SKIFF_MAT.capDark)); }
+  const crewList = [], people = [];
+  if (crew) {
+    const driver = skiffCrew(0.16, 1.18, SKIFF_MAT.capRed, true); g.add(driver); crewList.push(driver);
+    const rr = mulberry32(0x51cf2d + skiffSerial++ * 977); const deckhand = person(rr, { pose: 'sit', hat: true, vest: rr() < 0.55 }); deckhand.scale.setScalar(0.74); deckhand.position.set(-0.1, 0.142, -0.68); deckhand.rotation.y = Math.PI; g.add(deckhand); people.push(deckhand);
+    loadDriver(g, { scale: 0.48, position: [0.16, 0.49, 1.16] }).then(model => { driver.visible = false; g.userData.driverModel = model; }).catch(() => {});
+  }
   const net = skiffPart(SKIFF_GEO.net, SKIFF_MAT.net); net.scale.set(1.32, 0.42, 0.8); net.position.set(0, 0.42, -1.52); g.add(net);
   for (const x of [-0.24, 0.22]) { const coil = skiffPart(SKIFF_GEO.netCoil, SKIFF_MAT.rope); coil.rotation.x = Math.PI / 2; coil.position.set(x, 0.5, -1.48); g.add(coil); }
   const fuel = skiffPart(SKIFF_GEO.fuel, SKIFF_MAT.fuel); fuel.position.set(0.5, 0.32, 1.16); g.add(fuel);
-  g.userData.motor = motor;
+  g.userData.motor = motor; g.userData.crew = crewList; g.userData.people = people;
   return g;
 }
 

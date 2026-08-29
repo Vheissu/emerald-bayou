@@ -168,24 +168,24 @@ export function buildAirboat() {
   return { group: g, prop, blur, rudders, cage };
 }
 
-// Photogrammetry-style seated driver (Meshy export). Model faces +Z with its seat cube behind at -Z;
-// we turn it to face the bow and stand the cube on the footrest.
-export function loadDriver(group) {
-  return new Promise((resolve, reject) => {
-    new GLTFLoader().load('/models/driver.glb', (gltf) => {
-      const m = gltf.scene;
-      m.traverse(o => {
-        if (o.isMesh) {
-          o.castShadow = true; o.receiveShadow = true;
-          const mat = o.material; if (mat) { mat.roughness = 0.9; mat.metalness = 0.0; if (mat.map) { mat.map.anisotropy = 8; mat.map.colorSpace = THREE.SRGBColorSpace; } }
-        }
-      });
-      m.scale.setScalar(0.65);
-      m.rotation.y = Math.PI;
-      m.position.set(0, 1.70, 0.40);
-      group.add(m);
-      resolve(m);
-    }, undefined, reject);
+// Photogrammetry-style seated driver (Meshy export). The source is loaded once; clones share its 1K texture,
+// geometry and material instead of paying that GPU cost again for every working boat.
+let driverTemplatePromise = null;
+function driverTemplate() {
+  if (!driverTemplatePromise) driverTemplatePromise = new GLTFLoader().loadAsync('/models/driver.glb').then(gltf => {
+    const root = gltf.scene; root.name = 'seated driver template';
+    root.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = true; o.receiveShadow = true;
+      const mat = o.material; if (mat) { mat.roughness = 0.9; mat.metalness = 0.0; if (mat.map) { mat.map.anisotropy = 8; mat.map.colorSpace = THREE.SRGBColorSpace; } }
+    });
+    return root;
+  });
+  return driverTemplatePromise;
+}
+export function loadDriver(group, { scale = 0.65, position = [0, 1.7, 0.4], yaw = Math.PI } = {}) {
+  return driverTemplate().then(root => {
+    const m = root.clone(true); m.name = 'seated driver'; m.scale.setScalar(scale); m.rotation.y = yaw; m.position.fromArray(position); m.userData.baseYaw = yaw; group.add(m); return m;
   });
 }
 

@@ -6,7 +6,7 @@ import { buildAirboat, loadDriver } from './airboat.js';
 import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
 import * as TEX from './textures.js';
 import { spawn, loadGeo, SPEC } from './models.js';
-import { person, animatePerson, pair, walkAlong, canoe, paddleAnim, cooler, bucket, fishingLine } from './folk.js';
+import { person, animatePerson, wave, pair, walkAlong, canoe, paddleAnim, cooler, bucket, fishingLine } from './folk.js';
 import { animateSite } from './sites.js';
 
 // The bayou's small life: mullet jumping, bait boiling away from the bow, deadhead logs and dead snags in the still
@@ -241,6 +241,22 @@ const TRAFFIC_PROFILES = [
   { id: 'back-line', callsign: 'BACK LINE', operator: 'RAFE MERCER', job: 'night courier', duty: [18.5, 5.2], threshold: 0.07, cruise: 0.94, work: [5, 12, 0.12], maxStorm: 0.72, channel: 'CH 72', faction: 'runners', color: '#cf7e43' },
   { id: 'glades-field', callsign: 'GLADES FIELD 3', operator: 'TESS WARD + MALIK JONES', job: 'water survey', duty: [6.5, 18], threshold: 0.72, cruise: 0.9, work: [30, 52, 0.75], maxStorm: 0.28, channel: 'CH 68', faction: 'fwc', color: '#dbc98f' },
 ];
+function callsignAssets() {
+  const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 256;
+  const ctx = canvas.getContext('2d'); ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; ctx.font = '700 18px "Arial Narrow", "Avenir Next Condensed", sans-serif';
+  for (let i = 0; i < TRAFFIC_PROFILES.length; i++) {
+    const y = i * 32; ctx.fillStyle = '#111816'; ctx.fillRect(0, y, 256, 32); ctx.fillStyle = TRAFFIC_PROFILES[i].color; ctx.fillRect(0, y, 9, 32);
+    ctx.fillStyle = '#e9eee8'; ctx.fillText(TRAFFIC_PROFILES[i].callsign, 132, y + 16, 224); ctx.strokeStyle = 'rgba(235,241,234,.32)'; ctx.strokeRect(0.5, y + 0.5, 255, 31);
+  }
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; texture.generateMipmaps = false; texture.minFilter = THREE.LinearFilter; texture.magFilter = THREE.LinearFilter;
+  const material = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
+  const geometries = TRAFFIC_PROFILES.map((_, i) => {
+    const geo = new THREE.PlaneGeometry(1.55, 0.26), uv = geo.attributes.uv, v0 = 1 - (i + 1) / 8, v1 = 1 - i / 8;
+    for (let j = 0; j < uv.count; j++) uv.setY(j, v0 + uv.getY(j) * (v1 - v0)); return geo;
+  });
+  return { material, geometries };
+}
+const CALLSIGN = callsignAssets();
 const GEAR_BOX = new THREE.BoxGeometry(0.52, 0.32, 0.42);
 const GEAR_LINE = new THREE.CylinderGeometry(0.009, 0.009, 1.5, 4);
 const GEAR_FLOAT = new THREE.SphereGeometry(0.075, 7, 5);
@@ -290,7 +306,7 @@ export class Traffic {
     const saved = fx.game.save.traffic;
     this.state = saved && saved.version === 1 ? saved : { version: 1, operators: {} };
     this.state.operators ||= {}; fx.game.save.traffic = this.state;
-    const john = (hull) => { const m = buildSkiff({ crew: true }); if (hull) recolor(m, 0x6f7570, hull); return { kind: 'john', mesh: m, max: 6.5 + this.rand() * 2.5 }; };
+    const john = (hull) => { const m = buildSkiff({ crew: true }); if (hull) recolor(m, 0x6f7570, hull); return { kind: 'john', mesh: m, crew: m.userData.crew, people: m.userData.people, max: 6.5 + this.rand() * 2.5 }; };
     const air = (hull) => { const b = buildAirboat(); recolor(b.group, 0xd8dcda, hull); loadDriver(b.group).catch(() => {}); return { kind: 'air', mesh: b.group, prop: b.prop, blur: b.blur, rudders: b.rudders, max: 10.5 + this.rand() * 2.5 }; };
     const cruiser = () => { const m = spawn('boat_dreams'); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0.45, 0.95, 0.3); d.rotation.y = Math.PI; m.add(d); const pas = person(rr, { pose: 'sit', hat: false, vest: true }); pas.position.set(-0.45, 0.95, 0.3); pas.rotation.y = Math.PI; m.add(pas); pair(d, pas); return { kind: 'cruiser', mesh: m, max: 8.5 + rr() * 2, people: [d, pas] }; };
     const skiff = () => { const m = spawn('beau_boat'); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0, 0.32, 0.7); d.rotation.y = Math.PI; m.add(d); return { kind: 'skiff', mesh: m, max: 5 + rr() * 1.5, people: [d] }; };
@@ -300,7 +316,7 @@ export class Traffic {
       const b = hulls[i], profile = TRAFFIC_PROFILES[i];
       const record = this.state.operators[profile.id] ||= { shifts: 0, passes: 0, collisions: 0, lastMet: '', lastShift: '' };
       Object.assign(b, { profile, record, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
-      this.addWorkingDetails(b);
+      this.addWorkingDetails(b, i);
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
       b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
         b.shx += -nx * into * 0.5; b.shz += -nz * into * 0.5; b.speed *= 0.5;
@@ -313,7 +329,7 @@ export class Traffic {
     this.anglerCells = new Map(); this.liveAnglers = new Map(); this.checkT = 0;
     this.idlePasses = 0; this._flow = new THREE.Vector2(); this._pf = new THREE.Vector2();
   }
-  addWorkingDetails(b) {
+  addWorkingDetails(b, profileIndex) {
     const deck = b.kind === 'air' ? 0.55 : b.kind === 'canoe' ? 0.3 : b.kind === 'cruiser' ? 0.85 : 0.42;
     const beam = b.kind === 'canoe' ? 0.35 : b.kind === 'air' ? 0.85 : 0.65;
     const cargo = new THREE.Group(); cargo.name = `work-gear:${b.profile.id}`;
@@ -332,6 +348,13 @@ export class Traffic {
       const lamp = new THREE.Mesh(GEAR_LAMP, GEAR_MATS.warm); lamp.rotation.x = Math.PI / 2; lamp.position.set(0.35, deck + 0.78, -0.38); cargo.add(lamp);
     }
     b.mesh.add(cargo); b.cargo = cargo;
+    const identity = new THREE.Group(); identity.name = `callsign:${b.profile.id}`;
+    const hullBeam = b.kind === 'john' ? 0.875 : b.kind === 'air' ? 0.9 : b.kind === 'cruiser' ? 0.98 : b.kind === 'canoe' ? 0.38 : 0.7;
+    for (const side of [-1, 1]) {
+      const plate = new THREE.Mesh(CALLSIGN.geometries[profileIndex], CALLSIGN.material); plate.position.set(side * hullBeam, deck - 0.13, 0.25); plate.rotation.y = side * Math.PI / 2;
+      const scale = b.kind === 'canoe' ? 0.72 : b.kind === 'air' ? 0.9 : b.kind === 'john' ? 0.86 : 1; plate.scale.set(scale, scale, scale); identity.add(plate);
+    }
+    b.mesh.add(identity); b.identity = identity;
     const work = new THREE.Group(); work.name = `working:${b.profile.id}`;
     const line = new THREE.Mesh(GEAR_LINE, GEAR_MATS.line); line.position.set(beam + 0.14, deck - 0.68, -0.25); line.rotation.z = -0.08;
     const flt = new THREE.Mesh(GEAR_FLOAT, GEAR_MATS.orange); flt.position.set(beam + 0.18, deck - 1.42, -0.25); work.add(line, flt); work.visible = false;
@@ -397,6 +420,7 @@ export class Traffic {
     if (d >= 27 || playerSpeed >= 4.2 || b.greetT > 0) return;
     const key = this.shiftKey(b); if (b.record.lastMet === key) return;
     b.record.lastMet = key; b.record.passes++; b.greetT = 24; this.fx.game.persist();
+    if (b.people?.length) wave(b.people[b.people.length - 1]);
     const state = b.state === 'work' ? `working · ${b.profile.job}` : b.retiring ? 'heading in' : b.profile.job;
     this.fx.game.toast(`${b.profile.callsign} · ${b.profile.operator}`, state, 2.8);
   }
@@ -410,6 +434,28 @@ export class Traffic {
       b.beacon.visible = b.active && called;
       const blueOn = Math.floor(t * 5.5) % 2 === 0, B = b.beaconBulbs;
       B.blue.visible = blueOn; B.red.visible = !blueOn; B.blueLight.intensity = blueOn ? 95 : 2; B.redLight.intensity = blueOn ? 2 : 95;
+    }
+  }
+  updateCrew(b, t, dt, d, playerWake) {
+    if (!b.crew?.length) return;
+    const P = this.phys, desired = Math.atan2(-(P.pos.x - b.x), -(P.pos.y - b.z));
+    const relative = Math.atan2(Math.sin(desired - b.heading), Math.cos(desired - b.heading));
+    const look = d < 46 ? Math.max(-0.95, Math.min(0.95, relative)) : 0, k = 1 - Math.exp(-dt * 5.5);
+    const working = b.state === 'work', brace = Math.min(0.32, Math.abs(playerWake) * 3.4);
+    const scannedDriver = b.mesh.userData.driverModel;
+    if (scannedDriver) {
+      scannedDriver.rotation.y += ((scannedDriver.userData.baseYaw + look * 0.12) - scannedDriver.rotation.y) * k;
+      scannedDriver.rotation.z += ((-b.turn * 0.025 + playerWake * 0.05) - scannedDriver.rotation.z) * k;
+    }
+    for (const person of b.crew) {
+      const u = person.userData.skiffCrew; u.head.rotation.y += (look - u.head.rotation.y) * k;
+      const lean = u.driver ? b.pitch * 0.25 : working ? 0.14 + Math.sin(t * 0.7 + u.phase) * 0.025 : brace;
+      person.rotation.x += (lean - person.rotation.x) * k;
+      for (let i = 0; i < u.arms.length; i++) {
+        let tx = u.baseX[i] + (u.driver ? b.turn * (i ? -0.18 : 0.18) : working ? Math.sin(t * 1.3 + u.phase + i) * 0.16 : brace);
+        const tz = u.baseZ[i], ty = 0.48;
+        const arm = u.arms[i]; arm.rotation.x += (tx - arm.rotation.x) * k; arm.rotation.z += (tz - arm.rotation.z) * k; arm.position.y += (ty - arm.position.y) * k;
+      }
     }
   }
   radioPool() {
@@ -525,7 +571,8 @@ export class Traffic {
       if (b.kind === 'air') { b.prop.rotation.z += dt * (8 + b.speed * 8); b.blur.material.opacity = Math.min(0.35, b.speed / b.max * 0.4); for (const r of b.rudders) r.rotation.y = -b.turn * 0.25; }
       else if (b.kind === 'john') { const motor = b.mesh.userData.motor; motor.rotation.y = -b.turn * 0.3; motor.userData.prop.rotation.z += dt * (6 + b.speed * 5); }
       else if (b.kind === 'canoe') paddleAnim(b.mesh, t, Math.min(1, b.speed / b.max));
-      if (b.people && d < 90) for (const pp of b.people) animatePerson(pp, t, dt, null, null);
+      if (b.people && d < 90) for (const pp of b.people) animatePerson(pp, t, dt, { x: bx, z: bz, speed: P.speed }, null);
+      this.updateCrew(b, t, dt, d, playerWake);
       this.updateWorkingDetails(b, t); this.identify(b, d, P.speed);
       // the closest running motor is what you hear
       if (b.kind !== 'air' && b.kind !== 'canoe' && d < 130) { const l = (0.3 + 0.7 * b.speed / b.max) * (1 - d / 130); if (l > ob) { ob = l; obp = b.kind === 'cruiser' ? 0.8 : b.kind === 'skiff' ? 1.25 : 1; } }

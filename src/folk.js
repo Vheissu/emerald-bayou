@@ -25,11 +25,18 @@ const SHADES = M(0x101010, 0.3);
 const sh = (o) => { o.castShadow = true; return o; };
 const pick = (rr, arr) => arr[Math.floor(rr() * arr.length)];
 const lerp = (a, b, k) => a + (b - a) * k;
+const PERSON_GEOMETRIES = new Map();
+const personGeometry = (key, create) => {
+  let geometry = PERSON_GEOMETRIES.get(key);
+  if (!geometry) { geometry = create(); PERSON_GEOMETRIES.set(key, geometry); }
+  return geometry;
+};
 
 // a limb segment: a group pivoting at the joint with the capsule hanging down -y from it
 function seg(len, r, mat) {
   const g = new THREE.Group();
-  const c = new THREE.Mesh(new THREE.CapsuleGeometry(r, len - r * 2, 3, 7), mat); c.position.y = -len / 2; g.add(sh(c));
+  const geo = personGeometry(`segment:${len}:${r}`, () => new THREE.CapsuleGeometry(r, len - r * 2, 3, 7));
+  const c = new THREE.Mesh(geo, mat); c.position.y = -len / 2; g.add(sh(c));
   return g;
 }
 
@@ -52,55 +59,55 @@ export function person(rr, { pose = 'stand', rod = false, hat = true, gun = fals
   const skin = pick(rr, SKIN), shirt = pick(rr, SHIRT), pants = waders ? WADER : pick(rr, PANTS), hair = pick(rr, HAIR);
   const shorts = !waders && pose !== 'crouch' && rr() < 0.3;
   const hips = new THREE.Group(); hips.position.y = HIP_Y[pose]; g.add(hips);
-  const pelvis = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.175, 0.2, 12), pants); pelvis.position.y = 0.05; hips.add(sh(pelvis));
+  const pelvis = new THREE.Mesh(personGeometry('pelvis', () => new THREE.CylinderGeometry(0.15, 0.175, 0.2, 12)), pants); pelvis.position.y = 0.05; hips.add(sh(pelvis));
   const spine = new THREE.Group(); spine.position.y = 0.1; hips.add(spine);
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.26, 4, 10), shirt); torso.position.y = 0.28; spine.add(sh(torso));
-  const shoulders = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 8), shirt); shoulders.scale.set(1.45, 0.5, 0.85); shoulders.position.y = 0.5; spine.add(sh(shoulders));
-  if (waders) { const bib = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.34, 0.12), WADER); bib.position.set(0, 0.22, 0.12); spine.add(sh(bib)); const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.175, 0.04, 12), GUN); belt.position.y = 0.06; spine.add(belt); }
-  if (vest) { const v = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.34, 0.3), pick(rr, VEST)); v.position.y = 0.3; spine.add(sh(v)); }
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.1, 8), skin); neck.position.y = 0.6; spine.add(neck);
+  const torso = new THREE.Mesh(personGeometry('torso', () => new THREE.CapsuleGeometry(0.16, 0.26, 4, 10)), shirt); torso.position.y = 0.28; spine.add(sh(torso));
+  const shoulders = new THREE.Mesh(personGeometry('shoulders', () => new THREE.SphereGeometry(0.17, 12, 8)), shirt); shoulders.scale.set(1.45, 0.5, 0.85); shoulders.position.y = 0.5; spine.add(sh(shoulders));
+  if (waders) { const bib = new THREE.Mesh(personGeometry('wader-bib', () => new THREE.BoxGeometry(0.3, 0.34, 0.12)), WADER); bib.position.set(0, 0.22, 0.12); spine.add(sh(bib)); const belt = new THREE.Mesh(personGeometry('belt', () => new THREE.CylinderGeometry(0.175, 0.175, 0.04, 12)), GUN); belt.position.y = 0.06; spine.add(belt); }
+  if (vest) { const v = new THREE.Mesh(personGeometry('vest', () => new THREE.BoxGeometry(0.38, 0.34, 0.3)), pick(rr, VEST)); v.position.y = 0.3; spine.add(sh(v)); }
+  const neck = new THREE.Mesh(personGeometry('neck', () => new THREE.CylinderGeometry(0.05, 0.06, 0.1, 8)), skin); neck.position.y = 0.6; spine.add(neck);
   const headG = new THREE.Group(); headG.position.y = 0.63; spine.add(headG);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.105, 12, 10), skin); head.scale.set(0.9, 1.12, 0.95); head.position.y = 0.12; headG.add(sh(head));
-  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.024, 6, 5), skin); nose.position.set(0, 0.105, 0.098); headG.add(nose);
-  const hairM = new THREE.Mesh(new THREE.SphereGeometry(0.108, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), hair); hairM.scale.set(0.9, 1.05, 0.95); hairM.position.y = 0.125; headG.add(hairM);
-  if (rr() < 0.3) { const beard = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8, 0, Math.PI * 2, Math.PI * 0.55, Math.PI * 0.45), hair); beard.scale.set(0.85, 1.05, 0.9); beard.position.set(0, 0.11, 0.012); headG.add(beard); }
-  if (rr() < 0.45) { const sg = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.03, 0.05), SHADES); sg.position.set(0, 0.14, 0.085); headG.add(sg); }
+  const head = new THREE.Mesh(personGeometry('head', () => new THREE.SphereGeometry(0.105, 12, 10)), skin); head.scale.set(0.9, 1.12, 0.95); head.position.y = 0.12; headG.add(sh(head));
+  const nose = new THREE.Mesh(personGeometry('nose', () => new THREE.SphereGeometry(0.024, 6, 5)), skin); nose.position.set(0, 0.105, 0.098); headG.add(nose);
+  const hairM = new THREE.Mesh(personGeometry('hair', () => new THREE.SphereGeometry(0.108, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55)), hair); hairM.scale.set(0.9, 1.05, 0.95); hairM.position.y = 0.125; headG.add(hairM);
+  if (rr() < 0.3) { const beard = new THREE.Mesh(personGeometry('beard', () => new THREE.SphereGeometry(0.1, 10, 8, 0, Math.PI * 2, Math.PI * 0.55, Math.PI * 0.45)), hair); beard.scale.set(0.85, 1.05, 0.9); beard.position.set(0, 0.11, 0.012); headG.add(beard); }
+  if (rr() < 0.45) { const sg = new THREE.Mesh(personGeometry('shades', () => new THREE.BoxGeometry(0.15, 0.03, 0.05)), SHADES); sg.position.set(0, 0.14, 0.085); headG.add(sg); }
   if (hat) {
     const hm = pick(rr, HAT);
-    if (rr() < 0.45) { const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.035, 14), hm); brim.position.y = 0.2; brim.rotation.x = 0.08; headG.add(sh(brim)); const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.115, 0.1, 12), hm); crown.position.y = 0.255; headG.add(crown); }
-    else { const cap = new THREE.Mesh(new THREE.SphereGeometry(0.115, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), hm); cap.position.y = 0.135; cap.scale.set(0.92, 1, 0.96); headG.add(cap); const peak = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.018, 0.13), hm); peak.position.set(0, 0.15, 0.15); peak.rotation.x = -0.15; headG.add(peak); }
+    if (rr() < 0.45) { const brim = new THREE.Mesh(personGeometry('hat-brim', () => new THREE.CylinderGeometry(0.2, 0.22, 0.035, 14)), hm); brim.position.y = 0.2; brim.rotation.x = 0.08; headG.add(sh(brim)); const crown = new THREE.Mesh(personGeometry('hat-crown', () => new THREE.CylinderGeometry(0.1, 0.115, 0.1, 12)), hm); crown.position.y = 0.255; headG.add(crown); }
+    else { const cap = new THREE.Mesh(personGeometry('cap', () => new THREE.SphereGeometry(0.115, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2)), hm); cap.position.y = 0.135; cap.scale.set(0.92, 1, 0.96); headG.add(cap); const peak = new THREE.Mesh(personGeometry('cap-peak', () => new THREE.BoxGeometry(0.15, 0.018, 0.13)), hm); peak.position.set(0, 0.15, 0.15); peak.rotation.x = -0.15; headG.add(peak); }
   }
   const arms = [];
   for (const sx of [-1, 1]) {
     const upper = seg(0.3, 0.05, shirt); upper.position.set(sx * 0.245, 0.5, 0);
     const fore = seg(0.28, 0.045, shirt); fore.position.y = -0.3; upper.add(fore);
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.048, 7, 6), skin); hand.scale.set(0.8, 1.1, 0.7); hand.position.y = -0.28; fore.add(hand);
+    const hand = new THREE.Mesh(personGeometry('hand', () => new THREE.SphereGeometry(0.048, 7, 6)), skin); hand.scale.set(0.8, 1.1, 0.7); hand.position.y = -0.28; fore.add(hand);
     spine.add(upper); arms.push({ upper, fore, hand });
   }
   const legs = [];
   for (const sx of [-1, 1]) {
     const thigh = seg(0.42, 0.075, pants); thigh.position.set(sx * 0.09, 0.0, 0);
     const shin = seg(0.42, 0.06, shorts ? skin : pants); shin.position.y = -0.42; thigh.add(shin);
-    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.07, 0.25), waders ? WADER : PANTS[0]); boot.position.set(0, -0.415, 0.06); shin.add(sh(boot));
+    const boot = new THREE.Mesh(personGeometry('boot', () => new THREE.BoxGeometry(0.11, 0.07, 0.25)), waders ? WADER : PANTS[0]); boot.position.set(0, -0.415, 0.06); shin.add(sh(boot));
     hips.add(thigh); legs.push({ thigh, shin });
   }
   // things in hands
   let rodMesh = null, tip = null, gunG = null, can = null;
   if (rod) {
     rodMesh = new THREE.Group(); rodMesh.position.y = -0.28; arms[1].fore.add(rodMesh);
-    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.013, 2.3, 5), ROD); stick.position.y = 1.0; rodMesh.add(stick);
-    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.34, 6), GUN); grip.position.y = -0.02; rodMesh.add(grip);
-    const reel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.04, 8), GUN); reel.rotation.z = Math.PI / 2; reel.position.set(0, 0.22, -0.05); rodMesh.add(reel);
+    const stick = new THREE.Mesh(personGeometry('rod', () => new THREE.CylinderGeometry(0.005, 0.013, 2.3, 5)), ROD); stick.position.y = 1.0; rodMesh.add(stick);
+    const grip = new THREE.Mesh(personGeometry('rod-grip', () => new THREE.CylinderGeometry(0.017, 0.017, 0.34, 6)), GUN); grip.position.y = -0.02; rodMesh.add(grip);
+    const reel = new THREE.Mesh(personGeometry('rod-reel', () => new THREE.CylinderGeometry(0.035, 0.035, 0.04, 8)), GUN); reel.rotation.z = Math.PI / 2; reel.position.set(0, 0.22, -0.05); rodMesh.add(reel);
     tip = new THREE.Object3D(); tip.position.y = 2.15; rodMesh.add(tip);
     rodMesh.rotation.x = Math.PI - 0.3;
   }
   if (gun) {
     gunG = new THREE.Group(); gunG.position.y = -0.26; arms[1].fore.add(gunG);
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.019, 1.0, 6), GUN); barrel.position.y = 0.55; gunG.add(barrel);
-    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.4, 0.09), WOOD); stock.position.set(0, -0.15, 0.02); gunG.add(stock);
+    const barrel = new THREE.Mesh(personGeometry('gun-barrel', () => new THREE.CylinderGeometry(0.016, 0.019, 1.0, 6)), GUN); barrel.position.y = 0.55; gunG.add(barrel);
+    const stock = new THREE.Mesh(personGeometry('gun-stock', () => new THREE.BoxGeometry(0.05, 0.4, 0.09)), WOOD); stock.position.set(0, -0.15, 0.02); gunG.add(stock);
     gunG.rotation.x = Math.PI + 0.1;
   }
-  if (!rod && !gun && !drive && rr() < 0.4) { can = new THREE.Mesh(new THREE.CylinderGeometry(0.033, 0.033, 0.12, 10), pick(rr, CAN)); can.position.y = -0.3; can.rotation.x = 0.25; arms[0].fore.add(can); }
+  if (!rod && !gun && !drive && rr() < 0.4) { can = new THREE.Mesh(personGeometry('can', () => new THREE.CylinderGeometry(0.033, 0.033, 0.12, 10)), pick(rr, CAN)); can.position.y = -0.3; can.rotation.x = 0.25; arms[0].fore.add(can); }
   const base = { ...ZERO, ...BASE[pose] };
   if (rod) { base.rf = 1.0; base.ro = 0.12; base.re = 0.75; if (pose === 'stand') { base.lf = 0.6; base.lo = -0.3; base.le = 1.0; } base.hdx = 0.15; }
   if (gun) { base.rf = 0.6; base.re = 0.9; base.ro = 0.05; base.lf = 0.9; base.lo = 0.45; base.le = 1.0; }
