@@ -4,7 +4,7 @@ import { Sky } from './sky.js';
 import { Water } from './water.js';
 import { Vegetation } from './vegetation.js';
 import { buildTower, buildDock } from './tower.js';
-import { buildAirboat, AirboatPhysics, loadDriver } from './airboat.js';
+import { airboatSprayExposure, buildAirboat, AirboatPhysics, loadDriver, updateAirboatWetness } from './airboat.js';
 import { Birds, Waders, Manatees, Gators } from './wildlife.js';
 import { SkiffAI } from './npc.js';
 import { Spray, Plume } from './particles.js';
@@ -152,7 +152,7 @@ async function init() {
   await new Promise(r => setTimeout(r, 10));
 
   // ---- boat ----
-  const boat = buildAirboat();
+  const boat = buildAirboat({ dynamicWetness: true });
   scene.add(boat.group);
   loadDriver(boat.group).catch(e => console.warn('driver model failed to load', e));
   const phys = new AirboatPhysics(terrain, startX, startZ, 0);
@@ -442,6 +442,7 @@ async function init() {
   const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3(), audioForward = new THREE.Vector3();
   const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2();
   const input = { throttle: 0, steer: 0, pitch: 0 };
+  const boatWetnessConditions = { dt: 0, rain: 0, spray: 0, splash: 0, wind: 0, daylight: 0 };
   const clock = new THREE.Timer(); clock.connect(document);
   let time = 0, splashStamp = 0, slowT = 0, slowK = 1, fovKick = 0, airCam = 0, frameNo = 0;
   const stamps = [];
@@ -600,6 +601,16 @@ async function init() {
     // Time, tide and weather own the sky, light, wind and water state. The camera is already settled for this frame,
     // so rain and lightning follow it without the one-frame wobble that shows up at speed.
     environment.update(dtRaw, time, camera.position, game.paused || !started);
+    if (started && !game.paused) {
+      // This retained input object keeps the material response free of per-frame garbage.
+      boatWetnessConditions.dt = dtRaw;
+      boatWetnessConditions.rain = environment.values.rain;
+      boatWetnessConditions.spray = airboatSprayExposure(phys);
+      boatWetnessConditions.splash = phys.wet > 0.25 && phys.impact > 1.2 ? Math.min(1, (phys.impact - 1.2) / 8) : 0;
+      boatWetnessConditions.wind = environment.values.wind * environment.gust;
+      boatWetnessConditions.daylight = environment.daylight;
+      updateAirboatWetness(boat, boatWetnessConditions);
+    }
     currents.update(dtRaw, time, started && !game.paused);
     hazards.update(dtRaw, time, started && !game.paused);
     aftermath.update(dtRaw, time, started && !game.paused && !fishing.blocking());

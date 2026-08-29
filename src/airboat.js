@@ -7,6 +7,83 @@ import { loadModel } from './models.js';
 // The player boat and scheduled traffic use the same detailed hull. Keep one immutable render template so its
 // expensive cage, hull and texture data live in GPU/JS memory once; each caller still receives its own transform tree.
 let airboatTemplate = null;
+const EMPTY_WET_SURFACES = Object.freeze([]);
+const unit = value => {
+  const n = Number(value); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+};
+
+// Rain lays down a continuous film, chine spray reaches the deck only once the hull is moving, and a landing slap
+// delivers a one-frame wash. Drying remains deliberately slow in humid shade but picks up with sun and wind.
+export function airboatSprayExposure({ speed = 0, wet = 0, rpm = 0 } = {}) {
+  const speedN = unit((Number(speed) - 2.5) / 10.5), rpmN = unit((Number(rpm) - 0.15) / 0.85);
+  return unit(wet) * speedN * speedN * (0.35 + rpmN * 0.65);
+}
+
+export function airboatWetnessStep(current = 0, { rain = 0, spray = 0, splash = 0, wind = 0, daylight = 0, dt = 0 } = {}) {
+  let next = unit(current);
+  const seconds = Math.max(0, Math.min(0.25, Number.isFinite(Number(dt)) ? Number(dt) : 0));
+  if (!seconds) return next;
+  const rainN = unit(rain), sprayN = unit(spray), splashN = unit(splash);
+  const deposition = 1 - Math.exp(-seconds * (rainN * 1.05 + sprayN * 0.65));
+  next += (1 - next) * deposition;
+  if (splashN) next += (1 - next) * splashN * 0.72;
+  const windN = unit((Number(wind) || 0) / 36);
+  const dryRate = (0.003 + unit(daylight) * 0.0045 + windN * 0.0065) * (1 - rainN) * (1 - sprayN * 0.82);
+  return unit(next - seconds * dryRate);
+}
+
+// Clone each unique PBR material once for the player only. Geometry and texture references remain shared with the
+// immutable traffic template, while the retained records let every frame update uniforms without a scene traversal.
+export function prepareAirboatWetSurfaces(group) {
+  if (!group?.traverse) return EMPTY_WET_SURFACES;
+  const clones = new Map(), surfaces = [];
+  const wetMaterial = original => {
+    if (!original?.isMeshStandardMaterial) return original;
+    const found = clones.get(original); if (found) return found.material;
+    const material = original.clone(), metalness = unit(material.metalness), dryRoughness = unit(material.roughness);
+    const record = {
+      material,
+      dryRoughness,
+      minRoughness: Math.min(dryRoughness, 0.16),
+      roughnessDrop: 0.44 + (1 - metalness) * 0.18,
+      dryEnvMapIntensity: Number.isFinite(material.envMapIntensity) ? material.envMapIntensity : 1,
+      envLift: 0.28 + metalness * 0.4,
+      dryR: material.color.r, dryG: material.color.g, dryB: material.color.b,
+      colorDarkening: 0.035 + (1 - metalness) * Math.max(0.35, dryRoughness) * 0.16,
+      dryNormalX: material.normalMap ? material.normalScale.x : 0,
+      dryNormalY: material.normalMap ? material.normalScale.y : 0,
+    };
+    clones.set(original, record); surfaces.push(record); return material;
+  };
+  group.traverse(object => {
+    if (!object.isMesh) return;
+    if (Array.isArray(object.material)) object.material = object.material.map(wetMaterial);
+    else object.material = wetMaterial(object.material);
+  });
+  return surfaces;
+}
+
+export function setAirboatWetness(boat, value = 0) {
+  const wetness = unit(value), surfaces = boat?.wetSurfaceMaterials || EMPTY_WET_SURFACES;
+  for (let i = 0; i < surfaces.length; i++) {
+    const s = surfaces[i], material = s.material;
+    material.roughness = Math.max(s.minRoughness, s.dryRoughness * (1 - s.roughnessDrop * wetness));
+    material.envMapIntensity = s.dryEnvMapIntensity * (1 + s.envLift * wetness);
+    const shade = 1 - s.colorDarkening * wetness;
+    material.color.setRGB(s.dryR * shade, s.dryG * shade, s.dryB * shade);
+    if (material.normalMap) {
+      const film = 1 - wetness * 0.16;
+      material.normalScale.set(s.dryNormalX * film, s.dryNormalY * film);
+    }
+  }
+  if (boat) boat.surfaceWetness = wetness;
+  return wetness;
+}
+
+export function updateAirboatWetness(boat, conditions) {
+  return setAirboatWetness(boat, airboatWetnessStep(boat?.surfaceWetness, conditions));
+}
+
 function createAirboatTemplate() {
   const g = new THREE.Group(); g.name = 'airboat';
   const geometryCache = new Map();
@@ -184,16 +261,22 @@ function createAirboatTemplate() {
   return { group: g, prop, blur, rudders, cage };
 }
 
-export function buildAirboat() {
+export function buildAirboat({ dynamicWetness = false, initialWetness = 0.06 } = {}) {
   if (!airboatTemplate) airboatTemplate = createAirboatTemplate();
   const group = airboatTemplate.group.clone(true);
   const prop = group.getObjectByName('airboat propeller');
   const blur = group.getObjectByName('airboat prop blur');
   const cage = group.getObjectByName('airboat cage');
   const rudders = [group.getObjectByName('airboat rudder port'), group.getObjectByName('airboat rudder starboard')];
-  // Opacity is driven independently by each engine's RPM; everything else on the template is immutable and shared.
+  // Opacity is driven independently by each engine's RPM. Ambient boats keep every PBR material shared; only the
+  // player requests the small unique set whose roughness and colour respond to rain and spray.
   blur.material = blur.material.clone();
-  return { group, prop, blur, rudders, cage };
+  const boat = { group, prop, blur, rudders, cage, wetSurfaceMaterials: EMPTY_WET_SURFACES, surfaceWetness: 0 };
+  if (dynamicWetness) {
+    boat.wetSurfaceMaterials = prepareAirboatWetSurfaces(group);
+    setAirboatWetness(boat, initialWetness);
+  }
+  return boat;
 }
 
 // Photogrammetry-style seated driver (Meshy export). The source is loaded once; clones share its 1K texture,
