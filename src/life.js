@@ -256,6 +256,17 @@ const GEAR_MATS = {
   blue: new THREE.MeshBasicMaterial({ color: 0x2d82ff, toneMapped: false }), warm: new THREE.MeshBasicMaterial({ color: 0xffe7b3, toneMapped: false }),
 };
 const shiftOn = (hour, duty) => duty[0] < duty[1] ? hour >= duty[0] && hour < duty[1] : hour >= duty[0] || hour < duty[1];
+function wakeSampleAt(sx, sz, heading, speed, maxSpeed, scale, x, z, t) {
+  const strength = Math.max(0, Math.min(1, (speed - 2.2) / Math.max(1, maxSpeed - 2.2))); if (strength <= 0) return 0;
+  const fx = -Math.sin(heading), fz = -Math.cos(heading), rx = -Math.cos(heading), rz = Math.sin(heading);
+  const dx = x - sx, dz = z - sz, aft = -(dx * fx + dz * fz); if (aft < 1.5 || aft > 95) return 0;
+  const lateral = Math.abs(dx * rx + dz * rz), arm = 1.1 + aft * 0.34, width = 0.7 + aft * 0.025;
+  const edge = Math.abs(lateral - arm), ridge = Math.exp(-(edge * edge) / (width * width));
+  const centerWidth = 1.4 + aft * 0.055, trough = Math.exp(-(lateral * lateral) / (centerWidth * centerWidth));
+  if (ridge < 0.002 && trough < 0.002) return 0;
+  const phase = t * (4.2 + strength * 0.8) - aft * (0.46 + strength * 0.08) + (sx + sz) * 0.013;
+  return scale * strength * strength * Math.exp(-aft / 85) * (ridge * Math.sin(phase) - trough * 0.27 * Math.sin(phase * 0.73 + 1.2));
+}
 function recolor(group, from, to) { group.traverse(o => { if (o.isMesh && o.material && o.material.color && o.material.color.getHex() === from) { o.material = o.material.clone(); o.material.color.setHex(to); } }); }
 function fisherman(rr) {
   const g = new THREE.Group();
@@ -418,6 +429,14 @@ export class Traffic {
     }
     return calls;
   }
+  wakeHeightAt(x, z, t) {
+    let height = 0;
+    for (const b of this.boats) if (b.active && b.kind !== 'canoe') {
+      const scale = b.kind === 'air' ? 0.18 : b.kind === 'cruiser' ? 0.13 : 0.105;
+      height += wakeSampleAt(b.x, b.z, b.heading, b.speed, b.max, scale, x, z, t);
+    }
+    return Math.max(-0.24, Math.min(0.24, height));
+  }
   snapshot() {
     return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), active: b.active, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions }));
   }
@@ -484,9 +503,12 @@ export class Traffic {
       const fx0 = -Math.sin(b.heading), fz0 = -Math.cos(b.heading);
       let cruise = b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise;
       let want = cruise * (bs < 1.5 ? 0.45 : 1); if (d < 30 && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5; // slow for the player ahead
-      if (b.kind === 'canoe' && d < 28 && P.speed > 4) {
+      const playerWake = d < 100 ? wakeSampleAt(bx, bz, P.heading, P.speed, 18, 0.2, b.x, b.z, t) : 0;
+      if (b.kind === 'canoe' && d < 72 && P.speed > 4 && Math.abs(playerWake) > 0.012) {
         want *= 0.12; const cross = pf.x * (b.z - bz) - pf.y * (b.x - bx); b.routeBias = cross > 0 ? -0.65 : 0.65;
         if (b.wakeT <= 0) { b.wakeT = 12; this.fx.game.toast('“Easy on the wake.”', `${b.profile.callsign} · water survey under paddle`, 2.4); }
+      } else if (b.workRig?.visible && P.speed > 4.5 && Math.abs(playerWake) > 0.022 && b.wakeT <= 0) {
+        b.wakeT = 14; this.fx.game.toast('“No wake. Gear in the water.”', `${b.profile.callsign} · ${b.profile.job}`, 2.5);
       }
       b.turn += (best * 2.2 - b.turn) * (1 - Math.exp(-dt * 3)); b.heading += b.turn * dt;
       b.speed += (want - b.speed) * (1 - Math.exp(-dt * 0.7));
@@ -496,8 +518,9 @@ export class Traffic {
       b.z += (fz * b.speed + (flow ? flow.y : 0)) * dt + b.shz * dt;
       const sk = Math.exp(-dt * 2); b.shx *= sk; b.shz *= sk;
       const gh = this.T.heightAt(b.x, b.z); b.ground = gh > -0.5 ? b.ground + dt : 0; if (gh > -0.5) b.speed *= 0.9;
-      const wy = waveFn(b.x, b.z, t);
-      b.roll += ((-b.turn * b.speed * 0.02) - b.roll) * (1 - Math.exp(-dt * 4)); b.pitch += ((b.speed * (b.kind === 'air' ? 0.004 : 0.007)) - b.pitch) * (1 - Math.exp(-dt * 3));
+      const wy = waveFn(b.x, b.z, t) + playerWake;
+      const wakeSide = Math.sign((b.x - bx) * -Math.cos(P.heading) + (b.z - bz) * Math.sin(P.heading));
+      b.roll += ((-b.turn * b.speed * 0.02 + playerWake * wakeSide * 0.52) - b.roll) * (1 - Math.exp(-dt * 4)); b.pitch += ((b.speed * (b.kind === 'air' ? 0.004 : 0.007) + playerWake * 0.18) - b.pitch) * (1 - Math.exp(-dt * 3));
       b.mesh.position.set(b.x, wy + (b.kind === 'air' ? -0.27 : b.kind === 'john' || b.kind === 'canoe' ? -0.05 : 0), b.z); b.mesh.rotation.set(b.pitch, b.heading, b.roll, 'YXZ');
       if (b.kind === 'air') { b.prop.rotation.z += dt * (8 + b.speed * 8); b.blur.material.opacity = Math.min(0.35, b.speed / b.max * 0.4); for (const r of b.rudders) r.rotation.y = -b.turn * 0.25; }
       else if (b.kind === 'john') b.mesh.userData.motor.rotation.y = -b.turn * 0.3;

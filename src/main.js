@@ -176,6 +176,7 @@ async function init() {
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
   const life = new Life({ terrain, scene, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
+  const playerWater = (x, z, t) => water.waveHeight(x, z, t) + life.traffic.wakeHeightAt(x, z, t);
   world.fx = { plume, spray, audio, fish: life.fish }; world.onShot = (x, z) => { waders.flushNear && waders.flushNear(x, z, 140); };
   birds.audio = audio; gators.audio = audio;
   gators.onCharge = (g) => game.gatorCharge(g);
@@ -303,7 +304,7 @@ async function init() {
 
     if (!game.paused) {
       if (started) currents.flowAt(phys.pos.x, phys.pos.y, currentFlow); else currentFlow.set(0, 0);
-      phys.update(dt, input, (x, z, t) => water.waveHeight(x, z, t), time, currentFlow);
+      phys.update(dt, input, playerWater, time, currentFlow);
     }
     else { phys.impact = 0; phys.hit = 0; phys.landedFrame = false; }
     environment.applyPhysics(dt);
