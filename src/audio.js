@@ -153,6 +153,23 @@ export class EngineAudio {
     reel.gain.gain.setTargetAtTime(active * (0.022 + strain * 0.026), now, active ? 0.035 : 0.09);
     reel.ratchet.frequency.setTargetAtTime(72 + strain * 76, now, 0.045); reel.bp.frequency.setTargetAtTime(760 + strain * 720, now, 0.08);
   }
+  // A mature funnel reuses the engine's retained ambient noise source. The two filters and their spatial output are
+  // created only when a waterspout first comes within earshot, then faded and reused for every later event.
+  waterspout(level = 0, x, z) {
+    if (!this.ctx || (!this.spoutAudio && level <= 0.001)) return; const ctx = this.ctx, now = ctx.currentTime;
+    if (!this.spoutAudio) {
+      const panner = this.persistentSpatialOutput(), destination = panner || this.sfx;
+      const roar = ctx.createBiquadFilter(); roar.type = 'bandpass'; roar.frequency.value = 185; roar.Q.value = 0.52;
+      const spray = ctx.createBiquadFilter(); spray.type = 'bandpass'; spray.frequency.value = 1380; spray.Q.value = 0.4;
+      const roarGain = ctx.createGain(); roarGain.gain.value = 0; const sprayGain = ctx.createGain(); sprayGain.gain.value = 0;
+      this.amb.connect(roar); this.amb.connect(spray); roar.connect(roarGain); spray.connect(sprayGain); roarGain.connect(destination); sprayGain.connect(destination);
+      this.spoutAudio = { panner, roar, spray, roarGain, sprayGain };
+    }
+    const graph = this.spoutAudio, audible = clampAudio(level);
+    graph.roarGain.gain.setTargetAtTime(audible * 0.19, now, audible ? 0.14 : 0.4); graph.sprayGain.gain.setTargetAtTime(audible * 0.12, now, audible ? 0.11 : 0.34);
+    graph.roar.frequency.setTargetAtTime(155 + audible * 105, now, 0.22); graph.spray.frequency.setTargetAtTime(1120 + audible * 760, now, 0.18);
+    this.setPersistentPan(graph.panner, x, z, 0.96);
+  }
   // A VHF carrier opening or dropping: filtered static and the small relay click from the set in the boat.
   // Dialogue stays legible as captions; this cue makes it feel like radio traffic without synthetic speech.
   radio(open = true, priority = 1) {

@@ -23,7 +23,7 @@ function makeHazards() {
     scene, phys, game, environment,
     terrain: { heightAt: () => -1 }, world: { blockedAt: () => false },
     water: { level: 0, waveHeight: () => 0 }, currents: { flowAt: (x, z, out) => out.set(0, 0) },
-    audio: { knock() {}, splash() {}, shot() {}, warn() {} }, condition: { damage() {}, powerCut: 0 },
+    audio: { knock() {}, splash() {}, shot() {}, warn() {}, waterspout() {} }, condition: { damage() {}, powerCut: 0 },
     plume: { emit() {} }, spray: { emit() {} },
   });
   return { hazards, phys, game };
@@ -72,4 +72,11 @@ test('storm wake stamps reuse their retained objects and omit debris while it is
   debris.airborne = true;
   const airborneFrame = []; hazards.stamps(airborneFrame);
   assert.equal(airborneFrame.length, 0);
+});
+
+test('a waterspout publishes its cloud motion and one special marine warning', () => {
+  const { hazards } = makeHazards(); let reported = null;
+  hazards.radio = { waterspoutCall(spout) { reported = spout; } };
+  assert.equal(hazards.spawnSpout(true, true), true);
+  assert.equal(reported, hazards.spout); assert.ok(Math.hypot(hazards.spout.motionX, hazards.spout.motionZ) >= 5.15);
 });

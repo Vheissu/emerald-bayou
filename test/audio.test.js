@@ -99,6 +99,17 @@ test('fishing reel audio is lazy and reuses one graph while tension changes', ()
   assert.equal(audio.fishingReelGraph, graph); assert.deepEqual(ctx.counts, { oscillators: 1, gains: 1, filters: 1 });
 });
 
+test('waterspout audio is lazy and reuses one spatial graph fed by the retained noise bed', () => {
+  const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx; audio.sfx = {}; audio.amb = { connect() {} };
+  audio.waterspout(0); assert.deepEqual(ctx.counts, { oscillators: 0, gains: 0, filters: 0 });
+  audio.setListener(0, 0, 0, -1); audio.waterspout(0.6, 20, 0);
+  assert.deepEqual(ctx.counts, { oscillators: 0, gains: 2, filters: 2 }); assert.equal(ctx.allocations.panners.length, 1);
+  const graph = audio.spoutAudio, panner = graph.panner;
+  audio.waterspout(0.9, -20, 0); audio.waterspout(0);
+  assert.equal(audio.spoutAudio, graph); assert.equal(graph.panner, panner); assert.equal(ctx.allocations.panners.length, 1);
+  assert.equal(panner.pan.value, -0.96); assert.deepEqual(ctx.counts, { oscillators: 0, gains: 2, filters: 2 });
+});
+
 test('night-life ambience changes the existing bed without allocating another graph', () => {
   const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx;
   audio.nightLife(2); assert.equal(audio.nightLifeLevel, 1);

@@ -214,6 +214,14 @@ export class RadioDirector {
     this.transmit({ channel: 'WX-3', speaker: call[0], text: call[1], priority, duration: priority >= 3 ? 7 : undefined, key: `weather:${key}`, cooldown: 90 });
   }
 
+  waterspoutCall() {
+    return this.transmit({
+      channel: 'WX-3', speaker: 'MARINE WX-3',
+      text: 'Special marine warning. Waterspout reported in the backcountry. Small craft do not approach. If it bears down, turn ninety degrees off its apparent track.',
+      priority: 4, duration: 7.4, key: `weather:waterspout:${Math.floor(this.clock / 30)}`, cooldown: 24,
+    });
+  }
+
   regionCall(region) {
     const text = REGION_ENTRY[region.id]; if (!text) return;
     this.transmit({ channel: 'CH 68', speaker: 'MARA KEENE · TOWER', text, priority: 1, key: `region:${region.id}`, cooldown: 150 });
