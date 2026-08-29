@@ -8,6 +8,14 @@ const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const lerp = (a, b, t) => a + (b - a) * t;
 
+export function surfaceMistEnvelope({ hour = 12, fog = 0, rain = 0, wind = 0, storm = 0 } = {}) {
+  const dawnCooling = Math.exp(-Math.pow((hour - 6.35) / 1.75, 2));
+  const calm = 1 - smooth(5, 18, wind);
+  const weatherFog = smooth(0.0006, 0.0031, fog) * 0.88;
+  const rainCooling = smooth(0.22, 0.86, rain) * calm * (1 - smooth(0.52, 1, storm)) * 0.2;
+  return clamp(weatherFog + dawnCooling * calm * 0.58 + rainCooling);
+}
+
 // Wind values are metres per second. A hurricane is intentionally uncommon in the natural
 // sequence, but it is a fully simulated state rather than a cosmetic preset.
 const WEATHER = {
@@ -418,6 +426,11 @@ export class Environment {
     fog.fogMax.value = lerp(0.6, 0.94, this.restrictedVisibility);
     fog.bloomAmt.value = lerp(0.18, 0.1, daylight) + V.rain * 0.03 + this.restrictedVisibility * (this.spotOn ? 0.065 : 0.022);
     fog.sunDir.value.copy(this.lightDir);
+    fog.mistAmount.value = surfaceMistEnvelope({ hour: this.hour, fog: V.fog, rain: V.rain, wind: V.wind * this.gust, storm: V.storm });
+    fog.mistLevel.value = this.waterLevel;
+    fog.mistHeight.value = lerp(2.35, 4.1, this.restrictedVisibility) + V.rain * 0.35;
+    fog.mistTime.value = realTime;
+    fog.mistWind.value.set(this.windDir.x, this.windDir.z).multiplyScalar(V.wind * 0.12);
 
     this.precip.update(dt, camera, this.windDir, V.rain, V.hail, this.waterLevel);
     if (this.audio && this.audio.weather) this.audio.weather(V.wind * this.gust, V.rain, night, V.storm);

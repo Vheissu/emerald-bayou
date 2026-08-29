@@ -56,14 +56,16 @@ export class Pipeline {
     }));
     this.grade = quadPass(new THREE.ShaderMaterial({
       uniforms: {
-        tColor: { value: this.compRT.texture }, tDepth: { value: depthB }, tBloom: { value: this.bloomA.texture },
+        tColor: { value: this.compRT.texture }, tDepth: { value: depthB }, tBloom: { value: this.bloomA.texture }, tNoise: { value: null },
         near: { value: camera.near }, far: { value: camera.far }, exposure: { value: 1.0 },
         fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, fogMax: { value: 0.6 }, bloomAmt: { value: 0.12 }, bloomQuality: { value: this.bloomEnabled ? 1 : 0 },
+        mistAmount: { value: 0 }, mistQuality: { value: quality.surfaceMist ?? 0 }, mistLevel: { value: 0 }, mistHeight: { value: 2.8 }, mistTime: { value: 0 }, mistWind: { value: new THREE.Vector2() },
         invProj: { value: new THREE.Matrix4() }, camMat: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       },
       vertexShader: QUAD_VS,
       fragmentShader: `
-        uniform sampler2D tColor, tDepth, tBloom; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt, bloomQuality; uniform vec3 fogColor, sunDir;
+        uniform sampler2D tColor, tDepth, tBloom, tNoise; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt, bloomQuality; uniform vec3 fogColor, sunDir;
+        uniform float mistAmount, mistQuality, mistLevel, mistHeight, mistTime; uniform vec2 mistWind;
         uniform mat4 invProj, camMat; varying vec2 vUv;
         vec3 aces(vec3 x) { const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14; return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0); }
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
@@ -71,7 +73,7 @@ export class Pipeline {
           vec3 c = texture2D(tColor, vUv).rgb;
           float d = texture2D(tDepth, vUv).r;
           // view ray for aerial perspective tint
-          vec4 vp = invProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0); vec3 vdir = normalize((camMat * vec4(vp.xyz / vp.w, 0.0)).xyz);
+          vec4 vp = invProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0); vec3 viewRay = normalize(vp.xyz / vp.w); vec3 vdir = normalize((camMat * vec4(viewRay, 0.0)).xyz);
           float sunAmt = pow(max(dot(vdir, sunDir), 0.0), 8.0);
           vec3 fc = mix(fogColor, vec3(0.95, 0.9, 0.8), sunAmt * 0.5);
           if (d < 0.99999) {
@@ -80,6 +82,24 @@ export class Pipeline {
             float f = 1.0 - exp(-dist * fogDensity);
             f = clamp(f, 0.0, fogMax);
             c = mix(c, fc * 1.05, f);
+            // Low fog has a real height instead of tinting the entire view equally. Reconstructing the endpoint makes
+            // open water and lower trunks carry the bank while the tops of cypress remain visible above it.
+            float mistStrength = mistAmount * mistQuality;
+            if (mistStrength > 0.001) {
+              float rayDist = min(z / max(-viewRay.z, 0.05), 900.0);
+              vec3 cameraWorld = camMat[3].xyz;
+              vec3 worldPos = cameraWorld + vdir * rayDist;
+              float h0 = max(cameraWorld.y - mistLevel, 0.0), h1 = max(worldPos.y - mistLevel, 0.0);
+              float heightDensity = (exp(-h0 / mistHeight) + exp(-h1 / mistHeight)) * 0.5;
+              vec2 drift = mistWind * mistTime;
+              float broad = texture2D(tNoise, worldPos.xz * 0.0022 - drift * 0.0022).r;
+              float detail = texture2D(tNoise, worldPos.xz * 0.0061 - drift * 0.0047 + 0.37).g;
+              float patchDensity = mix(0.52, 1.28, smoothstep(0.18, 0.82, broad * 0.7 + detail * 0.3));
+              float bank = (1.0 - exp(-rayDist * 0.0032 * heightDensity * patchDensity)) * mistStrength;
+              bank *= smoothstep(18.0, 75.0, rayDist);
+              bank = clamp(bank, 0.0, 0.42 * mistStrength);
+              c = mix(c, fc * 1.035, bank);
+            }
           }
           c += texture2D(tBloom, vUv).rgb * bloomAmt * bloomQuality;
           c *= exposure;
@@ -154,7 +174,10 @@ export class Pipeline {
   }
   setQuality(quality = {}) {
     this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false;
-    if (this.grade) this.grade.material.uniforms.bloomQuality.value = this.bloomEnabled ? 1 : 0;
+    if (this.grade) {
+      this.grade.material.uniforms.bloomQuality.value = this.bloomEnabled ? 1 : 0;
+      this.grade.material.uniforms.mistQuality.value = quality.surfaceMist ?? 0;
+    }
   }
   resize(w, h) {
     w = Math.max(1, Math.floor(w)); h = Math.max(1, Math.floor(h));
@@ -175,7 +198,7 @@ export class Pipeline {
     const sceneBytes = pixels * 12 * (1 + samples);
     const compositeBytes = pixels * 12, postBytes = pixels * 4 + (this.finalEnabled ? pixels * 4 : 4);
     const bloomBytes = this.bloomEnabled ? Math.floor(width / 4) * Math.floor(height / 4) * 16 : 16;
-    return { width, height, pixels, samples, bloom: this.bloomEnabled, finalPass: this.finalEnabled, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
+    return { width, height, pixels, samples, bloom: this.bloomEnabled, finalPass: this.finalEnabled, surfaceMist: this.grade.material.uniforms.mistQuality.value, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
   }
   // scene: opaque world. overlays: array of scenes rendered on top (water, fx)
   render(scene, camera, overlays, mode = 'full') {

@@ -172,6 +172,7 @@ async function init() {
 
   // ---- post ----
   const pipeline = new Pipeline(renderer, camera, renderProfile);
+  pipeline.grade.material.uniforms.tNoise.value = groundTex.noise;
   pipeline.grade.material.uniforms.sunDir.value.copy(SUN_DIR);
   pipeline.reflTexture = water.reflRT.texture;
   water.uniforms.tRefr.value = pipeline.sceneRT.texture;
