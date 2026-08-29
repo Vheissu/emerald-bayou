@@ -132,12 +132,14 @@
   #fade { position:fixed; inset:0; background:#000; opacity:0; pointer-events:none; transition:opacity .4s; z-index:4; }
   #fade.on { opacity:1; }
   /* overlays */
-  .overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:14px;
-    background:linear-gradient(90deg, rgba(6,18,14,0.9) 0%, rgba(6,18,14,0.55) 60%, rgba(6,18,14,0.3) 100%); color:var(--foam); transition:opacity .5s; z-index:5; }
-  .overlay.hidden { opacity:0; pointer-events:none; }
-  #start { cursor:pointer; box-sizing:border-box; align-items:flex-start; justify-content:flex-end; padding:0 7vw 9vh;
-    background:linear-gradient(90deg,rgba(3,10,8,0.94) 0%,rgba(3,10,8,0.73) 36%,rgba(3,10,8,0.16) 72%),linear-gradient(0deg,rgba(3,10,8,0.82),transparent 55%); }
-  #start .start-panel { width:min(720px,70vw); padding-left:22px; border-left:3px solid var(--marker); }
+  button { font:inherit; }
+  [hidden] { display:none !important; }
+  .overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:14px; visibility:visible;
+    background:linear-gradient(90deg, rgba(6,18,14,0.9) 0%, rgba(6,18,14,0.55) 60%, rgba(6,18,14,0.3) 100%); color:var(--foam); transition:opacity .35s,visibility 0s; z-index:5; }
+  .overlay.hidden { opacity:0; pointer-events:none; visibility:hidden; transition:opacity .35s,visibility 0s .35s; }
+  #start { box-sizing:border-box; display:grid; grid-template-columns:minmax(0,1fr) minmax(310px,390px); align-items:end; gap:clamp(42px,7vw,120px); padding:7vh 6vw 8vh;
+    background:linear-gradient(90deg,rgba(3,10,8,0.95) 0%,rgba(3,10,8,0.76) 35%,rgba(3,10,8,0.11) 72%),linear-gradient(0deg,rgba(3,10,8,0.88),transparent 58%); }
+  #start .start-panel { width:min(760px,100%); padding-left:22px; border-left:3px solid var(--marker); }
   #start .kicker { margin:0 0 13px; color:var(--gold); font-size:12px; font-weight:600; letter-spacing:0.32em; text-transform:uppercase; }
   #start h1, #menu h1 { font-weight:600; font-size:64px; letter-spacing:0.16em; margin:0; text-transform:uppercase; line-height:1; }
   #start h1 { font-size:clamp(58px,7.3vw,108px); letter-spacing:0.08em; line-height:0.88; text-shadow:0 4px 34px rgba(0,0,0,0.5); }
@@ -147,20 +149,43 @@
   #start .meta { margin-top:15px; font-size:11px; letter-spacing:0.19em; opacity:0.62; text-transform:uppercase; }
   #start .controls { margin-top:28px; padding-top:14px; border-top:1px solid rgba(243,237,224,0.19); font-size:12px; letter-spacing:0.11em; line-height:1.8; opacity:0.76; text-transform:uppercase; }
   #start .controls b { color:var(--foam); font-weight:600; }
-  #start .go { display:inline-flex; align-items:baseline; gap:16px; margin-top:21px; padding:11px 16px 10px; background:var(--marker); color:#1b160e; font-size:18px; font-weight:700; letter-spacing:0.24em; text-transform:uppercase; box-shadow:0 8px 30px rgba(0,0,0,0.3); }
-  #start .go small { font-size:10px; font-weight:600; letter-spacing:0.12em; opacity:0.68; }
+  #start .title-actions { align-self:end; min-width:0; padding:17px 0 5px; border-top:1px solid rgba(243,237,224,0.26); border-bottom:1px solid rgba(243,237,224,0.16); }
+  #start .action-label { margin:0 16px 10px; color:var(--gold); font-size:10px; font-weight:650; letter-spacing:0.28em; text-transform:uppercase; }
+  #start .title-action { position:relative; display:block; width:100%; box-sizing:border-box; padding:13px 16px 12px 19px; border:0; border-left:3px solid transparent; background:rgba(5,14,11,0.28); color:var(--foam); text-align:left; cursor:pointer; transition:background .16s,border-color .16s,transform .16s; }
+  #start .title-action + .title-action { margin-top:2px; }
+  #start .title-action:hover, #start .title-action:focus-visible { outline:none; border-left-color:var(--marker); background:rgba(243,237,224,0.1); transform:translateX(3px); }
+  #start .title-action.primary { border-left-color:var(--marker); background:var(--marker); color:#1b160e; box-shadow:0 12px 34px rgba(0,0,0,0.28); }
+  #start .title-action.primary:hover, #start .title-action.primary:focus-visible { background:#ff8a3c; }
+  #start .title-action.danger { border-left-color:#d45642; background:rgba(80,25,18,0.48); }
+  #start .title-action .action-name { display:flex; align-items:center; justify-content:space-between; gap:14px; font-size:18px; font-weight:700; letter-spacing:0.18em; text-transform:uppercase; }
+  #start .title-action .action-name::after { content:"›"; font-size:24px; font-weight:400; line-height:.7; opacity:.58; }
+  #start .title-action .action-detail { display:block; margin-top:5px; font-family:"Avenir Next","Futura",sans-serif; font-size:12px; line-height:1.35; letter-spacing:0.025em; opacity:.68; }
+  #start .title-action.primary .action-detail { opacity:.72; }
+  #start .title-foot { display:flex; justify-content:space-between; gap:16px; margin:12px 16px 0; font-size:10px; letter-spacing:.14em; text-transform:uppercase; opacity:.54; }
   #loading { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); color:#cfe3d5; font-size:13px; letter-spacing:0.2em; text-transform:uppercase; z-index:6; }
-  /* mission menu */
-  #menu { align-items:flex-start; justify-content:flex-start; padding:44px 0 0 64px; gap:6px; background:linear-gradient(90deg, rgba(6,18,14,0.92) 0%, rgba(6,18,14,0.78) 55%, rgba(6,18,14,0.35) 100%); }
-  #menu .cols { display:grid; grid-template-columns: minmax(420px, 560px) 300px; gap:56px; align-items:start; width:min(100%, 1100px); }
-  #menu h1 { font-size:40px; }
-  #menu .lead { font-size:14px; letter-spacing:0.2em; text-transform:uppercase; opacity:0.75; margin-bottom:14px; }
-  #menu .list { display:flex; flex-direction:column; gap:1px; max-height:calc(100vh - 290px); overflow-y:auto; padding-right:10px; scrollbar-width:thin; scrollbar-color:rgba(243,237,224,0.22) transparent; }
+  /* full pause shell: DOM only, so opening it does not allocate another 3D scene */
+  #menu { box-sizing:border-box; display:grid; grid-template-columns:96px minmax(0,1fr); grid-template-rows:minmax(0,1fr) 58px; padding:0; gap:0; overflow:hidden; background:linear-gradient(90deg,rgba(3,10,8,0.96) 0%,rgba(3,10,8,0.88) 48%,rgba(3,10,8,0.56) 100%); }
+  #menu:focus { outline:none; }
+  #menu .menu-rail { grid-row:1 / 3; display:flex; flex-direction:column; align-items:stretch; padding:23px 10px 16px; border-right:1px solid rgba(243,237,224,.13); background:rgba(4,13,10,.55); }
+  #menu .rail-mark { display:grid; place-items:center; width:42px; height:42px; margin:0 auto 27px; border:1px solid rgba(229,192,99,.55); color:var(--gold); font-size:17px; font-weight:700; letter-spacing:.05em; }
+  #menu .rail-tab { appearance:none; min-height:61px; padding:8px 4px; border:0; border-left:3px solid transparent; background:transparent; color:rgba(243,237,224,.48); cursor:pointer; font-size:10px; font-weight:650; letter-spacing:.13em; text-transform:uppercase; transition:background .15s,color .15s,border-color .15s; }
+  #menu .rail-tab span { display:block; margin-bottom:5px; font-size:17px; letter-spacing:0; }
+  #menu .rail-tab:hover, #menu .rail-tab:focus-visible { outline:none; color:var(--foam); background:rgba(243,237,224,.06); }
+  #menu .rail-tab.active { border-left-color:var(--marker); color:var(--foam); background:rgba(243,237,224,.09); }
+  #menu .rail-status { margin-top:auto; padding:10px 3px 0; color:var(--gold); font-size:9px; line-height:1.5; letter-spacing:.12em; text-align:center; text-transform:uppercase; }
+  #menu .menu-stage { min-width:0; overflow:auto; padding:clamp(30px,5vh,58px) clamp(30px,5vw,74px) 30px; scrollbar-width:thin; scrollbar-color:rgba(243,237,224,.22) transparent; }
+  #menu .menu-view { width:min(1220px,100%); margin:0 auto; }
+  #menu .menu-head { display:grid; grid-template-columns:minmax(0,1fr) minmax(220px,400px); gap:32px; align-items:end; margin-bottom:27px; padding-bottom:17px; border-bottom:1px solid rgba(243,237,224,.2); }
+  #menu .menu-head > div > p { margin:0 0 7px; color:var(--gold); font-size:10px; font-weight:650; letter-spacing:.28em; text-transform:uppercase; }
+  #menu h1 { font-size:clamp(35px,4.2vw,61px); letter-spacing:.1em; }
+  #menu .menu-head .menu-copy { margin:0; font-family:"Avenir Next","Futura",sans-serif; font-size:14px; line-height:1.5; opacity:.68; }
+  #menu .menu-grid { display:grid; grid-template-columns:minmax(420px,1.65fr) minmax(270px,.8fr); gap:clamp(28px,4vw,58px); align-items:start; }
+  #menu .list { display:flex; flex-direction:column; gap:2px; max-height:calc(100vh - 280px); overflow-y:auto; padding-right:10px; scrollbar-width:thin; scrollbar-color:rgba(243,237,224,0.22) transparent; }
   #menu .list::-webkit-scrollbar { width:4px; }
   #menu .list::-webkit-scrollbar-thumb { background:rgba(243,237,224,0.22); }
   #menu .list::-webkit-scrollbar-track { background:transparent; }
-  #menu .m { display:grid; grid-template-columns: 30px 1fr auto; gap:12px; align-items:baseline; padding:6px 12px; cursor:pointer; border-left:3px solid transparent; }
-  #menu .m:hover, #menu .m.sel { background:rgba(243,237,224,0.08); border-left-color:var(--marker); }
+  #menu .m { appearance:none; display:grid; grid-template-columns:30px 1fr auto; gap:12px; align-items:baseline; width:100%; padding:8px 12px; border:0; border-left:3px solid transparent; background:rgba(4,13,10,.22); color:var(--foam); text-align:left; cursor:pointer; }
+  #menu .m:hover, #menu .m:focus-visible, #menu .m.sel { outline:none; background:rgba(243,237,224,0.08); border-left-color:var(--marker); }
   #menu .m.locked { opacity:0.38; cursor:default; }
   #menu .m .n { font-size:16px; opacity:0.6; font-variant-numeric: tabular-nums; }
   #menu .m .t { font-size:21px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }
@@ -170,13 +195,12 @@
   #menu .m .best { font-size:13px; letter-spacing:0.08em; text-transform:uppercase; color:var(--gold); text-align:right; white-space:nowrap; }
   #menu .m .best i { font-style:normal; margin-left:8px; opacity:0.7; color:var(--foam); }
   #menu .m.done .n { color:var(--gold); opacity:1; }
-  #menu .foot { margin-top:14px; font-size:13px; letter-spacing:0.16em; text-transform:uppercase; opacity:0.7; }
-  #menu .stats { margin-top:14px; font-size:15px; letter-spacing:0.08em; }
+  #menu .foot { margin-top:14px; font-size:11px; letter-spacing:0.16em; text-transform:uppercase; opacity:0.58; }
+  #menu .stats { margin-top:16px; padding-top:13px; border-top:1px solid rgba(243,237,224,.12); font-size:15px; letter-spacing:0.08em; }
   #menu .stats b { color:var(--gold); }
   #menu .stats .world { display:block; margin-top:5px; font-size:13px; opacity:0.78; text-transform:uppercase; letter-spacing:0.13em; }
-  #menu .side { padding-top:64px; }
-  #menu .side .h { font-size:13px; letter-spacing:0.2em; text-transform:uppercase; opacity:0.7; margin:0 0 8px; padding-bottom:6px; border-bottom:1px solid rgba(243,237,224,0.25); }
-  #menu .side .bl, #menu .side .rl { margin-bottom:28px; }
+  #menu .menu-card { margin-bottom:18px; padding:17px 18px; border-top:2px solid rgba(229,192,99,.46); background:rgba(4,13,10,.4); }
+  #menu .menu-card .h { margin:0 0 11px; padding-bottom:8px; border-bottom:1px solid rgba(243,237,224,0.18); font-size:11px; font-weight:650; letter-spacing:.22em; text-transform:uppercase; opacity:.74; }
   #menu .b { display:grid; grid-template-columns: 18px 1fr auto; gap:8px; padding:5px 0; font-size:15px; align-items:baseline; }
   #menu .b .chk { color:var(--gold); }
   #menu .b .bt i { font-style:normal; opacity:0.6; }
@@ -186,6 +210,29 @@
   #menu .r { display:flex; justify-content:space-between; padding:4px 0; font-size:15px; }
   #menu .r b { color:var(--gold); font-weight:600; font-variant-numeric: tabular-nums; }
   #menu .keys { font-size:13px; line-height:1.7; opacity:0.75; letter-spacing:0.04em; }
+  #menu .world-grid, #menu .records-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+  #menu .world-grid .menu-card, #menu .records-grid .menu-card { margin:0; min-width:0; }
+  #menu .kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1px; background:rgba(243,237,224,.1); }
+  #menu .kpi { padding:16px 13px; background:rgba(4,13,10,.82); }
+  #menu .kpi b { display:block; color:var(--gold); font-size:25px; font-weight:600; font-variant-numeric:tabular-nums; }
+  #menu .kpi span { display:block; margin-top:4px; font-size:9px; letter-spacing:.14em; text-transform:uppercase; opacity:.6; }
+  #menu .standing { display:grid; grid-template-columns:112px 1fr auto; gap:10px; padding:8px 0; border-bottom:1px solid rgba(243,237,224,.08); font-size:14px; }
+  #menu .standing:last-child { border-bottom:0; }
+  #menu .standing span { text-transform:uppercase; letter-spacing:.1em; opacity:.62; }
+  #menu .standing b { color:var(--gold); font-weight:600; }
+  #menu .standing em { align-self:center; color:var(--foam); font-size:12px; font-style:normal; font-variant-numeric:tabular-nums; opacity:.55; }
+  #menu .deed { padding:8px 0; border-bottom:1px solid rgba(243,237,224,.08); font-family:"Avenir Next","Futura",sans-serif; font-size:13px; line-height:1.4; opacity:.78; }
+  #menu .deed:last-child { border-bottom:0; }
+  #menu .deed b { margin-right:8px; color:var(--gold); font-family:"Avenir Next Condensed","Avenir Next",sans-serif; font-size:10px; letter-spacing:.13em; text-transform:uppercase; }
+  #menu .system-list { width:min(760px,100%); }
+  #menu .system-action { appearance:none; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:18px; width:100%; padding:16px 17px; border:0; border-left:3px solid transparent; border-bottom:1px solid rgba(243,237,224,.1); background:rgba(4,13,10,.36); color:var(--foam); text-align:left; cursor:pointer; }
+  #menu .system-action:hover, #menu .system-action:focus-visible, #menu .system-action.sel { outline:none; border-left-color:var(--marker); background:rgba(243,237,224,.09); }
+  #menu .system-action.danger { border-left-color:#d45642; background:rgba(80,25,18,.42); }
+  #menu .system-action strong { font-size:17px; letter-spacing:.14em; text-transform:uppercase; }
+  #menu .system-action small { grid-column:1; margin-top:-11px; font-family:"Avenir Next","Futura",sans-serif; font-size:12px; line-height:1.4; opacity:.58; }
+  #menu .system-action em { grid-column:2; grid-row:1 / 3; align-self:center; color:var(--gold); font-size:12px; font-style:normal; letter-spacing:.12em; text-transform:uppercase; }
+  #menu .menu-keybar { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:0 clamp(30px,5vw,74px); border-top:1px solid rgba(243,237,224,.13); background:rgba(4,13,10,.72); font-size:10px; letter-spacing:.14em; text-transform:uppercase; opacity:.72; }
+  #menu .menu-keybar b { color:var(--gold); font-weight:650; }
   /* results */
   #result { text-align:center; }
   #result h2 { font-size:48px; font-weight:600; text-transform:uppercase; letter-spacing:0.12em; margin:0; }
@@ -193,11 +240,40 @@
   #result .lines { font-size:18px; line-height:1.6; opacity:0.9; }
   #result .lines b { color:var(--gold); }
   #result .foot { margin-top:18px; font-size:13px; letter-spacing:0.16em; text-transform:uppercase; opacity:0.7; }
-  @media (max-width:700px) {
-    #start { padding:0 24px 58px; }
-    #start .start-panel { width:calc(100vw - 54px); }
+  @media (max-width:900px) {
+    #start { grid-template-columns:minmax(0,1fr) minmax(280px,340px); gap:28px; padding:5vh 4vw 6vh; }
+    #menu { grid-template-columns:1fr; grid-template-rows:66px minmax(0,1fr) 52px; }
+    #menu .menu-rail { grid-row:1; flex-direction:row; align-items:stretch; padding:7px 10px; border-right:0; border-bottom:1px solid rgba(243,237,224,.13); }
+    #menu .rail-mark { width:42px; height:42px; margin:5px 14px 0 0; flex:0 0 auto; }
+    #menu .rail-tab { min-height:0; min-width:74px; padding:5px 9px; border-left:0; border-bottom:3px solid transparent; }
+    #menu .rail-tab.active { border-left:0; border-bottom-color:var(--marker); }
+    #menu .rail-status { margin:0 0 0 auto; padding:13px 6px 0; }
+    #menu .menu-stage { grid-row:2; padding:28px 28px 22px; }
+    #menu .menu-keybar { grid-row:3; padding:0 28px; }
+    #menu .list { max-height:none; }
+  }
+  @media (max-width:760px) {
+    #start { display:block; overflow-y:auto; padding:42px 24px 36px; }
+    #start .start-panel { width:calc(100vw - 51px); }
+    #start h1 { font-size:clamp(52px,17vw,82px); }
     #start .deck { font-size:16px; }
     #start .meta { line-height:1.6; }
+    #start .controls { margin-top:18px; }
+    #start .title-actions { margin-top:28px; }
+    #start .title-foot { flex-direction:column; gap:4px; }
+    #menu .rail-mark, #menu .rail-status { display:none; }
+    #menu .menu-rail { justify-content:space-between; padding:7px 5px; }
+    #menu .rail-tab { min-width:0; flex:1; font-size:9px; letter-spacing:.08em; }
+    #menu .menu-stage { padding:22px 18px 18px; }
+    #menu .menu-head { display:block; margin-bottom:18px; }
+    #menu .menu-head .menu-copy { margin-top:10px; }
+    #menu .menu-grid, #menu .world-grid, #menu .records-grid { grid-template-columns:1fr; gap:18px; }
+    #menu .m { grid-template-columns:24px 1fr; }
+    #menu .m .best { grid-column:2; text-align:left; }
+    #menu .m .d { grid-column:2; }
+    #menu .kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    #menu .menu-keybar { padding:0 16px; font-size:9px; }
+    #menu .menu-keybar span:last-child { display:none; }
     #worldState { right:18px; top:84px; }
     #worldState .world-detail { display:none; }
     #waterRule { right:18px; bottom:200px; }
@@ -236,17 +312,24 @@
 <div id="bigmap" class="hidden"><canvas id="bigmapCanvas"></canvas><div id="bigmapLegend"></div></div>
 <div id="fade"></div>
 <div id="loading">Growing the bayou…</div>
-<div id="start" class="overlay hidden">
+<div id="start" class="overlay hidden" aria-hidden="true">
   <div class="start-panel">
-    <p class="kicker">The South Florida backcountry</p>
+    <p class="kicker">South Florida backcountry</p>
     <h1>Emerald <em>Bayou</em></h1>
-    <p class="deck">Run freight, race the creeks and stay alive when the weather turns.</p>
+    <p class="deck">Run freight. Race the cuts. Stay off FWC’s board when the weather turns.</p>
     <p class="meta">250 sq mi of open bayou &nbsp;·&nbsp; living wildlife &nbsp;·&nbsp; no road home</p>
     <p class="controls"><b>W / S</b> throttle &nbsp; <b>A / D</b> rudder &nbsp; <b>drag</b> look &nbsp; <b>L</b> spotlight<br><b>M</b> jobs &nbsp; <b>Tab</b> chart &nbsp; <b>R</b> reset</p>
-    <p class="go">Ride out <small>click anywhere</small></p>
   </div>
+  <nav class="title-actions" aria-label="Main menu">
+    <p class="action-label">Tower dock</p>
+    <button type="button" class="title-action primary" id="titlePrimary" data-title-action="continue"><span class="action-name">Ride out</span><span class="action-detail" id="titleContinueDetail">Open water from the tower dock</span></button>
+    <button type="button" class="title-action" data-title-action="jobs"><span class="action-name">Jobs &amp; story</span><span class="action-detail" id="titleJobsDetail">Sixteen jobs, resident work and Running Dark</span></button>
+    <button type="button" class="title-action" id="titleNew" data-title-action="new" hidden><span class="action-name">New game</span><span class="action-detail">Clear this hull and return to the tower dock</span></button>
+    <button type="button" class="title-action" data-title-action="graphics"><span class="action-name">Graphics</span><span class="action-detail" id="titleGraphicsDetail">Auto</span></button>
+    <div class="title-foot"><span id="titleWorldDetail">Day 1 · fair</span><span>Enter select</span></div>
+  </nav>
 </div>
-<div id="menu" class="overlay hidden"></div>
+<div id="menu" class="overlay hidden" tabindex="-1" aria-hidden="true"></div>
 <div id="result" class="overlay hidden"></div>
 <script type="module" src="/src/main.js"></script>
 </body>

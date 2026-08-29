@@ -10,6 +10,8 @@ const fmtCash = (c) => '$' + Math.round(c).toLocaleString('en-US');
 const MPH = 2.23694;
 const FT = 3.28084, MI = 1 / 1609.344;
 const HULL_SAMPLES = [-2, 0, 1.6];
+const MENU_TABS = ['jobs', 'world', 'records', 'system'];
+const esc = value => String(value ?? '').replace(/[&<>"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
 // Florida measures in feet and miles: under about a fifth of a mile in feet, then miles
 export const fmtDist = (m) => m < 300 ? `${Math.round(m * FT / 10) * 10} ft` : m < 16090 ? `${(m * MI).toFixed(m < 3219 ? 2 : 1)} mi` : `${Math.round(m * MI)} mi`;
 const MEDALS = ['BRONZE', 'SILVER', 'GOLD'];
@@ -21,8 +23,8 @@ export class Game {
     this.positionSaveT = 8;
     this.positionRestored = this.restoreBoatPosition();
     this.state = null; // active mission runtime
-    this.paused = false; this.inputLock = false; this.menuOpen = false; this.resultOpen = false;
-    this.sel = 0;
+    this.paused = false; this.playing = false; this.inputLock = false; this.menuOpen = false; this.resultOpen = false;
+    this.sel = 0; this.systemSel = 0; this.menuTab = 'jobs'; this.resetArmedUntil = 0; this.resetTimer = 0; this.persistenceDisabled = false;
     this.beacon = new Beacon(0xf07a2e, 5); this.beacon2 = new Beacon(0xf3ede0, 4.5); this.beacon2.uniforms.alpha.value = 0.35;
     this.scene.add(this.beacon.group, this.beacon2.group);
     this.el = {
@@ -83,6 +85,32 @@ export class Game {
     this.phys.reset(x, z, Math.atan2(Math.sin(heading), Math.cos(heading)));
     return true;
   }
+  hasProgress() {
+    const s = this.save, rec = s.rec || {}, story = s.story || {}, incidents = s.incidents || {};
+    const travelled = s.boatPosition && Math.hypot(Number(s.boatPosition.x) - this.startX, Number(s.boatPosition.z) - this.startZ) > 30;
+    return Boolean(
+      this.state || (s.done || []).length || Number(s.cash) || (s.camps || []).length || (s.traps || []).length || Number(s.runs)
+      || Object.values(rec).some(value => Number(value) > 0)
+      || Object.values(s.encounters || {}).some(value => Number(value) > 0)
+      || Number(incidents.heard) || (s.reputation?.deeds || []).length
+      || (story.stage && story.stage !== 'dormant') || travelled
+    );
+  }
+  newGameArmed() { return Date.now() < this.resetArmedUntil; }
+  requestNewGame() {
+    if (this.newGameArmed()) {
+      this.persistenceDisabled = true;
+      try { localStorage.removeItem(SAVE_KEY); localStorage.removeItem('emeraldBayou.save.v1'); } catch (error) { /* an unavailable store already has nothing durable to clear */ }
+      location.reload(); return true;
+    }
+    this.resetArmedUntil = Date.now() + 6000;
+    clearTimeout(this.resetTimer);
+    this.resetTimer = setTimeout(() => {
+      if (this.newGameArmed()) return;
+      this.resetArmedUntil = 0; if (this.menuOpen) this.renderMenu(); this.onResetArmed?.();
+    }, 6100);
+    if (this.menuOpen) this.renderMenu(); this.onResetArmed?.(); return false;
+  }
   captureBoatPosition() {
     const p = this.phys;
     if (!p || !this.safeBoatPosition(p.pos.x, p.pos.y, true)) return false;
@@ -94,7 +122,7 @@ export class Game {
     };
     return true;
   }
-  persist() { this.captureBoatPosition(); try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.save)); } catch (e) { /* ignore */ } }
+  persist() { if (this.persistenceDisabled) return; this.captureBoatPosition(); try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.save)); } catch (e) { /* ignore */ } }
   addCash(n) { this.save.cash += n; this.persist(); }
   unlocked(i) { return i === 0 || this.save.done.includes(this.missions[i - 1].id) || this.save.done.includes(this.missions[i].id) || this.debugUnlock; }
   unlockAll() { this.debugUnlock = true; this.renderMenu(); }
@@ -237,22 +265,29 @@ export class Game {
   }
 
   // ---- menu ----
-  openMenu() { this.menuOpen = true; this.paused = true; this.renderMenu(); this.el.menu.classList.remove('hidden'); document.getElementById('hud').classList.add('dim'); }
-  closeMenu() { this.menuOpen = false; this.paused = this.resultOpen; this.el.menu.classList.add('hidden'); if (!this.resultOpen) document.getElementById('hud').classList.remove('dim'); }
+  openMenu(tab = 'jobs') {
+    this.menuTab = MENU_TABS.includes(tab) ? tab : 'jobs'; this.menuOpen = true; this.paused = true; this.renderMenu();
+    this.el.menu.classList.remove('hidden'); this.el.menu.setAttribute('aria-hidden', 'false'); document.getElementById('hud').classList.add('dim');
+    requestAnimationFrame(() => this.el.menu.focus({ preventScroll: true }));
+  }
+  closeMenu() {
+    this.menuOpen = false; this.paused = this.resultOpen; this.el.menu.classList.add('hidden'); this.el.menu.setAttribute('aria-hidden', 'true');
+    if (!this.resultOpen) document.getElementById('hud').classList.remove('dim');
+  }
   renderMenu() {
     const rows = this.missions.map((m, i) => {
       const b = this.save.best[m.id]; const lock = !this.unlocked(i);
       let best = '';
       if (b) { best = b.score !== undefined ? `${b.score.toLocaleString()} pts` : b.time ? fmtT(b.time) : ''; if (b.medal) best += `<i>${b.medal}</i>`; }
       const goal = m.gold ? `Gold ${fmtT(m.gold)}` : m.scoreMedal ? `Gold ${m.scoreMedal[0].toLocaleString()}` : m.timeLimit ? `${fmtT(m.timeLimit)} limit` : '';
-      return `<div class="m ${i === this.sel ? 'sel' : ''} ${lock ? 'locked' : ''} ${b ? 'done' : ''}" data-i="${i}"><span class="n">${String(i + 1).padStart(2, '0')}</span><span class="t">${m.title}</span><span class="best">${lock ? 'LOCKED' : best || fmtCash(m.reward)}</span><span class="d">${lock ? 'Finish the previous job first.' : m.desc}${goal && !lock ? `<em>${goal}</em>` : ''}</span></div>`;
+      return `<button type="button" class="m ${i === this.sel ? 'sel' : ''} ${lock ? 'locked' : ''} ${b ? 'done' : ''}" data-mission="${i}" ${lock ? 'disabled' : ''}><span class="n">${String(i + 1).padStart(2, '0')}</span><span class="t">${m.title}</span><span class="best">${lock ? 'LOCKED' : best || fmtCash(m.reward)}</span><span class="d">${lock ? 'Finish the previous job first.' : m.desc}${goal && !lock ? `<em>${goal}</em>` : ''}</span></button>`;
     }).join('');
     const r = this.save.rec;
-    const rec = [
+    const records = [
       ['Top speed', r.speed ? `${Math.round(r.speed)} mph` : '—'], ['Longest air', r.air ? `${r.air.toFixed(2)} s` : '—'], ['Highest air', r.peak ? `${r.peak.toFixed(1)} m` : '—'],
       ['Biggest spin', r.spin ? `${r.spin}°` : '—'], ['Longest drift', r.drift ? `${r.drift.toFixed(1)} s` : '—'], ['Best chain', r.bank ? `${Math.round(r.bank).toLocaleString()} pts` : '—'],
       ['Longest run', r.run ? `${r.run.toFixed(1)} mi` : '—'], ['Camps found', `${this.save.camps.length}`], ['Traps recovered', `${this.save.traps.length}`],
-    ].map(([k, v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('');
+    ];
     const bl = this.bounties.today().map(b => `<div class="b ${b.done ? 'done' : ''}"><span class="chk">${b.done ? '✓' : ''}</span><span class="bt">${b.text}${b.count > 1 && !b.done ? ` <i>${b.progress} / ${b.count}</i>` : ''}</span><span class="pay">${fmtCash(b.pay)}</span></div>`).join('');
     const encounterCount = Object.values(this.save.encounters || {}).reduce((n, v) => n + (Number(v) || 0), 0);
     const incidents = this.save.incidents || {}, incidentResolved = Number(incidents.resolved) || 0, incidentHeard = Number(incidents.heard) || 0;
@@ -261,33 +296,93 @@ export class Game {
     const standing = this.reputation ? { locals: this.reputation.rank('locals'), fwc: this.reputation.rank('fwc'), runners: this.reputation.rank('runners') } : { locals: 'unproven', fwc: 'unknown hull', runners: 'unproven' };
     const storyLine = this.story ? this.story.menuLine() : 'Running Dark · not started';
     const contractLine = this.contracts ? this.contracts.menuLine() : 'no resident work logged';
-    this.el.menu.innerHTML = `<div class="cols"><div class="left"><h1>Emerald <em>Bayou</em></h1><div class="lead">Jobs on the board</div><div class="list">${rows}</div><div class="stats">Bankroll <b>${fmtCash(this.save.cash)}</b> &nbsp;·&nbsp; style points <b>${this.tricks.total.toLocaleString()}</b> &nbsp;·&nbsp; jobs done <b>${this.save.done.length} / ${this.missions.length}</b><span class="world">World encounters <b>${encounterCount}</b> &nbsp;·&nbsp; regions seen <b>${regionsSeen} / ${regionTotal}</b> &nbsp;·&nbsp; FWC citations <b>${citations}</b></span><span class="world">Live calls resolved <b>${incidentResolved} / ${incidentHeard}</b> &nbsp;·&nbsp; FWC assists <b>${Number(incidents.fwc) || 0}</b> &nbsp;·&nbsp; backchannel favors <b>${Number(incidents.runners) || 0}</b></span><span class="world">Story &nbsp;·&nbsp; <b>${storyLine}</b></span><span class="world">Resident work &nbsp;·&nbsp; <b>${contractLine}</b></span><span class="world">Standing &nbsp;·&nbsp; locals <b>${standing.locals}</b> &nbsp;·&nbsp; FWC <b>${standing.fwc}</b> &nbsp;·&nbsp; backchannel <b>${standing.runners}</b></span></div><div class="foot">↑ ↓ choose &nbsp;·&nbsp; Enter start &nbsp;·&nbsp; M / Esc back to the water</div></div>
-      <div class="side"><div class="h">Today's bounties</div><div class="bl">${bl}</div><div class="h">Records</div><div class="rl">${rec}</div><div class="h">On the water</div><div class="keys">W / S throttle · A / D rudder<br>In the air: S lean back, Shift lean forward, A / D spin<br>R reset · M jobs board · drag to look</div></div></div>`;
-    this.el.menu.querySelectorAll('.m').forEach(el => {
-      el.addEventListener('click', () => { const i = +el.dataset.i; if (this.unlocked(i)) { this.sel = i; this.start(i); } });
-      el.addEventListener('mouseenter', () => { const i = +el.dataset.i; if (this.unlocked(i)) { this.sel = i; this.el.menu.querySelectorAll('.m').forEach(x => x.classList.toggle('sel', +x.dataset.i === i)); } });
+    const wanted = Math.max(0, Math.min(5, Math.ceil(Number(this.law?.attention) || 0)));
+    const deeds = (this.reputation?.deeds || []).slice(-6).reverse();
+    const deedRows = deeds.length ? deeds.map(deed => `<div class="deed"><b>${esc(deed.faction)} ${deed.delta > 0 ? '+' : ''}${Number(deed.delta).toFixed(1)}</b>${esc(deed.text)}</div>`).join('') : '<div class="deed">Nobody has made up their mind about this hull yet.</div>';
+    const quality = esc(this.getQualityLabel?.() || 'Auto');
+    const resetArmed = this.newGameArmed();
+    let kicker = '', title = '', copy = '', content = '', keyHelp = '';
+    if (this.menuTab === 'jobs') {
+      kicker = 'Jobs board'; title = 'Work the water'; copy = 'Races, freight, rescues and recovery work. Finished jobs stay open for better times and repeat pay.';
+      content = `<div class="menu-grid"><div><div class="list">${rows}</div><div class="stats">Bankroll <b>${fmtCash(this.save.cash)}</b> &nbsp;·&nbsp; style <b>${this.tricks.total.toLocaleString()} pts</b> &nbsp;·&nbsp; complete <b>${this.save.done.length} / ${this.missions.length}</b></div></div><aside><section class="menu-card"><div class="h">Today's bounties</div>${bl}</section><section class="menu-card"><div class="h">Story on the water</div><div class="deed"><b>Main line</b>${esc(storyLine)}</div><div class="deed"><b>Residents</b>${esc(contractLine)}</div></section></aside></div>`;
+      keyHelp = '<span><b>↑ ↓</b> choose &nbsp; <b>Enter</b> start</span><span><b>M / Esc</b> back to the water</span>';
+    } else if (this.menuTab === 'world') {
+      kicker = 'Living world'; title = 'Water remembers'; copy = 'Calls, favors and collisions change how camps, runners and FWC receive this boat.';
+      content = `<div class="world-grid"><section class="menu-card"><div class="h">Current picture</div><div class="kpis"><div class="kpi"><b>${encounterCount}</b><span>encounters</span></div><div class="kpi"><b>${regionsSeen}/${regionTotal}</b><span>regions</span></div><div class="kpi"><b>${incidentResolved}/${incidentHeard}</b><span>calls resolved</span></div><div class="kpi"><b>${wanted ? '★'.repeat(wanted) : 'Clear'}</b><span>FWC wanted</span></div><div class="kpi"><b>${citations}</b><span>citations</span></div><div class="kpi"><b>${Number(incidents.fwc) || 0}/${Number(incidents.runners) || 0}</b><span>FWC / runners</span></div></div></section><section class="menu-card"><div class="h">Standing</div><div class="standing"><span>Locals</span><b>${esc(standing.locals)}</b><em>${this.reputation ? this.reputation.score('locals').toFixed(1) : '0.0'}</em></div><div class="standing"><span>FWC</span><b>${esc(standing.fwc)}</b><em>${this.reputation ? this.reputation.score('fwc').toFixed(1) : '0.0'}</em></div><div class="standing"><span>Backchannel</span><b>${esc(standing.runners)}</b><em>${this.reputation ? this.reputation.score('runners').toFixed(1) : '0.0'}</em></div></section><section class="menu-card"><div class="h">Open threads</div><div class="deed"><b>Story</b>${esc(storyLine)}</div><div class="deed"><b>Resident work</b>${esc(contractLine)}</div><div class="deed"><b>Conditions</b>${esc(this.getWorldLabel?.() || 'South Florida backcountry')}</div></section><section class="menu-card"><div class="h">What people remember</div>${deedRows}</section></div>`;
+      keyHelp = '<span><b>Tab / ← →</b> change section</span><span><b>Esc</b> back to the water</span>';
+    } else if (this.menuTab === 'records') {
+      kicker = 'Boat log'; title = 'Records'; copy = 'Fastest runs, biggest air and the work already put behind this hull.';
+      content = `<div class="records-grid"><section class="menu-card"><div class="h">Hull &amp; style</div>${records.slice(0, 6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}</section><section class="menu-card"><div class="h">Backcountry work</div>${records.slice(6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}<div class="r"><span>Jobs finished</span><b>${this.save.done.length} / ${this.missions.length}</b></div><div class="r"><span>Camp runs</span><b>${Number(this.save.runs) || 0}</b></div><div class="r"><span>Cash earned</span><b>${fmtCash(this.save.cash)}</b></div></section></div>`;
+      keyHelp = '<span><b>Tab / ← →</b> change section</span><span><b>Esc</b> back to the water</span>';
+    } else {
+      kicker = 'Paused'; title = 'Tower radio'; copy = 'Resume the water, set the rendering budget, or return to the title.';
+      const systemActions = [
+        ['resume', 'Resume', 'Return to the boat', 'Esc', false],
+        ['graphics', 'Graphics', 'Auto adapts after sustained frame pressure; fixed modes stay locked', quality, false],
+        ['title', 'Return to title', "Save the hull's current position and leave the water paused", 'Title', false],
+      ];
+      if (this.hasProgress()) systemActions.push(['new', resetArmed ? 'Confirm new game' : 'New game', resetArmed ? 'Select again now to clear jobs, cash, records and world history' : 'Start over at the tower dock; graphics choice is kept', resetArmed ? 'Clear save' : 'Reset', resetArmed]);
+      this.systemSel = Math.max(0, Math.min(this.systemSel, systemActions.length - 1));
+      const actions = systemActions.map(([action, name, detail, value, danger], i) => `<button type="button" class="system-action ${i === this.systemSel ? 'sel' : ''} ${danger ? 'danger' : ''}" data-action="${action}"><strong>${name}</strong><small>${detail}</small><em>${value}</em></button>`).join('');
+      content = `<div class="menu-grid"><div class="system-list">${actions}</div><aside><section class="menu-card"><div class="h">On the water</div><div class="keys">W / S throttle · A / D rudder<br>Drag to look · wheel to change camera distance<br>L spotlight · Tab chart · M jobs<br>In the air: S nose up · Shift nose down · A / D spin<br>R reset the hull</div></section></aside></div>`;
+      keyHelp = '<span><b>↑ ↓ / Enter</b> choose &nbsp; <b>Tab / ← →</b> change section</span><span><b>Esc</b> resume</span>';
+    }
+    const tabs = { jobs: ['▤', 'Jobs'], world: ['⌖', 'World'], records: ['△', 'Records'], system: ['⚙', 'System'] };
+    const rail = MENU_TABS.map(tab => `<button type="button" class="rail-tab ${tab === this.menuTab ? 'active' : ''}" data-tab="${tab}" ${tab === this.menuTab ? 'aria-current="page"' : ''}><span>${tabs[tab][0]}</span>${tabs[tab][1]}</button>`).join('');
+    this.el.menu.innerHTML = `<nav class="menu-rail" aria-label="Pause menu"><div class="rail-mark">EB</div>${rail}<div class="rail-status">${fmtCash(this.save.cash)}<br>${esc(this.getWorldShortLabel?.() || 'Open water')}</div></nav><main class="menu-stage"><section class="menu-view"><header class="menu-head"><div><p>${kicker}</p><h1>${title}</h1></div><p class="menu-copy">${copy}</p></header>${content}</section></main><footer class="menu-keybar">${keyHelp}</footer>`;
+    this.el.menu.querySelectorAll('[data-tab]').forEach(element => element.addEventListener('click', () => { this.menuTab = element.dataset.tab; this.renderMenu(); this.el.menu.focus({ preventScroll: true }); }));
+    this.el.menu.querySelectorAll('[data-mission]').forEach(element => {
+      element.addEventListener('click', () => { const i = +element.dataset.mission; if (this.unlocked(i)) { this.sel = i; this.start(i); } });
+      element.addEventListener('mouseenter', () => { const i = +element.dataset.mission; if (this.unlocked(i)) { this.sel = i; this.el.menu.querySelectorAll('.m').forEach(candidate => candidate.classList.toggle('sel', +candidate.dataset.mission === i)); } });
+    });
+    this.el.menu.querySelectorAll('[data-action]').forEach((element, index) => {
+      element.addEventListener('mouseenter', () => { this.systemSel = index; this.el.menu.querySelectorAll('.system-action').forEach((candidate, i) => candidate.classList.toggle('sel', i === index)); });
+      element.addEventListener('click', () => {
+        const action = element.dataset.action;
+        if (action === 'resume') this.closeMenu();
+        else if (action === 'graphics') { this.onCycleQuality?.(); this.renderMenu(); }
+        else if (action === 'title') this.onReturnToTitle?.();
+        else if (action === 'new') this.requestNewGame();
+      });
     });
     const selEl = this.el.menu.querySelector('.m.sel'); if (selEl) selEl.scrollIntoView({ block: 'nearest' });
   }
   onKey(e) {
+    if (!this.playing) return;
     if (this.resultOpen) {
       if (e.code === 'Enter' || e.code === 'Space') this.closeResult();
       else if (e.code === 'KeyR' && this.lastMission) { this.closeResult(); this.startMission(this.lastMission); }
       else if (e.code === 'KeyM' || e.code === 'Escape') { this.closeResult(); this.openMenu(); }
       e.preventDefault(); return;
     }
-    if (e.code === 'Tab') { e.preventDefault(); if (!this.menuOpen) { this.mapOpen ? this.closeMap() : this.openMap(); } return; }
+    if (this.menuOpen) {
+      if (e.code === 'Escape' || e.code === 'KeyM') { this.closeMenu(); e.preventDefault(); return; }
+      if (e.code === 'Tab' || e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+        const direction = e.code === 'ArrowLeft' || (e.code === 'Tab' && e.shiftKey) ? -1 : 1;
+        this.menuTab = MENU_TABS[(MENU_TABS.indexOf(this.menuTab) + MENU_TABS.length + direction) % MENU_TABS.length]; this.renderMenu(); e.preventDefault(); return;
+      }
+      if (this.menuTab === 'jobs' && (e.code === 'ArrowDown' || e.code === 'KeyS')) { do { this.sel = (this.sel + 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); e.preventDefault(); return; }
+      if (this.menuTab === 'jobs' && (e.code === 'ArrowUp' || e.code === 'KeyW')) { do { this.sel = (this.sel + this.missions.length - 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); e.preventDefault(); return; }
+      if (this.menuTab === 'system' && (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ArrowUp' || e.code === 'KeyW')) {
+        const count = Math.max(1, this.el.menu.querySelectorAll('[data-action]').length), direction = e.code === 'ArrowDown' || e.code === 'KeyS' ? 1 : -1;
+        this.systemSel = (this.systemSel + count + direction) % count; this.renderMenu(); e.preventDefault(); return;
+      }
+      if (e.code === 'Enter' || e.code === 'Space') {
+        const focused = document.activeElement;
+        if (focused?.matches?.('#menu button')) focused.click();
+        else if (this.menuTab === 'jobs' && this.unlocked(this.sel)) this.start(this.sel);
+        else if (this.menuTab === 'system') this.el.menu.querySelector('.system-action.sel')?.click();
+        e.preventDefault(); return;
+      }
+      return;
+    }
+    if (e.code === 'Tab') { e.preventDefault(); this.mapOpen ? this.closeMap() : this.openMap(); return; }
     if (this.mapOpen) { if (e.code === 'Escape' || e.code === 'KeyM') this.closeMap(); return; }
-    if (e.code === 'KeyM' || (e.code === 'Escape' && this.menuOpen)) { this.menuOpen ? this.closeMenu() : this.openMenu(); return; }
+    if (e.code === 'KeyM') { this.openMenu('jobs'); return; }
+    if (e.code === 'Escape') { this.openMenu('system'); return; }
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.story?.capturesInput(e.code)) return;
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.aftermath?.capturesInput(e.code)) return;
     if (e.code === 'KeyE' && !this.state && !this.paused) { if (this.dockJob) { if (this.unlocked(this.dockJob.i)) this.start(this.dockJob.i); else this.toast('Locked', `Finish ${this.missions[this.dockJob.i - 1].title} first`, 2); return; } if (this.dockCamp) { this.startRun(this.dockCamp); return; } if (this.atBoard) { this.openMenu(); return; } }
-    if (this.menuOpen) {
-      if (e.code === 'ArrowDown' || e.code === 'KeyS') { do { this.sel = (this.sel + 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); }
-      if (e.code === 'ArrowUp' || e.code === 'KeyW') { do { this.sel = (this.sel + this.missions.length - 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); }
-      if (e.code === 'Enter' || e.code === 'Space') { if (this.unlocked(this.sel)) this.start(this.sel); }
-      e.preventDefault(); return;
-    }
     if (e.code === 'KeyR' && this.state && (this.state.m.countdown || this.state.m.restartOnR)) { this.start(this.missions.indexOf(this.state.m)); }
   }
 

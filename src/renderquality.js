@@ -69,6 +69,15 @@ export class AdaptiveQualityController {
 
   reset() { this.resetWindow(); this.headroomWindows = 0; }
 
+  configure({ initialLevel = this.level, minLevel = this.minLevel, maxLevel = this.maxLevel } = {}) {
+    const last = QUALITY_PROFILES.length - 1;
+    this.minLevel = Math.max(0, Math.min(last, Math.round(Number.isFinite(minLevel) ? minLevel : 0)));
+    this.maxLevel = Math.max(this.minLevel, Math.min(last, Math.round(Number.isFinite(maxLevel) ? maxLevel : last)));
+    this.level = Math.max(this.minLevel, Math.min(this.maxLevel, Math.round(Number.isFinite(initialLevel) ? initialLevel : this.level)));
+    this.cooldown = 0; this.lastSample = null; this.reset();
+    return this.profile;
+  }
+
   observe(frameSeconds, active = true) {
     if (!active || !Number.isFinite(frameSeconds) || frameSeconds <= 0 || frameSeconds > 0.2) { this.resetWindow(); return null; }
     this.cooldown = Math.max(0, this.cooldown - frameSeconds);

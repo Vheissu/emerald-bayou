@@ -37,3 +37,12 @@ test('requires several clean windows before restoring quality', () => {
   for (let i = 0; i < 360; i++) { const observation = quality.observe(1 / 70, true); if (observation) change = observation; }
   assert.equal(change?.profile.id, 'balanced');
 });
+
+test('can lock a manual profile and return to an adaptive range', () => {
+  const quality = new AdaptiveQualityController({ initialLevel: 3, sampleSeconds: 1 });
+  assert.equal(quality.configure({ initialLevel: 1, minLevel: 1, maxLevel: 1 }).id, 'performance');
+  for (let i = 0; i < 120; i++) quality.observe(1 / 25, true);
+  assert.equal(quality.profile.id, 'performance');
+  assert.equal(quality.configure({ initialLevel: 2, minLevel: 0, maxLevel: 3 }).id, 'balanced');
+  assert.deepEqual(quality.snapshot().lastSample, null);
+});

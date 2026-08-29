@@ -30,22 +30,25 @@ import { Law } from './law.js';
 import { StormHazards } from './stormhazards.js';
 import { Reputation } from './reputation.js';
 import { CurrentField } from './currents.js';
-import { RegionDirector } from './regions.js';
+import { RegionDirector, regionAt } from './regions.js';
 import { RadioDirector } from './radio.js';
 import { WorldIncidents } from './incidents.js';
 import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
 import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor } from './renderquality.js';
+import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel, readQualityPreference, writeQualityPreference } from './displaysettings.js';
 import { startupPlan, startupTerrainReady } from './startup.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
-const qualityController = new AdaptiveQualityController({ initialLevel: initialQualityLevel({
+const hardwareQualityLevel = initialQualityLevel({
   deviceMemory: navigator.deviceMemory,
   hardwareConcurrency: navigator.hardwareConcurrency,
   maxTextureSize: renderer.capabilities.maxTextureSize,
   saveData: navigator.connection?.saveData === true,
-}) });
+});
+let qualityPreference = readQualityPreference();
+const qualityController = new AdaptiveQualityController(qualityControllerConfig(qualityPreference, hardwareQualityLevel));
 let renderProfile = qualityController.profile;
 renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -183,6 +186,7 @@ async function init() {
   const world = new World(terrain, scene, (x, z, t) => water.waveHeight(x, z, t)); world.phys = phys; world.wind = wind;
   veg.blocked = (x, z) => world.blockedAt(x, z);
   const game = new Game({ phys, T: terrain, scene, audio, tricks, manatees, gators, skiff, boat: boat.group, dockTie, startX, startZ, world });
+  game.paused = true; // loading and the title screen are presentation states, not unobserved play time
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
   const life = new Life({ terrain, scene, water, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
@@ -257,12 +261,13 @@ async function init() {
     chart: worldMap.memoryStats(),
   }) : null;
   window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
-    profile: renderProfile.id, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
+    profile: renderProfile.id, preference: qualityPreference, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
 
   // ---- input ----
   const keys = {};
+  let started = false;
   let encounterStressRunning = false;
   window.addEventListener('keydown', e => {
     keys[e.code] = true;
@@ -288,7 +293,7 @@ async function init() {
       document.documentElement.dataset.emeraldResource = JSON.stringify(snapshot);
       console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: snapshot.graph, terrain: snapshot.terrain, minimap: snapshot.minimap, wildlife: snapshot.wildlife, chart: snapshot.chart, fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
     }
-    if (e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
+    if (started && e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
   });
   window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
   window.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -323,8 +328,57 @@ async function init() {
   };
   window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = window.setTimeout(resize, 120); });
   const startEl = document.getElementById('start');
-  let started = false;
-  startEl.addEventListener('click', () => { audio.start(); started = true; startEl.classList.add('hidden'); });
+  const titlePrimary = document.getElementById('titlePrimary');
+  const titleNew = document.getElementById('titleNew');
+  const cashLabel = value => '$' + Math.round(value).toLocaleString('en-US');
+  const renderTitle = () => {
+    const progress = game.hasProgress(), region = regionAt(phys.pos.x, phys.pos.y), resetArmed = game.newGameArmed();
+    titlePrimary.querySelector('.action-name').textContent = progress ? 'Continue' : 'Ride out';
+    document.getElementById('titleContinueDetail').textContent = game.state
+      ? `${game.state.m.title} paused · ${region.name}`
+      : `${region.name} · day ${environment.day}, ${environment.clockLabel()} · ${cashLabel(game.save.cash)}`;
+    document.getElementById('titleJobsDetail').textContent = `${game.save.done.length} / ${game.missions.length} jobs finished · ${game.story?.menuLine() || 'Running Dark not started'}`;
+    document.getElementById('titleGraphicsDetail').textContent = qualityPreferenceLabel(qualityPreference, renderProfile.id);
+    document.getElementById('titleWorldDetail').textContent = `Day ${environment.day} · ${environment.weatherLabel()} · ${environment.tideLabel()}`;
+    titleNew.hidden = !progress;
+    titleNew.classList.toggle('danger', resetArmed);
+    titleNew.querySelector('.action-name').textContent = resetArmed ? 'Confirm new game' : 'New game';
+    titleNew.querySelector('.action-detail').textContent = resetArmed ? 'Select again now to clear jobs, cash, records and world history' : 'Clear this hull and return to the tower dock';
+  };
+  const cycleRenderQuality = () => {
+    qualityPreference = writeQualityPreference(nextQualityPreference(qualityPreference));
+    const profile = qualityController.configure(qualityControllerConfig(qualityPreference, hardwareQualityLevel));
+    applyRenderQuality(profile); renderTitle();
+    if (started && !game.menuOpen) game.toast('Graphics changed', qualityPreferenceLabel(qualityPreference, profile.id), 1.8);
+    return profile;
+  };
+  const beginGame = (jobs = false) => {
+    audio.start(); started = true; game.playing = true; game.paused = false;
+    startEl.classList.add('hidden'); startEl.setAttribute('aria-hidden', 'true');
+    if (jobs) game.openMenu('jobs');
+  };
+  const showTitle = (persist = true) => {
+    game.closeMap(); game.closeMenu(); game.closeResult();
+    started = false; game.playing = false; game.paused = true;
+    for (const key in keys) keys[key] = false;
+    if (persist) game.persist();
+    renderTitle(); startEl.classList.remove('hidden'); startEl.setAttribute('aria-hidden', 'false');
+    requestAnimationFrame(() => titlePrimary.focus({ preventScroll: true }));
+  };
+  game.getQualityLabel = () => qualityPreferenceLabel(qualityPreference, renderProfile.id);
+  game.getWorldLabel = () => `Day ${environment.day} · ${environment.clockLabel()} · ${environment.weatherLabel()} · ${environment.tideLabel()}`;
+  game.getWorldShortLabel = () => regionAt(phys.pos.x, phys.pos.y).name;
+  game.onCycleQuality = cycleRenderQuality;
+  game.onReturnToTitle = () => showTitle(true);
+  game.onResetArmed = renderTitle;
+  startEl.addEventListener('click', event => {
+    const button = event.target.closest('[data-title-action]'); if (!button) return;
+    const action = button.dataset.titleAction;
+    if (action === 'continue') beginGame(false);
+    else if (action === 'jobs') beginGame(true);
+    else if (action === 'graphics') cycleRenderQuality();
+    else if (action === 'new') game.requestNewGame();
+  });
 
   // ---- camera state ----
   const camPos = new THREE.Vector3(startX, 4, startZ + 10);
@@ -405,7 +459,7 @@ async function init() {
     time += dt;
     // input
     input.throttle = 0; input.steer = 0; input.pitch = 0;
-    const locked = game.paused || game.inputLock;
+    const locked = !started || game.paused || game.inputLock;
     if (!locked) {
       if (keys.KeyW || keys.ArrowUp) input.throttle = 1;
       if (keys.KeyS || keys.ArrowDown) input.throttle = -0.35;
@@ -414,8 +468,8 @@ async function init() {
       input.pitch = ((keys.KeyS || keys.ArrowDown) ? 1 : 0) - ((keys.ShiftLeft || keys.ShiftRight) ? 1 : 0); // in the air: S leans back (nose up), Shift leans forward
     }
 
-    if (!game.paused) {
-      if (started) currents.flowAt(phys.pos.x, phys.pos.y, currentFlow); else currentFlow.set(0, 0);
+    if (started && !game.paused) {
+      currents.flowAt(phys.pos.x, phys.pos.y, currentFlow);
       phys.update(dt, input, playerWater, time, currentFlow);
     }
     else { phys.impact = 0; phys.hit = 0; phys.landedFrame = false; }
@@ -601,7 +655,7 @@ async function init() {
     spray.update(dt);
     plume.update(dt, time);
 
-    audio.update(phys.rpm, Math.max(0, phys.throttle), phys.speed, time);
+    audio.update(started ? phys.rpm : 0, started ? Math.max(0, phys.throttle) : 0, started ? phys.speed : 0, time);
     minimap.update(phys, yaw, game.mapMarkers);
     game.projectMarker(camera, window.innerWidth, window.innerHeight);
 
@@ -658,7 +712,7 @@ async function init() {
   }
   if (import.meta.env.DEV) document.documentElement.dataset.emeraldResource = JSON.stringify(debugResourceSnapshot());
   document.getElementById('loading').remove();
-  startEl.classList.remove('hidden');
+  showTitle(false);
 }
 
 init().catch(e => { console.error(e); document.getElementById('loading').textContent = 'Error: ' + e.message; });
