@@ -1359,11 +1359,11 @@ export class EncounterDirector {
     else { this.game.save.goodwill += n; this.game.persist(); }
   }
 
-  remember(outcome, place = '') {
+  remember(outcome, place = '', type = this.active?.type || '') {
     if (!outcome) return null;
     const save = this.game.save, log = save.encounterMemory;
     const id = ++save.encounterMemorySeq;
-    const entry = { id, type: this.active?.type || '', outcome, place, day: this.environment.day, hour: Math.round(this.environment.hour * 10) / 10, followed: false };
+    const entry = { id, type, outcome, place, day: this.environment.day, hour: Math.round(this.environment.hour * 10) / 10, followed: false };
     log.push(entry); if (log.length > ENCOUNTER_MEMORY_LIMIT) log.splice(0, log.length - ENCOUNTER_MEMORY_LIMIT);
     return entry;
   }

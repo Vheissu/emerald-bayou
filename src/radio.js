@@ -151,6 +151,10 @@ export class RadioDirector {
     if (memory.outcome === 'salvage-spill') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Sheen position is logged. Response boat is carrying pads and boom. Keep traffic out of that cut.' };
     if (memory.outcome === 'net-evidence') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Monofilament, floats and two fish logged into evidence. That cut is open again.' };
     if (memory.outcome === 'net-removed') return { channel: 'CH 72', speaker: 'CAL ROOK · LOST KEY', text: 'Net boat is clear. No floats left in the cut. Leave it that way.' };
+    if (memory.outcome === 'fuel-theft-stopped') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Black johnboat is tied at the ramp. The work crew kept its fuel because Tower Boat held the moving position.' };
+    if (memory.outcome === 'fuel-theft-driven-off') return { channel: 'CH 68', speaker: 'WORK SKIFF', text: 'Tower Boat, those cans got us home. The rub rail can be fixed. We will remember the hull that stayed.' };
+    if (memory.outcome === 'fuel-theft-aided') return { channel: 'FWC TAC', speaker: 'FWC DISPATCH', text: 'Work crew confirmed the tower airboat helped take two fuel cans. Keep that hull on the call sheet.' };
+    if (memory.outcome === 'fuel-theft-missed') return { channel: 'CH 68', speaker: 'LEON DOSS · OLD MILL', text: 'Disabled work skiff made the dock under tow. Both fuel cans are still missing.' };
     return null;
   }
 
