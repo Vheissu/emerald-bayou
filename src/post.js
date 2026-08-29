@@ -150,9 +150,9 @@ export class Pipeline {
       depthTest: false, depthWrite: false,
     }));
   }
-  resize(w, h) {
+  resize(w, h, msaaCap = 4) {
     this.size.set(w, h);
-    const samples = msaaSamplesFor(w, h), sameSize = this.sceneRT.width === w && this.sceneRT.height === h;
+    const samples = msaaSamplesFor(w, h, msaaCap), sameSize = this.sceneRT.width === w && this.sceneRT.height === h;
     if (this.sceneRT.samples !== samples) { this.sceneRT.samples = samples; if (sameSize) this.sceneRT.dispose(); }
     this.sceneRT.setSize(w, h); this.compRT.setSize(w, h); this.ldrRT.setSize(w, h); this.aaRT.setSize(w, h);
     this.final.material.uniforms.resolution.value.set(w, h); this.final.material.uniforms.maxCoc.value = h * 0.0022;

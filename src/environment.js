@@ -388,7 +388,7 @@ export class Environment {
     this.hemi.color.set(daylight > 0.1 ? 0x9fc3e8 : 0x203659); this.hemi.groundColor.set(daylight > 0.1 ? 0x3f4a2a : 0x07100c);
     this.scene.environmentIntensity = lerp(0.025, 0.42, daylight) * lerp(1, 0.42, V.storm);
 
-    const shadowSnap = 240 / 4096;
+    const shadowSnap = 240 / this.sun.shadow.mapSize.x; // snap the follow target to shadow texels (map size can change with render quality)
     this.sun.target.position.set(Math.round(this.phys.pos.x / shadowSnap) * shadowSnap, 0, Math.round(this.phys.pos.y / shadowSnap) * shadowSnap);
     this.sun.position.copy(this.lightDir).multiplyScalar(420).add(this.sun.target.position); this.sun.target.updateMatrixWorld();
     this.sky.uniforms.sunDir.value.copy(this.sunDir); this.sky.uniforms.moonDir.value.copy(this.moonDir);
@@ -430,6 +430,7 @@ export class Environment {
     const tideFt = this.waterLevel * FT, tide = `${this.tideRate >= 0 ? 'Rising' : 'Falling'} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
     const lunarRange = this.tideRange > 0.94 ? ' · spring tide' : this.tideRange < 0.76 ? ' · neap tide' : '';
     const current = this.currentField ? ` · ${this.currentField.hud()}` : '';
-    this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${WEATHER[this.key].label}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${current}</div>`;
+    const html = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${WEATHER[this.key].label}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${current}</div>`;
+    if (html !== this.hudHtml) { this.hudHtml = html; this.el.innerHTML = html; } // skip the DOM re-parse when nothing on the panel changed
   }
 }

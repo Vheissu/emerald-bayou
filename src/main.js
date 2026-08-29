@@ -35,7 +35,7 @@ import { RadioDirector } from './radio.js';
 import { WorldIncidents } from './incidents.js';
 import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
-import { MAX_DRAW_PIXELS, pixelRatioFor } from './renderquality.js';
+import { AdaptiveQuality, MAX_DRAW_PIXELS, pixelRatioFor } from './renderquality.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -247,7 +247,7 @@ async function init() {
     },
     chart: worldMap.memoryStats(),
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, ...pipeline.memoryStats() }) };
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, adaptive: adaptive.stats(), ...pipeline.memoryStats() }) };
 
   // ---- input ----
   const keys = {};
@@ -290,15 +290,24 @@ async function init() {
     lastX = e.clientX; lastY = e.clientY;
   });
   window.addEventListener('wheel', e => { camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
+  // One path applies both a window resize and an adaptive rung change: pixel ratio carries the governor's
+  // render scale, and every dependent target (post chain, reflection, soft-particle depth) resizes with it.
   let resizeTimer = 0;
+  const adaptive = new AdaptiveQuality(() => resize());
   const resize = () => {
-    renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio));
+    renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio) * adaptive.renderScale);
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
     const s = new THREE.Vector2(); renderer.getDrawingBufferSize(s);
-    pipeline.resize(s.x, s.y); water.resize(s.x, s.y); plume.mat.uniforms.resolution.value.set(s.x, s.y);
+    pipeline.resize(s.x, s.y, adaptive.msaaCap); water.resize(s.x, s.y); plume.mat.uniforms.resolution.value.set(s.x, s.y);
+    if (sun.shadow.mapSize.x !== adaptive.shadowMapSize) {
+      sun.shadow.mapSize.setScalar(adaptive.shadowMapSize);
+      // three only rebuilds a shadow map it finds missing; the next shadow pass recreates it at the new size
+      if (sun.shadow.map) { if (sun.shadow.map.depthTexture) sun.shadow.map.depthTexture.dispose(); sun.shadow.map.dispose(); sun.shadow.map = null; }
+    }
   };
   window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = window.setTimeout(resize, 120); });
+  window.__dbg.adaptive = adaptive; // __dbg.adaptive.change(n) forces a rung; renderQuality() reports the governor's state
   const startEl = document.getElementById('start');
   let started = false;
   startEl.addEventListener('click', () => { audio.start(); started = true; startEl.classList.add('hidden'); });
@@ -370,7 +379,9 @@ async function init() {
 
   function frame() {
     clock.update();
-    const dtRaw = Math.min(clock.getDelta(), 0.05);
+    const frameMs = clock.getDelta() * 1000;
+    if (started) adaptive.frame(frameMs); // unclamped: the governor filters its own outliers
+    const dtRaw = Math.min(frameMs / 1000, 0.05);
     if (slowT > 0) slowT -= dtRaw;
     const dt = dtRaw * (slowT > 0 ? slowK : 1);
     time += dt;
@@ -485,7 +496,8 @@ async function init() {
     }
     audio.truck(world.truckLevel);
     water.updateMurk(terrain, camera.position);
-    if (worldMap.open && (frameNo++ & 3) === 0) worldMap.render();
+    frameNo++; // cadence divider for the canvas HUDs (radar every 2nd frame, open chart every 4th)
+    if (worldMap.open && (frameNo & 3) === 0) worldMap.render();
     water.update(time);
     water.mesh.position.set(Math.round(camera.position.x / 50) * 50, water.level, Math.round(camera.position.z / 50) * 50);
 
@@ -573,7 +585,7 @@ async function init() {
     plume.update(dt, time);
 
     audio.update(phys.rpm, Math.max(0, phys.throttle), phys.speed, time);
-    minimap.update(phys, yaw, game.mapMarkers);
+    if ((frameNo & 1) === 0) minimap.update(phys, yaw, game.mapMarkers); // a radar reads fine at 30 Hz; the full-canvas redraw is real CPU on old machines
     game.projectMarker(camera, window.innerWidth, window.innerHeight);
 
     // render
@@ -612,9 +624,12 @@ async function init() {
   }
   warm.scale.setScalar(0.004); warm.position.set(startX, 0.3, startZ - 6); // still rendered (so every program compiles) but a speck, not a lineup of dummies behind the start screen
   scene.add(warm); skiff.mesh.visible = true; skiff.mesh.position.set(startX, 0, startZ - 12);
-  // hold the start screen until the world around the dock has streamed in, so the first thing seen is a finished bayou
+  // hold the start screen until the world around the dock has streamed in, so the first thing seen is a finished bayou.
+  // The model preload is capped: on a slow connection the GLBs keep downloading behind the title card and pop in
+  // when they arrive (spawn() groups fill themselves), instead of holding the loading screen hostage for minutes
   const t0 = performance.now();
-  await Promise.all([preload(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a']), new Promise(r => { const poll = () => { if ((terrain.settled() && performance.now() - t0 > 800) || performance.now() - t0 > 20000) r(); else setTimeout(poll, 100); }; poll(); })]);
+  const capped = (promise, ms) => Promise.race([promise, new Promise(r => setTimeout(r, ms))]);
+  await Promise.all([capped(preload(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a']), 15000), new Promise(r => { const poll = () => { if ((terrain.settled() && performance.now() - t0 > 800) || performance.now() - t0 > 20000) r(); else setTimeout(poll, 100); }; poll(); })]);
   await new Promise(r => setTimeout(r, 250)); // one more frame with the models in, so their programs are compiled
   scene.remove(warm); encounters.spills[0].uniforms.uAlpha.value = 0; window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false; for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
   if (import.meta.env.DEV) document.documentElement.dataset.emeraldResource = JSON.stringify(debugResourceSnapshot());
