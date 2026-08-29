@@ -732,7 +732,7 @@ export class EncounterDirector {
       e.overboard = true; e.swimmerX = e.x + sideX * 2.2; e.swimmerZ = e.z + sideZ * 2.2; e.state = 'overboard';
       R.operator.visible = false; R.swimmer.visible = true; R.swimmer.position.set(e.swimmerX, this.water.waveHeight(e.swimmerX, e.swimmerZ, 0) - 0.08, e.swimmerZ);
     } else e.state = 'rescued';
-    this.spawnSpill(e.x, e.z); this.audio.shot(0.9); this.audio.thud(1.15);
+    this.spawnSpill(e.x, e.z); this.audio.shot(0.9, e.x, e.z); this.audio.thud(1.15);
     const d = Math.hypot(p.pos.x - e.x, p.pos.y - e.z), shock = clamp(1 - d / 30);
     if (shock > 0) {
       const dx = p.pos.x - e.x, dz = p.pos.y - e.z, n = Math.hypot(dx, dz) || 1;
@@ -982,7 +982,7 @@ export class EncounterDirector {
       this.reputation.change('runners', -0.45, 'spotlight-spooked', 'The blackout crew knows which hull drove through its setup.', false);
     }
     const f = this.phys.forward(this._f), x = this.phys.pos.x + f.x * 5 + (Math.random() - 0.5) * 3, z = this.phys.pos.y + f.y * 5 + (Math.random() - 0.5) * 3;
-    this.audio.shot(0.55); for (let i = 0; i < 18; i++) this.spray.emit(x + (Math.random() - 0.5), this.water.waveHeight(x, z, 0) + 0.04, z + (Math.random() - 0.5), (Math.random() - 0.5) * 2.2, 0.8 + Math.random() * 2.8, (Math.random() - 0.5) * 2.2, 0.014 + Math.random() * 0.02, 0.35 + Math.random() * 0.3, 0.58);
+    this.audio.shot(0.55, x, z); for (let i = 0; i < 18; i++) this.spray.emit(x + (Math.random() - 0.5), this.water.waveHeight(x, z, 0) + 0.04, z + (Math.random() - 0.5), (Math.random() - 0.5) * 2.2, 0.8 + Math.random() * 2.8, (Math.random() - 0.5) * 2.2, 0.014 + Math.random() * 0.02, 0.35 + Math.random() * 0.3, 0.58);
     this.game.persist(); this.audio.warn(); this.game.shake = Math.max(this.game.shake, 0.24);
     this.game.toast('Warning shot off the bow', 'The gator went under. The blacked-out skiff is running for the narrow water.', 3.5);
   }
@@ -992,7 +992,7 @@ export class EncounterDirector {
     e.state = 'taken'; e.choice = 'none'; e.resolveT = 6; this.setSpotlightEscape(e); this.rigs.spotlight.gator.visible = false;
     this.game.save.untaggedAlligatorsTaken = (this.game.save.untaggedAlligatorsTaken || 0) + 1;
     const y = this.water.waveHeight(e.gatorX, e.gatorZ, 0) + 0.04;
-    this.audio.shot(0.7); for (let i = 0; i < 24; i++) this.spray.emit(e.gatorX + (Math.random() - 0.5) * 1.5, y, e.gatorZ + (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 2.8, 0.7 + Math.random() * 2.4, (Math.random() - 0.5) * 2.8, 0.014 + Math.random() * 0.022, 0.35 + Math.random() * 0.32, 0.58);
+    this.audio.shot(0.7, e.gatorX, e.gatorZ); for (let i = 0; i < 24; i++) this.spray.emit(e.gatorX + (Math.random() - 0.5) * 1.5, y, e.gatorZ + (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 2.8, 0.7 + Math.random() * 2.4, (Math.random() - 0.5) * 2.8, 0.014 + Math.random() * 0.022, 0.35 + Math.random() * 0.32, 0.58);
     this.game.persist(); this.audio.warn(); this.game.toast('Single shot in the refuge cut', 'The light went out. The untagged crew is leaving with the animal.', 3.7);
   }
 
@@ -1278,7 +1278,7 @@ export class EncounterDirector {
     const airVisual = pursuitAviationVisualHeld(aircraftDistance, beamDistance, heat, restricted, storm, regionId, true);
     e.aviationAircraftDistance = aircraftDistance; e.aviationBeamDistance = beamDistance; e.aviationVisual = airVisual;
     if (airVisual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; e.aviationLastSeen = 0; }
-    let audible = clamp(1 - (aircraftDistance - 35) / 620); audible *= audible * 0.86; this.audio.helicopter(audible, 0.96 + Math.min(0.16, Math.hypot(e.hvx, e.hvz) / 150));
+    let audible = clamp(1 - (aircraftDistance - 35) / 620); audible *= audible * 0.86; this.audio.helicopter(audible, 0.96 + Math.min(0.16, Math.hypot(e.hvx, e.hvz) / 150), e.hx, e.hz);
     return surfaceVisual || airVisual;
   }
 
@@ -1673,7 +1673,7 @@ export class EncounterDirector {
     }
 
     this.applyAirRescueWash(e, dt);
-    const audible = clamp(1 - Math.max(0, aircraftD - 32) / 440); this.audio.helicopter(audible, e.state === 'hoist' ? 1.1 : 0.98 + clamp(Math.hypot(e.hvx, e.hvz) / 90));
+    const audible = clamp(1 - Math.max(0, aircraftD - 32) / 440); this.audio.helicopter(audible, e.state === 'hoist' ? 1.1 : 0.98 + clamp(Math.hypot(e.hvx, e.hvz) / 90), e.hx, e.hz);
   }
 
   updateGrounding(e, dt, t) {
@@ -1807,7 +1807,7 @@ export class EncounterDirector {
     );
     animateEngineFire(R.fire, t, R.boat.visible ? e.flame : 0, e.flash);
     if (e.soundT <= 0 && d < 120 && !e.fireOut && (e.flame > 0.1 || e.flash > 0)) {
-      e.soundT = 1.05 + Math.random() * 0.65; if (this.audio.fire) this.audio.fire(0.12 + clamp(1 - d / 120) * 0.24);
+      e.soundT = 1.05 + Math.random() * 0.65; if (this.audio.fire) this.audio.fire(0.12 + clamp(1 - d / 120) * 0.24, e.x, e.z);
     }
 
     if (R.boat.visible && d < 72) {
@@ -2190,8 +2190,12 @@ export class EncounterDirector {
     } else if (e.state === 'pursuit') {
       if (this.law) this.law.setPursuit(true);
       this.attemptPatrolRam(e, this.rigs.patrol, 0, d, heat, stars);
-      let nearest = d; for (const R of this.rigs.patrolBackups) nearest = Math.min(nearest, this.updatePatrolBackup(e, R, dt, t, heat, stars, e.visual));
-      this.audio.patrolSiren(pursuitSirenLevel(nearest, heat, true), heat);
+      let nearest = d, sirenX = A.x, sirenZ = A.z;
+      for (const R of this.rigs.patrolBackups) {
+        const unitDistance = this.updatePatrolBackup(e, R, dt, t, heat, stars, e.visual);
+        if (unitDistance < nearest) { nearest = unitDistance; sirenX = R.agent.x; sirenZ = R.agent.z; }
+      }
+      this.audio.patrolSiren(pursuitSirenLevel(nearest, heat, true), heat, sirenX, sirenZ);
       const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0), surfaceVisual = pursuitVisualHeld(nearest, lostDistance), visual = surfaceVisual || Boolean(e.aviationVisual);
       e.surfaceVisual = surfaceVisual;
       e.visual = visual; if (visual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; }

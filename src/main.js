@@ -219,7 +219,7 @@ async function init() {
   gators.onCharge = (g) => game.gatorCharge(g);
   gators.onSlide = (g, d) => { game.bounties.event('spook', 1); };
   gators.onSplash = (x, z, sc) => { for (let i = 0; i < 14; i++) plume.emit(x + jitter() * 1.2, 0.1, z + jitter() * 1.2, jitter() * 2, 0.8 + Math.random() * 1.8, jitter() * 2, 0.2 + Math.random() * 0.25, 1.0, 0.6 + Math.random() * 0.4, 0.3); for (let i = 0; i < 40; i++) spray.emit(x + jitter() * 1.2, 0.05, z + jitter() * 1.2, jitter() * 3, 1 + Math.random() * 2.5, jitter() * 3, 0.015 + Math.random() * 0.03, 0.4 + Math.random() * 0.4, 0.6); audio.splash(0.5 * sc); };
-  waders.onFlush = (w, d) => { game.bounties.event('flush', 1); if (Math.random() < 0.5) audio.squawk(0.25 * Math.max(0, 1 - d / 40)); };
+  waders.onFlush = (w, d) => { game.bounties.event('flush', 1); if (Math.random() < 0.5) audio.squawk(0.25 * Math.max(0, 1 - d / 40), w.x, w.z); };
   const environment = new Environment({ scene, fxScene, camera, terrain, world, water, sky, sun, hemi, pipeline, wind, boat: boat.group, audio, game, phys, sunDir: SUN_DIR, effectBudget: startup.effectBudget });
   life.traffic.environment = environment;
   const currents = new CurrentField({ fxScene, terrain, water, environment, phys, game });
@@ -274,6 +274,7 @@ async function init() {
   } : null;
   const debugResourceSnapshot = import.meta.env.DEV ? () => ({
     renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length },
+    audio: audio.spatialStats(),
     graph: debugSceneGraphStats(),
     terrain: terrain.memoryStats(),
     minimap: minimap.memoryStats(),
@@ -310,7 +311,7 @@ async function init() {
       },
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
@@ -435,7 +436,7 @@ async function init() {
   // ---- camera state ----
   const camPos = new THREE.Vector3(startX, 4, startZ + 10);
   const camTarget = new THREE.Vector3(startX, 1, startZ);
-  const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3();
+  const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3(), audioForward = new THREE.Vector3();
   const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2();
   const input = { throttle: 0, steer: 0, pitch: 0 };
   const clock = new THREE.Timer(); clock.connect(document);
@@ -590,6 +591,7 @@ async function init() {
     fovKick *= Math.exp(-dtRaw * 5);
     { const f = 52 + fovKick + airCam * 4; if (Math.abs(camera.fov - f) > 0.01) { camera.fov = f; camera.updateProjectionMatrix(); } }
     camera.updateMatrixWorld();
+    camera.getWorldDirection(audioForward); audio.setListener(camera.position.x, camera.position.z, audioForward.x, audioForward.z);
 
     // Time, tide and weather own the sky, light, wind and water state. The camera is already settled for this frame,
     // so rain and lightning follow it without the one-frame wobble that shows up at speed.

@@ -317,7 +317,7 @@ export class StormHazards {
       for (let i = 0; i < 20; i++) this.plume.emit(strike.x + (Math.random() - 0.5) * 2, strike.y + 0.1, strike.z + (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2.5, 1.8 + Math.random() * 4, (Math.random() - 0.5) * 2.5, 0.35 + Math.random() * 0.45, 1.2, 0.8 + Math.random() * 0.45, 0.45);
     }
     const d = Math.hypot(strike.x - this.phys.pos.x, strike.z - this.phys.pos.y);
-    if (d < 150) { this.audio.shot(clamp(1 - d / 190, 0.16, 0.65)); this.alert('Lightning strike', `${fmtDist(d)} off the boat.`, 3.2); }
+    if (d < 150) { this.audio.shot(clamp(1 - d / 190, 0.16, 0.65), strike.x, strike.z); this.alert('Lightning strike', `${fmtDist(d)} off the boat.`, 3.2); }
     if (d < 52) {
       const q = 1 - d / 52;
       this.condition.damage(0.35 + q * 1.25, 1.2 + q * 5.2); this.condition.powerCut = Math.max(this.condition.powerCut, 0.7 + q * 1.1);

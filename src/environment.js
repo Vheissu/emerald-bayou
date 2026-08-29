@@ -172,7 +172,7 @@ export class Environment {
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
-    this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.hailKick = 0;
+    this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
     this.makeLightning(); this.makeBoatLights(); this.makeSettlementLights();
     this.el = document.getElementById('worldState'); this.alertEl = document.getElementById('weatherAlert'); this.alertT = 0; this.hudT = 0;
     this.keyHandler = (e) => this.onKey(e); window.addEventListener('keydown', this.keyHandler);
@@ -305,12 +305,12 @@ export class Environment {
       p[i * 3] = px; p[i * 3 + 1] = y0 + k * top; p[i * 3 + 2] = pz;
     }
     this.bolt.geometry.attributes.position.needsUpdate = true; this.bolt.material.opacity = 1; this.bolt.visible = true; this.boltT = 0.14;
-    this.flash = 1; this.thunderT = dist / 343; this.lightningT = lerp(7, 28, Math.random()) / Math.max(0.35, this.values.lightning);
+    this.flash = 1; this.thunderT = dist / 343; this.thunderX = x; this.thunderZ = z; this.lightningT = lerp(7, 28, Math.random()) / Math.max(0.35, this.values.lightning);
     if (this.onLightning) this.onLightning({ x, z, y: y0, distance: dist, water: ground < this.waterLevel + 0.12 });
   }
 
   thunder(strength = 1) {
-    this.audio?.thunder?.(strength);
+    this.audio?.thunder?.(strength, this.thunderX, this.thunderZ);
   }
 
   updateSettlementLights(dt, night) {

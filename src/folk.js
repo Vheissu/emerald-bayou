@@ -285,7 +285,7 @@ export function fishingUpdate(p, t, dt, waveFn, ctx) {
     const d = Math.hypot(u.lineTarget.x - ctx.bx, u.lineTarget.z - ctx.bz);
     if (ctx.emitStamp) ctx.emitStamp(u.lineTarget.x, u.lineTarget.z, 0.45, 0.12, 0.5, 0.4);
     else ctx.stamps?.push({ x: u.lineTarget.x, z: u.lineTarget.z, radius: 0.45, height: 0.12, foam: 0.5, foamRadius: 0.4 });
-    if (ctx.audio) ctx.audio.plip(0.3 * Math.max(0, 1 - d / 60));
+    if (ctx.audio) ctx.audio.plip(0.3 * Math.max(0, 1 - d / 60), u.lineTarget.x, u.lineTarget.z);
     u.biteT = Math.random() < 0.35 ? 4 + Math.random() * 8 : -1;
   };
   if (u.lineOn > 0) {

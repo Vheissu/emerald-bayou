@@ -101,7 +101,7 @@ export class Birds {
       f.feedBlend += (feedTarget - f.feedBlend) * (1 - Math.exp(-dt * (feedTarget > f.feedBlend ? 0.95 : 0.28)));
       const d = Math.hypot(f.cx - cam.x, f.cz - cam.z);
       if (d > 900 && f.feedBlend < 0.035) this.relocate(f, cam);
-      if (f.K.call && this.audio) { f.callT -= dt; if (f.callT <= 0) { f.callT = 18 + Math.random() * 30; if (d < 260) this.audio.osprey(0.2 * (1 - d / 300)); } }
+      if (f.K.call && this.audio) { f.callT -= dt; if (f.callT <= 0) { f.callT = 18 + Math.random() * 30; if (d < 260) this.audio.osprey(0.2 * (1 - d / 300), f.cx, f.cz); } }
     }
     for (let i = 0; i < this.count; i++) {
       const b = this.birds[i]; const f = this.flocks[b.flock]; const K = f.K;
@@ -382,7 +382,7 @@ export class Gators {
         g.surfaced = false;
         if (g.slide <= 0) {
           g.mesh.position.copy(g.pos); g.mesh.rotation.set(0, g.heading, 0);
-          if ((dB < 32 && boatSpeed > 2) || dB < 12) { g.slide = 3.5; g.heading = g.toWater; this.spooked++; if (this.audio) this.audio.hiss(0.4 * Math.max(0, 1 - dB / 50)); if (this.onSlide) this.onSlide(g, dB); }
+          if ((dB < 32 && boatSpeed > 2) || dB < 12) { g.slide = 3.5; g.heading = g.toWater; this.spooked++; if (this.audio) this.audio.hiss(0.4 * Math.max(0, 1 - dB / 50), g.pos.x, g.pos.z); if (this.onSlide) this.onSlide(g, dB); }
           continue;
         }
         g.slide -= dt;
@@ -397,7 +397,7 @@ export class Gators {
       // the bull: idle near him for long and he comes at the hull
       g.chargeCd = Math.max(0, g.chargeCd - dt);
       if (g.big && !this.calm && !g.parked && g.charge <= 0 && g.chargeCd <= 0 && g.dive <= 0 && g.hitT <= 0 && dB < 16 && dB > 3 && boatSpeed < 3) {
-        g.charge = 3.5; g.chargeCd = 30; g.heading = Math.atan2(-(boatX - g.pos.x), -(boatZ - g.pos.z)); if (this.audio) this.audio.bellow(0.6);
+        g.charge = 3.5; g.chargeCd = 30; g.heading = Math.atan2(-(boatX - g.pos.x), -(boatZ - g.pos.z)); if (this.audio) this.audio.bellow(0.6, g.pos.x, g.pos.z);
       }
       if (g.charge > 0) {
         g.charge -= dt;
@@ -410,7 +410,7 @@ export class Gators {
         continue;
       }
       // bellows carry across the water now and then
-      if (g.big && this.audio) { g.bellowT -= dt; if (g.bellowT <= 0) { g.bellowT = 25 + this.rand() * 40; if (dB < 120 && g.dive <= 0) this.audio.bellow(0.35 * (1 - dB / 140)); } }
+      if (g.big && this.audio) { g.bellowT -= dt; if (g.bellowT <= 0) { g.bellowT = 25 + this.rand() * 40; if (dB < 120 && g.dive <= 0) this.audio.bellow(0.35 * (1 - dB / 140), g.pos.x, g.pos.z); } }
       const ahead = 6, fx = -Math.sin(g.heading), fz = -Math.cos(g.heading);
       const hAhead = this.T.heightAt(g.pos.x + fx * ahead, g.pos.z + fz * ahead);
       const hL = this.T.heightAt(g.pos.x + (fx * 0.7 - fz * 0.7) * ahead, g.pos.z + (fz * 0.7 + fx * 0.7) * ahead);

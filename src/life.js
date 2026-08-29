@@ -64,7 +64,7 @@ export class Fish {
     for (let i = 0; i < n; i++) plume.emit(x + jitter() * 0.3, 0.05, z + jitter() * 0.3, jitter() * 1.2 * k, 0.8 + Math.random() * 1.6 * k, jitter() * 1.2 * k, 0.1 + Math.random() * 0.12 * k, 0.9, 0.45 + Math.random() * 0.3, 0.3);
     for (let i = 0; i < n * 4; i++) spray.emit(x + jitter() * 0.3, 0.03, z + jitter() * 0.3, jitter() * 2.2 * k, 0.8 + Math.random() * 2.4 * k, jitter() * 2.2 * k, 0.012 + Math.random() * 0.02, 0.35 + Math.random() * 0.3, 0.6);
     emitStamp(x, z, 0.45 + k * 0.3, -0.3 * k, 0.9 * k, 0.5 + k * 0.3);
-    if (bx !== undefined) { const d = Math.hypot(x - bx, z - bz); audio.plip(Math.min(0.45, 0.6 * k) * Math.max(0, 1 - d / 70)); }
+    if (bx !== undefined) { const d = Math.hypot(x - bx, z - bz); audio.plip(Math.min(0.45, 0.6 * k) * Math.max(0, 1 - d / 70), x, z); }
   }
   update(dt, t, phys) {
     const bx = phys.pos.x, bz = phys.pos.y;
@@ -219,7 +219,7 @@ export class Debris {
         m.position.y = waveFn(d.x, d.z, t) - 0.08 + Math.sin(t * 0.7 + d.ph) * 0.03; m.rotation.z = Math.sin(t * 0.5 + d.ph) * 0.04; m.rotation.x = Math.sin(t * 0.8 + d.ph * 2) * 0.02;
         const tts = m.userData.turtles;
         if (tts && dist < 120) for (const tt of tts) {
-          if (tt.st === 0) { if (dist < 24 && (phys.speed > 1.5 || dist < 9)) { tt.st = 1; tt.t = 0; if (audio) audio.plip(0.25 * Math.max(0, 1 - dist / 30)); this.spooked++; } else tt.m.position.y = tt.home.y + Math.sin(t * 0.9 + tt.home.z) * 0.004; }
+          if (tt.st === 0) { if (dist < 24 && (phys.speed > 1.5 || dist < 9)) { tt.st = 1; tt.t = 0; if (audio) audio.plip(0.25 * Math.max(0, 1 - dist / 30), d.x, d.z); this.spooked++; } else tt.m.position.y = tt.home.y + Math.sin(t * 0.9 + tt.home.z) * 0.004; }
           else if (tt.st === 1) { tt.t += dt; const k = tt.t; tt.m.position.x = tt.home.x + tt.side * k * 1.8; tt.m.position.y = tt.home.y - k * k * 4; tt.m.rotation.z = tt.side * Math.min(1.4, k * 2.5); if (k > 0.45) { tt.m.visible = false; tt.st = 2; tt.t = 40 + Math.random() * 40; } }
           else { tt.t -= dt; if (tt.t <= 0 && dist > 35) { tt.st = 0; tt.m.visible = true; tt.m.position.copy(tt.home); tt.m.rotation.set(0, tt.rot, 0); } }
         }
@@ -238,7 +238,7 @@ export class Debris {
         } else if (d.gone > 0) { d.gone -= dt; if (d.gone <= 0) { b.visible = true; b.position.set(0, d.hgt - d.h + 0.02, 0); b.rotation.set(0, d.ang + 1.2, 0); } }
         else {
           b.rotation.z = Math.sin(t * 1.3 + d.ph) * 0.04; // wings held out to dry, a little shrug now and then
-          if (dist < 30 && phys.speed > 2.5) { d.fly = 4; this.spooked++; if (audio) audio.squawk(0.15); }
+          if (dist < 30 && phys.speed > 2.5) { d.fly = 4; this.spooked++; if (audio) audio.squawk(0.15, d.x, d.z); }
         }
       }
     }

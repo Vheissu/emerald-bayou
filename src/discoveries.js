@@ -308,7 +308,7 @@ export class FieldDiscoveryDirector {
       this.law?.violation(0.62, 'protected sawfish strike');
       this.reputation?.change('fwc', -0.7, 'sawfish-strike', 'The field team logged the tower hull after a protected-animal strike.', false);
       this.audio.thud(1.1);
-    } else this.audio.squawk(0.45);
+    } else this.audio.squawk(0.45, active.x, active.z);
     this.game.toast(active.definition.name, reason, 4.2); this.game.persist();
   }
 

@@ -353,7 +353,7 @@ export function animateSite(g, t, waveFn, wind, ctx) {
   const site = g.userData.site; const dSite = site ? Math.hypot(site.x - ctx.bx, site.z - ctx.bz) : 1e9;
   if ((ctx.humanActivity ?? 1) <= 0.2) return;
   // a shotgun from the blind now and then, when you are not right on top of it
-  if (g.userData.blind && g.userData.blind.userData.people.length) { const b = g.userData.blind; b.userData.shotT -= dt; if (b.userData.shotT < 2.2 && dSite < 520 && !b.userData.aiming) { b.userData.aiming = true; aim(b.userData.people[Math.floor(Math.random() * b.userData.people.length)], 3.2); } if (b.userData.shotT <= 0) { b.userData.aiming = false; b.userData.shotT = 30 + Math.random() * 70; if (dSite > 40 && dSite < 520 && ctx.audio) { ctx.audio.shot(0.4 * (1 - dSite / 520)); if (ctx.onShot) ctx.onShot(site.x, site.z); } } }
+  if (g.userData.blind && g.userData.blind.userData.people.length) { const b = g.userData.blind; b.userData.shotT -= dt; if (b.userData.shotT < 2.2 && dSite < 520 && !b.userData.aiming) { b.userData.aiming = true; aim(b.userData.people[Math.floor(Math.random() * b.userData.people.length)], 3.2); } if (b.userData.shotT <= 0) { b.userData.aiming = false; b.userData.shotT = 30 + Math.random() * 70; if (dSite > 40 && dSite < 520 && ctx.audio) { ctx.audio.shot(0.4 * (1 - dSite / 520), site.x, site.z); if (ctx.onShot) ctx.onShot(site.x, site.z); } } }
   if (dSite > 220) return; // people only move when you can see them
   for (const p of g.userData.people) {
     const u = p.userData;
