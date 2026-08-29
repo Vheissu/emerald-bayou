@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as TEX from './textures.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { WORLD_HALF } from './heightfield.js';
+import { loadModel } from './models.js';
 
 // Boat local frame: +X starboard, +Y up, -Z forward (bow at -Z).
 // The player boat and scheduled traffic use the same detailed hull. Keep one immutable render template so its
@@ -200,8 +200,9 @@ export function buildAirboat() {
 // geometry and material instead of paying that GPU cost again for every working boat.
 let driverTemplatePromise = null;
 function driverTemplate() {
-  if (!driverTemplatePromise) driverTemplatePromise = new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/driver.glb`).then(gltf => {
-    const root = gltf.scene; root.name = 'seated driver template';
+  if (!driverTemplatePromise) driverTemplatePromise = loadModel('driver').then(root => {
+    if (!root) throw new Error('driver model unavailable');
+    root.name = 'seated driver template';
     root.traverse(o => {
       if (!o.isMesh) return;
       o.castShadow = true; o.receiveShadow = true;

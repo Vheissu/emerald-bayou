@@ -79,6 +79,7 @@ async function init() {
     concurrency: startup.modelConcurrency,
     batchDelayMs: startup.modelBatchDelayMs,
     idleTimeoutMs: startup.modelIdleTimeoutMs,
+    disabled: startup.disabledModels,
   });
   // ---- sky & lighting ----
   const sky = new Sky(SUN_DIR);
@@ -132,9 +133,17 @@ async function init() {
 
   // ---- vegetation ----
   const veg = new Vegetation(terrain, exclusions);
-  // the Meshy grass clumps become instanced kinds before the first chunk is grown; the hero tree gets the wind
-  await preload(['grass_a', 'grass_d']);
-  for (const name of ['grass_a', 'grass_d']) { const r = await loadGeo(name); if (r) veg.addSolid(r.geo, r.mat, r.height); } // b and c stay at ~5.5k tris a clump (separate blades will not collapse), too heavy to instance
+  // Cinematic keeps the full pre-title warm-up. Balanced installs the same clumps after play begins and retrofits
+  // already-built near chunks one per frame; the two old-hardware tiers retain the procedural grass without ever
+  // downloading or decoding these optional meshes.
+  const solidGrassNames = ['grass_a', 'grass_d']; // b and c stay at ~5.5k tris a clump, too heavy to instance
+  const installSolidGrass = async (blocking = false) => {
+    if (blocking) await preload(solidGrassNames);
+    const resources = (await Promise.all(solidGrassNames.map(name => loadGeo(name, { releaseSource: true })))).filter(Boolean);
+    if (resources.length) veg.addSolids(resources);
+  };
+  if (startup.solidGrass === 'blocking') await installSolidGrass(true);
+  else if (startup.solidGrass === 'deferred') installSolidGrass().catch(error => console.warn('grass models failed to load', error));
   loadModel('tree_c').then(root => { const f = modelBox('tree_c'); if (root && f) root.traverse(o => { if (o.isMesh) veg.windMat(o.material, f.box.min.y, f.box.max.y, f.scale, 0.28); }); });
 
   await new Promise(r => setTimeout(r, 10));

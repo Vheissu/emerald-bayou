@@ -246,6 +246,26 @@ class SolidBatch {
 const CELL = 100; // placement cell: the level-0 chunk size. Every LOD places the same trees from the same seeds.
 const hash2 = (i, j) => { let h = (i * 374761393 + j * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return (h ^ (h >>> 16)) >>> 0; };
 
+function chunkBounds(chunk) {
+  const half = chunk.size / 2;
+  return new THREE.Sphere(
+    new THREE.Vector3(chunk.x0 + half, (chunk.minH + chunk.maxH) / 2 + 12, chunk.z0 + half),
+    Math.hypot(half, half, (chunk.maxH - chunk.minH) / 2 + 12) + 30,
+  );
+}
+
+function disposeChunkMesh(mesh) {
+  const compact = mesh.geometry?.userData.compactFoliage;
+  if (compact) {
+    // Base model/card buffers are shared by every chunk. Detach them before disposing only this chunk's compact
+    // instance attributes, otherwise Three.js can evict the shared source geometry from the GPU cache.
+    for (const name of compact.sharedAttributeNames) mesh.geometry.deleteAttribute(name);
+    if (compact.sharedIndex) mesh.geometry.setIndex(null);
+    mesh.geometry.dispose();
+  }
+  if (mesh.dispose) mesh.dispose();
+}
+
 export class Vegetation {
   constructor(terrain, exclusions = []) {
     this.terrain = terrain;
@@ -262,6 +282,9 @@ export class Vegetation {
     this.reed = new Kind(frond, texReed, { pin: 'bottom', amp: 0.3, fade: [560, 680] }, { shadow: false, alphaTest: 0.45, small: true });
     this.kinds = [this.cyp, this.oak, this.palm, this.palmetto, this.moss, this.grass, this.reed];
     this.solid = []; // Meshy grass clumps, instanced like the cards, only in the nearest tier
+    this.solidRevision = 0;
+    this.solidRefreshQueue = [];
+    this.solidRefreshQueued = new Set();
     this.extraMats = [];
 
     const patchTrunk = (mat, amp) => {
@@ -289,7 +312,7 @@ export class Vegetation {
     this.kneeGeo = new THREE.ConeGeometry(0.18, 1, 6); this.kneeGeo.translate(0, 0.5, 0);
     this.cypTint = new THREE.Color(0.36, 0.48, 0.26); this.oakTint = new THREE.Color(0.30, 0.42, 0.25); this.palmTint = new THREE.Color(0.42, 0.55, 0.34);
     // scratch
-    this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler(); this._s = new THREE.Vector3(); this._p = new THREE.Vector3();
+    this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler(); this._s = new THREE.Vector3(); this._p = new THREE.Vector3(); this._normal = new THREE.Vector3();
     this._col = new THREE.Color(); this._tint = new THREE.Color();
   }
   excluded(x, z) {
@@ -308,7 +331,6 @@ export class Vegetation {
       moss: new Batch(this.moss), grass: new Batch(this.grass), reed: new Batch(this.reed),
       trunks: new SolidBatch(this.trunkGeo, this.trunkMat), branches: new SolidBatch(this.branchGeo, this.branchMat, true, true), knees: new SolidBatch(this.kneeGeo, this.kneeMat, false, true),
     };
-    for (const [i, sk] of this.solid.entries()) B['solid' + i] = new Batch(sk);
     const cells = chunk.size / CELL;
     const ci0 = Math.round(chunk.x0 / CELL), cj0 = Math.round(chunk.z0 / CELL);
     for (let cj = 0; cj < cells; cj++) for (let ci = 0; ci < cells; ci++) {
@@ -316,26 +338,73 @@ export class Vegetation {
       if (tier <= 1 || (ci & 1) === 1) yield;
     }
     const g = new THREE.Group(); g.name = 'veg';
-    const half = chunk.size / 2;
-    const bounds = new THREE.Sphere(new THREE.Vector3(chunk.x0 + half, (chunk.minH + chunk.maxH) / 2 + 12, chunk.z0 + half), Math.hypot(half, half, (chunk.maxH - chunk.minH) / 2 + 12) + 30);
+    const bounds = chunkBounds(chunk);
     for (const k in B) { const mesh = B[k].build(bounds); if (mesh) g.add(mesh); }
+    for (const mesh of this.buildSolidMeshes(chunk, bounds)) g.add(mesh);
+    chunk.solidGrassRevision = this.solidRevision;
     chunk.veg = g;
   }
   disposeChunk(chunk) {
     if (!chunk.veg) return;
+    this.solidRefreshQueued.delete(chunk);
     chunk.veg.parent && chunk.veg.parent.remove(chunk.veg);
-    for (const mesh of chunk.veg.children) {
-      const compact = mesh.geometry.userData.compactFoliage;
-      if (compact) {
-        // The base card/model buffers are shared by every chunk. Detach them before disposal so only this
-        // chunk's compact instance buffers leave the GPU cache.
-        for (const name of compact.sharedAttributeNames) mesh.geometry.deleteAttribute(name);
-        if (compact.sharedIndex) mesh.geometry.setIndex(null);
-        mesh.geometry.dispose();
-      }
-      if (mesh.dispose) mesh.dispose();
-    }
+    for (const mesh of chunk.veg.children) disposeChunkMesh(mesh);
     chunk.veg = null; chunk.colliders = [];
+  }
+
+  buildSolidMeshes(chunk, bounds = chunkBounds(chunk)) {
+    if (chunk.level !== 0 || !chunk.h || !this.solid.length) return [];
+    const batches = this.solid.map(kind => new Batch(kind));
+    const cells = chunk.size / CELL;
+    const ci0 = Math.round(chunk.x0 / CELL), cj0 = Math.round(chunk.z0 / CELL);
+    for (let cj = 0; cj < cells; cj++) for (let ci = 0; ci < cells; ci++) this.populateSolidCell(chunk, ci0 + ci, cj0 + cj, batches);
+    const meshes = [];
+    for (const batch of batches) {
+      const mesh = batch.build(bounds);
+      if (!mesh) continue;
+      mesh.userData.solidGrass = true;
+      meshes.push(mesh);
+    }
+    return meshes;
+  }
+
+  populateSolidCell(chunk, ci, cj, batches) {
+    const T = this.terrain, x0 = ci * CELL, z0 = cj * CELL;
+    // Keep this independent from the tree/card RNG so a delayed visual upgrade cannot alter colliders or the rest of
+    // the deterministic vegetation layout.
+    const rand = mulberry32(hash2(ci + 9000, cj + 9000) ^ 0x6c8e9cf5);
+    const nearHome = Math.hypot(x0 + 50 - HOME_X, z0 + 50 - HOME_Z) < 950;
+    const excl = nearHome ? (x, z) => this.excluded(x, z) : (this.blocked ? (x, z) => this.blocked(x, z) : () => false);
+    const m = this._m, q = this._q, e = this._e, s = this._s, p = this._p, col = this._col;
+    for (let t = 0; t < 34; t++) {
+      const x = x0 + rand() * CELL, z = z0 + rand() * CELL; const h = chunk.sample(x, z);
+      if (h < 0.05 || h > 2.5 || excl(x, z)) continue;
+      if (h > 0.9 && rand() < 0.65) continue;
+      if (T.normalAt(x, z, this._normal).y < 0.75) continue;
+      const k = Math.floor(rand() * batches.length);
+      p.set(x, h - 0.03, z); e.set(0, rand() * 6.283, 0); q.setFromEuler(e); const sz = 0.75 + rand() * 0.7; s.set(sz, sz, sz); m.compose(p, q, s);
+      col.setRGB(0.8 + rand() * 0.3, 0.85 + rand() * 0.3, 0.7 + rand() * 0.3); batches[k].add(m, col);
+    }
+  }
+
+  queueSolidRefresh(chunk) {
+    if (chunk.level !== 0 || chunk.disposed || !chunk.ready || !chunk.veg || this.solidRefreshQueued.has(chunk)) return;
+    this.solidRefreshQueued.add(chunk); this.solidRefreshQueue.push(chunk);
+  }
+
+  updateSolidChunks() {
+    const chunk = this.solidRefreshQueue.shift();
+    if (!chunk) return false;
+    this.solidRefreshQueued.delete(chunk);
+    if (chunk.disposed || chunk.level !== 0 || !chunk.ready || !chunk.veg || chunk.solidGrassRevision === this.solidRevision) return false;
+    for (let i = chunk.veg.children.length - 1; i >= 0; i--) {
+      const mesh = chunk.veg.children[i];
+      if (!mesh.userData.solidGrass) continue;
+      chunk.veg.remove(mesh); disposeChunkMesh(mesh);
+    }
+    for (const mesh of this.buildSolidMeshes(chunk)) chunk.veg.add(mesh);
+    chunk.solidGrassRevision = this.solidRevision;
+    return true;
   }
 
   populateCell(chunk, ci, cj, tier, B) {
@@ -566,29 +635,30 @@ export class Vegetation {
       const x = x0 + rand() * CELL, z = z0 + rand() * CELL;
       const h = grid(x, z);
       if (h < 0.15 || h > 6 || excl(x, z)) continue;
-      const nrm = T.normalAt(x, z);
+      const nrm = T.normalAt(x, z, this._normal);
       if (nrm.y < 0.8) continue;
       p.set(x, h - 0.05, z); e.set(0, rand() * Math.PI, 0); q.setFromEuler(e);
       const sz = 0.9 + rand() * 0.9; s.set(sz * 1.2, sz * 0.8, 1); m.compose(p, q, s);
       col.setHSL(0.23 + rand() * 0.06, 0.4, 0.2 + rand() * 0.14); B.grass.add(m, col);
       e.set(0, e.y + Math.PI / 2, 0); q.setFromEuler(e); m.compose(p, q, s); B.grass.add(m, col);
     }
-    // --- solid clumps along the banks, where the boat passes close enough to see leaves ---
-    if (this.solid.length) for (let t = 0; t < 34; t++) {
-      const x = x0 + rand() * CELL, z = z0 + rand() * CELL; const h = grid(x, z);
-      if (h < 0.05 || h > 2.5 || excl(x, z)) continue;
-      if (h > 0.9 && rand() < 0.65) continue;
-      if (T.normalAt(x, z).y < 0.75) continue;
-      const k = Math.floor(rand() * this.solid.length);
-      p.set(x, h - 0.03, z); e.set(0, rand() * 6.283, 0); q.setFromEuler(e); const sz = 0.75 + rand() * 0.7; s.set(sz, sz, sz); m.compose(p, q, s);
-      col.setRGB(0.8 + rand() * 0.3, 0.85 + rand() * 0.3, 0.7 + rand() * 0.3); B['solid' + k].add(m, col);
-    }
   }
 
-  // a solid clump (a decimated GLB): the same wind as the cards, bent by height instead of by uv
+  // Solid clumps are optional decimated GLBs: same wind as the cards, bent by height instead of by UV.
+  addSolids(resources) {
+    let added = 0;
+    for (const resource of resources) {
+      if (!resource?.geo || !resource?.mat) continue;
+      const k = new Kind(resource.geo, resource.mat.map, { pin: 'y', pinH: resource.height, amp: 0.2, fade: [150, 210] }, { shadow: false, alphaTest: 0.01, small: true });
+      k.mat.side = THREE.FrontSide; k.mat.color.setHex(0xd8dcc8); this.kinds.push(k); this.solid.push(k); added++;
+    }
+    if (!added) return 0;
+    this.solidRevision++;
+    for (const chunk of this.terrain.chunks.values()) this.queueSolidRefresh(chunk);
+    return added;
+  }
   addSolid(geo, mat, height) {
-    const k = new Kind(geo, mat.map, { pin: 'y', pinH: height, amp: 0.2, fade: [150, 210] }, { shadow: false, alphaTest: 0.01, small: true });
-    k.mat.side = THREE.FrontSide; k.mat.color.setHex(0xd8dcc8); this.kinds.push(k); this.solid.push(k);
+    return this.addSolids([{ geo, mat, height }]);
   }
   // wind for a one-off model (a hero tree at a homestead): sway about its own origin, in metres despite the model's scale
   windMat(mat, yMin, yMax, scale, amp = 0.3) {
@@ -608,6 +678,7 @@ export class Vegetation {
     this.extraMats.push(mat);
   }
   update(t, sunDir, wind) {
+    this.updateSolidChunks(); // one near chunk per frame keeps deferred upgrades below the terrain build budget
     for (const k of this.kinds) k.setTime(t, sunDir, wind);
     for (const m of this.extraMats) { const sh = m.userData.shader; if (sh) { sh.uniforms.uTime.value = t; if (wind) sh.uniforms.uWind.value.copy(wind); } }
     for (const m of [this.trunkMat, this.branchMat]) { const sh = m.userData.shader; if (sh) { sh.uniforms.uTime.value = t; if (wind) sh.uniforms.uWind.value.copy(wind); } }

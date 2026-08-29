@@ -6,12 +6,14 @@ import { Terrain } from '../src/terrain.js';
 test('cinematic hardware keeps the complete shader and model warm-up', () => {
   const plan = startupPlan('cinematic');
   assert.equal(plan.warmShaders, true);
-  assert.deepEqual(plan.blockingModels, ['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a']);
+  assert.deepEqual(plan.blockingModels, ['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a', 'driver']);
   assert.equal(plan.terrainReadiness, 'settled');
   assert.equal(plan.maxWaitMs, 20000);
   assert.equal(plan.compileDelayMs, 250);
   assert.equal(plan.deferOptionalModels, false);
   assert.equal(plan.modelConcurrency, 4);
+  assert.equal(plan.solidGrass, 'blocking');
+  assert.deepEqual(plan.disabledModels, []);
 });
 
 test('older-hardware profiles do not block on optional models or the full shader warm-up', () => {
@@ -33,6 +35,10 @@ test('older-hardware profiles do not block on optional models or the full shader
   assert.ok(performance.modelReleaseDelayMs > balanced.modelReleaseDelayMs);
   assert.ok(fallback.modelBatchDelayMs > performance.modelBatchDelayMs);
   assert.ok(performance.modelBatchDelayMs > balanced.modelBatchDelayMs);
+  assert.deepEqual(fallback.disabledModels, ['grass_a', 'grass_d', 'tree_c']);
+  assert.deepEqual(performance.disabledModels, fallback.disabledModels);
+  assert.deepEqual(balanced.disabledModels, []);
+  assert.deepEqual([fallback.solidGrass, performance.solidGrass, balanced.solidGrass], ['off', 'off', 'deferred']);
 });
 
 test('older-hardware profiles allocate smaller bounded weather and spray pools', () => {

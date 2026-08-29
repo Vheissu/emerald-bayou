@@ -11,7 +11,9 @@ test('caps dense displays by drawing-pixel budget', () => {
 
 test('starts conservatively only when hardware signals justify it', () => {
   assert.equal(initialQualityLevel({ deviceMemory: 16, hardwareConcurrency: 12, maxTextureSize: 16384 }), 3);
-  assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 8, maxTextureSize: 16384 }), 3);
+  assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 12, maxTextureSize: 16384 }), 3);
+  assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 8, maxTextureSize: 16384 }), 2);
+  assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 8, maxTextureSize: 16384, gpuRenderer: 'ANGLE (NVIDIA, GeForce RTX 4070 Direct3D11)' }), 3);
   assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 6, maxTextureSize: 16384 }), 2);
   assert.equal(initialQualityLevel({ deviceMemory: 4, hardwareConcurrency: 8, maxTextureSize: 16384 }), 1);
   assert.equal(initialQualityLevel({ saveData: true }), 0);

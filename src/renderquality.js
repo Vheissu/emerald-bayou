@@ -71,7 +71,14 @@ export function initialQualityLevel({ deviceMemory, hardwareConcurrency, maxText
   if (saveData || (Number.isFinite(deviceMemory) && deviceMemory <= 2) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 2) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 2048)) level = 0;
   else if ((Number.isFinite(deviceMemory) && deviceMemory <= 4) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 4) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 4096)) level = 1;
   else if ((Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 6) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 8192)) level = 2;
-  return Math.min(level, gpuQualityCeiling(gpuRenderer));
+  level = Math.min(level, gpuQualityCeiling(gpuRenderer));
+  // Privacy-masked renderer strings are common, and texture limits alone cannot distinguish a modern discrete GPU
+  // from decade-old integrated hardware. Start that ambiguous 8 GB / 8-thread class at Balanced; the adaptive
+  // controller can still promote it after sustained clean frame windows.
+  const detailedRenderer = /intel|nvidia|geforce|quadro|amd|radeon|apple\s+m\d|mali|adreno|powervr|swiftshader|llvmpipe|arc\s+[a-z]?\d|rtx|gtx/i.test(String(gpuRenderer || ''));
+  const strongHost = Number.isFinite(deviceMemory) && deviceMemory >= 8 && Number.isFinite(hardwareConcurrency) && hardwareConcurrency >= 12 && Number.isFinite(maxTextureSize) && maxTextureSize >= 16384;
+  if (level === QUALITY_PROFILES.length - 1 && !detailedRenderer && !strongHost) level--;
+  return level;
 }
 
 export function pixelRatioFor(width, height, devicePixelRatio = 1, maxDrawPixels = MAX_DRAW_PIXELS, maxDevicePixelRatio = MAX_DEVICE_PIXEL_RATIO) {
