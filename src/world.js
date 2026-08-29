@@ -38,7 +38,7 @@ export class World {
     this.liveCamps = new Map(); this.liveTraps = new Map(); this.liveSites = new Map();
     this.cellCacheEvictions = { camps: 0, sites: 0, traps: 0 };
     this.checkT = 0; this.collected = new Set(); this.phys = null; this.wind = null;
-    this.fx = null; // { plume, spray, audio, fish } from main
+    this.fx = null; // { plume, spray, audio, fish, playerWakeAt } from main
     this.stampList = []; this.obLevel = 0; this.truckLevel = 0; this.onShot = null;
     this.disposedGeometries = 0;
   }
@@ -101,7 +101,7 @@ export class World {
     // moored johnboat alongside, drums and traps on the bank
     const skiff = buildSkiff({ crew: false }); const side = rr() < 0.5 ? -1 : 1;
     const sx = c.bank.x + dx / l * 9 + (-dz / l) * side * 2.4, sz = c.bank.z + dz / l * 9 + (dx / l) * side * 2.4;
-    skiff.position.set(sx, -0.05, sz); skiff.rotation.y = Math.atan2(dx / l, dz / l) + (rr() - 0.5) * 0.4; g.add(skiff); g.userData.skiff = skiff;
+    skiff.position.set(sx, -0.05, sz); skiff.rotation.y = Math.atan2(dx / l, dz / l) + (rr() - 0.5) * 0.4; skiff.rotation.order = 'YXZ'; g.add(skiff); g.userData.skiff = skiff; g.userData.skiffWater = { x: sx, z: sz, heading: skiff.rotation.y };
     for (let i = 0; i < 2 + Math.floor(rr() * 3); i++) { const d = fuelDrum(); const a = c.ang + (rr() - 0.5) * 1.6, r = 4 + rr() * 5; const px = c.x + Math.cos(a) * r, pz = c.z + Math.sin(a) * r; d.position.set(px, T.heightAt(px, pz) - 0.05, pz); d.rotation.y = rr() * 6; g.add(d); }
     for (let i = 0; i < 3; i++) { const f = crabFloat(); const a = rr() * 6.28, r = 2 + rr() * 3; const px = c.x + Math.cos(a) * r, pz = c.z + Math.sin(a) * r; f.position.set(px, T.heightAt(px, pz) + 0.1, pz); f.rotation.z = 1.2; f.rotation.y = rr() * 6; g.add(f); }
     // a hero tree over the shack
@@ -196,7 +196,7 @@ export class World {
     for (const [key, m] of this.liveTraps) { const tr = this.trapCells.get(key); m.position.y = this.waveFn(tr.x, tr.z, t) - 0.12; m.rotation.z = Math.sin(t * 1.3 + tr.ph) * 0.12; m.rotation.x = Math.cos(t * 0.9 + tr.ph) * 0.1; }
     this.stampList.length = 0;
     const P = this.phys; const fx = this.fx || {};
-    const ctx = { bx, bz, speed: P ? P.speed : 0, dt, stamps: this.stampList, plume: fx.plume, spray: fx.spray, audio: fx.audio, fish: fx.fish, ob: 0, truck: 0, onShot: this.onShot, humanActivity: this.humanActivity ?? 1, heightAt: (x, z) => this.T.heightAt(x, z) };
+    const ctx = { bx, bz, speed: P ? P.speed : 0, dt, stamps: this.stampList, plume: fx.plume, spray: fx.spray, audio: fx.audio, fish: fx.fish, playerWakeAt: fx.playerWakeAt, ob: 0, truck: 0, onShot: this.onShot, humanActivity: this.humanActivity ?? 1, heightAt: (x, z) => this.T.heightAt(x, z) };
     for (const g of this.liveCamps.values()) animateSite(g, t, this.waveFn, this.wind, ctx);
     for (const l of this.liveSites.values()) animateSite(l.g, t, this.waveFn, this.wind, ctx);
     this.obLevel = ctx.ob; this.truckLevel = ctx.truck;

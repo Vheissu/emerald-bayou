@@ -191,7 +191,7 @@ function boathouse(rr) {
   for (const sx of [-1, 1]) { const r = box(W / 2 + 0.6, 0.06, L + 1.0, sx * (W / 4 + 0.05), H + 0.55, 0, rr() < 0.5 ? tin : rustTin); r.rotation.z = -sx * 0.5; g.add(r); }
   g.add(box(W + 0.4, 0.12, 0.12, 0, H + 0.1, -L / 2)); g.add(box(W + 0.4, 0.12, 0.12, 0, H + 0.1, L / 2));
   const walk = buildDock(L, 0.9); walk.position.set(W / 2 + 0.55, 0, L / 2); g.add(walk);
-  const skiff = buildSkiff({ crew: false }); skiff.position.set(-0.4, -0.05, 0); skiff.rotation.y = (rr() - 0.5) * 0.1; g.add(skiff); g.userData.skiff = skiff;
+  const skiff = buildSkiff({ crew: false }); skiff.position.set(-0.4, -0.05, 0); skiff.rotation.y = (rr() - 0.5) * 0.1; skiff.rotation.order = 'YXZ'; g.add(skiff); g.userData.skiff = skiff;
   // a life ring on a post and a lamp
   const ring = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.07, 8, 20), new THREE.MeshStandardMaterial({ color: 0xe25a2a, roughness: 0.7 })); ring.position.set(W / 2 + 0.05, 1.9, -L / 2 + 0.05); ring.rotation.y = Math.PI / 2; g.add(sh(ring));
   g.userData.people = [];
@@ -279,7 +279,7 @@ export function buildSite(s, T) {
     const h = stiltHouse(rr, T, s); h.position.set(s.x, s.h - 0.25, s.z); h.rotation.y = Math.atan2(-Math.cos(s.ang), -Math.sin(s.ang)); g.add(h); g.userData.house = h; g.userData.people.push(...h.userData.people);
     const dock = buildDock(14, 1.8); const dx = s.tie.x - s.bank.x, dz = s.tie.z - s.bank.z, l = Math.hypot(dx, dz);
     dock.position.set(s.bank.x, 0, s.bank.z); dock.rotation.y = Math.atan2(dx / l, dz / l) + Math.PI; g.add(dock);
-    if (rr() < 0.7) { const sk = buildSkiff({ crew: false }); const side = rr() < 0.5 ? -1 : 1; sk.position.set(s.bank.x + dx / l * 9 + (-dz / l) * side * 2.4, -0.05, s.bank.z + dz / l * 9 + (dx / l) * side * 2.4); sk.rotation.y = Math.atan2(dx / l, dz / l) + (rr() - 0.5) * 0.3; g.add(sk); g.userData.skiff = sk; }
+    if (rr() < 0.7) { const sk = buildSkiff({ crew: false }); const side = rr() < 0.5 ? -1 : 1; sk.position.set(s.bank.x + dx / l * 9 + (-dz / l) * side * 2.4, -0.05, s.bank.z + dz / l * 9 + (dx / l) * side * 2.4); sk.rotation.y = Math.atan2(dx / l, dz / l) + (rr() - 0.5) * 0.3; sk.rotation.order = 'YXZ'; g.add(sk); g.userData.skiff = sk; g.userData.skiffWater = { x: sk.position.x, z: sk.position.z, heading: sk.rotation.y }; }
     // a big live oak or two behind the house
     if (rr() < 0.75) { const ry = h.rotation.y; const n = 1 + (rr() < 0.4 ? 1 : 0); for (let i = 0; i < n; i++) { const lx = (i ? 1 : -1) * (4 + rr() * 3), lz = -(6 + rr() * 4); const wx = s.x + lx * Math.cos(ry) + lz * Math.sin(ry), wz = s.z - lx * Math.sin(ry) + lz * Math.cos(ry); const tr = spawn('tree_c'); tr.position.set(wx, T.heightAt(wx, wz) - 0.1, wz); tr.rotation.y = rr() * 6.28; tr.scale.setScalar(0.85 + rr() * 0.35); g.add(tr); } }
     // a kid or an old man off the end of the dock with a rod
@@ -290,7 +290,9 @@ export function buildSite(s, T) {
     s.colliders = [{ x: 1e9, z: 1e9, r: 2.6, tag: 'truck' }, { x: 1e9, z: 1e9, r: 1.3, tag: 'truck' }, { ax: 1e9, az: 1e9, bx: 1e9, bz: 1e9, r: 1.0, tag: 'boat' }];
     r.userData.colliders = s.colliders;
   } else if (s.kind === 'boathouse') {
-    const b = boathouse(rr); b.position.set(s.x, 0, s.z); b.rotation.y = -s.ang; g.add(b); g.userData.skiff = b.userData.skiff; g.userData.skiffLocal = true; g.userData.people.push(...b.userData.people);
+    const b = boathouse(rr); b.position.set(s.x, 0, s.z); b.rotation.y = -s.ang; g.add(b); g.userData.skiff = b.userData.skiff; g.userData.people.push(...b.userData.people);
+    const sk = b.userData.skiff, cy = Math.cos(b.rotation.y), sy = Math.sin(b.rotation.y);
+    g.userData.skiffWater = { x: s.x + sk.position.x * cy + sk.position.z * sy, z: s.z - sk.position.x * sy + sk.position.z * cy, heading: b.rotation.y + sk.rotation.y };
     const fx = -Math.sin(b.rotation.y), fz = -Math.cos(b.rotation.y); // local -z
     const px = Math.cos(b.rotation.y), pz = -Math.sin(b.rotation.y); // local +x
     s.colliders = [];
@@ -308,9 +310,22 @@ export function buildSite(s, T) {
 // per-frame life for a built site: boats bob, decoys bob, towels flap, the ramp runs its launch, people watch and wave
 // ctx = { bx, bz, speed, dt, stamps, plume, spray, audio, fish, ob, truck } (ob / truck are written back: the loudest engine near the boat)
 const _tip = new THREE.Vector3(), _dir = new THREE.Vector3();
+const siteWaterAt = (waveFn, wakeAt, x, z, t) => waveFn(x, z, t) + (wakeAt ? wakeAt(x, z, t) : 0);
 export function animateSite(g, t, waveFn, wind, ctx) {
   const sk = g.userData.skiff;
-  if (sk) { const wx = g.userData.skiffLocal ? g.children[0].position.x : sk.position.x, wz = g.userData.skiffLocal ? g.children[0].position.z : sk.position.z; sk.position.y = waveFn(wx, wz, t) - 0.05; sk.rotation.z = Math.sin(t * 0.8 + wx) * 0.02; }
+  if (sk) {
+    const W = g.userData.skiffWater, wx = W ? W.x : sk.position.x, wz = W ? W.z : sk.position.z, heading = W ? W.heading : sk.rotation.y;
+    const fx = -Math.sin(heading), fz = -Math.cos(heading), rx = Math.cos(heading), rz = -Math.sin(heading), wakeAt = ctx?.playerWakeAt;
+    const center = siteWaterAt(waveFn, wakeAt, wx, wz, t);
+    const bow = siteWaterAt(waveFn, wakeAt, wx + fx * 1.8, wz + fz * 1.8, t), stern = siteWaterAt(waveFn, wakeAt, wx - fx * 1.8, wz - fz * 1.8, t);
+    const right = siteWaterAt(waveFn, wakeAt, wx + rx * 0.72, wz + rz * 0.72, t), left = siteWaterAt(waveFn, wakeAt, wx - rx * 0.72, wz - rz * 0.72, t);
+    const pitch = Math.max(-0.22, Math.min(0.22, Math.atan2(bow - stern, 3.6)));
+    const roll = Math.max(-0.3, Math.min(0.3, Math.atan2(right - left, 1.44)));
+    const k = ctx ? 1 - Math.exp(-ctx.dt * 5) : 1;
+    sk.userData.waterPitch = (sk.userData.waterPitch || 0) + (pitch - (sk.userData.waterPitch || 0)) * k;
+    sk.userData.waterRoll = (sk.userData.waterRoll || 0) + (roll - (sk.userData.waterRoll || 0)) * k;
+    sk.position.y = center - 0.05; sk.rotation.x = sk.userData.waterPitch; sk.rotation.z = sk.userData.waterRoll + Math.sin(t * 0.8 + wx) * 0.012;
+  }
   if (g.userData.decoys) for (const d of g.userData.decoys) { d.position.y = waveFn(d.position.x, d.position.z, t) - 0.06; d.rotation.z = Math.sin(t * 1.4 + d.userData.ph) * 0.1; }
   const house = g.userData.house; if (house) { const w = wind ? wind.y : 0.5; let i = 0; for (const tw of house.userData.towels) { tw.rotation.x = 0.15 * w + Math.sin(t * 2.2 + i * 1.7) * 0.18 * w; i++; } }
   if (g.userData.rampG) animateRamp(g.userData.rampG, t, waveFn, ctx);

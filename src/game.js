@@ -27,9 +27,11 @@ export class Game {
       mission: document.getElementById('mission'), timer: document.getElementById('timer'), wp: document.getElementById('wp'),
       cash: document.getElementById('cash'), tricks: document.getElementById('tricks'), arrow: document.getElementById('arrow'),
       toast: document.getElementById('toast'), menu: document.getElementById('menu'), result: document.getElementById('result'), fade: document.getElementById('fade'),
-      air: document.getElementById('airVal'), bounty: document.getElementById('bounty'), prompt: document.getElementById('prompt'),
+      air: document.getElementById('airVal'), bounty: document.getElementById('bounty'), prompt: document.getElementById('prompt'), waterRule: document.getElementById('waterRule'),
     };
     this.nearCamp = null; this.nearTraps = []; this.scanT = 0; this.dockCamp = null; this.mapOpen = false; this.map = null;
+    this.noWakeScan = { key: '', label: '', kind: '', d: Infinity, radius: 0 };
+    this.noWakeOverT = 0; this.noWakeCooldown = 0; this.noWakeHudKey = '';
     this.toastT = 0; this.bountyT = 0; this.shake = 0; this.wpTarget = null; this.mapMarkers = [];
     this.missions = buildMissions(this);
     this.jobs = this.buildJobs();
@@ -310,6 +312,55 @@ export class Game {
     this.toast(`“${line}”`, angry ? 'You rocked his boat. Idle past anglers.' : 'The angler in the johnboat', 2.4);
     if (angry && this.law) this.law.violation(0.12, 'reckless wake complaint');
   }
+  considerNoWake(out, x, z, key, label, kind, cx, cz, radius) {
+    const d = Math.hypot(x - cx, z - cz);
+    if (d >= radius || d >= out.d) return;
+    out.key = key; out.label = label; out.kind = kind; out.d = d; out.radius = radius;
+  }
+  findNoWakeZone(x, z) {
+    const out = this.noWakeScan; out.key = ''; out.label = ''; out.kind = ''; out.d = Infinity; out.radius = 0;
+    if (!this.world) return out;
+    for (const g of this.world.liveCamps.values()) {
+      const c = g.userData.site; if (c) this.considerNoWake(out, x, z, `camp:${c.key}`, c.name, 'camp', c.tie.x, c.tie.z, 88);
+    }
+    for (const { site: s } of this.world.liveSites.values()) {
+      if (s.kind === 'blind') continue;
+      const center = s.kind === 'house' ? s.tie : s;
+      const radius = s.kind === 'ramp' ? 105 : s.kind === 'boathouse' ? 78 : 82;
+      const label = s.kind === 'ramp' ? 'Public boat ramp' : s.kind === 'boathouse' ? 'Working boathouse' : 'Private dock';
+      this.considerNoWake(out, x, z, `site:${s.key}`, label, s.kind, center.x, center.z, radius);
+    }
+    return out;
+  }
+  updateNoWake(dt, enabled) {
+    this.noWakeCooldown = Math.max(0, this.noWakeCooldown - dt);
+    const z = this.noWakeScan, active = enabled && Boolean(z.key), mph = this.mph();
+    if (!active) {
+      this.noWakeOverT = Math.max(0, this.noWakeOverT - dt * 2.5);
+      if (this.el.waterRule && this.noWakeHudKey) { this.el.waterRule.classList.remove('on', 'warn'); this.el.waterRule.innerHTML = ''; this.noWakeHudKey = ''; }
+      return;
+    }
+    const speeding = mph > 8;
+    this.noWakeOverT = speeding ? this.noWakeOverT + dt : Math.max(0, this.noWakeOverT - dt * 3.5);
+    const hudKey = `${z.key}:${speeding ? Math.round(mph) : 0}`;
+    if (this.el.waterRule && hudKey !== this.noWakeHudKey) {
+      this.noWakeHudKey = hudKey;
+      this.el.waterRule.classList.add('on'); this.el.waterRule.classList.toggle('warn', speeding);
+      this.el.waterRule.innerHTML = speeding
+        ? `<span>Slow down · ${Math.round(mph)} mph</span><small>No wake · ${z.label}</small>`
+        : `<span>No wake · 5 mph</span><small>${z.label}</small>`;
+    }
+    if (this.noWakeOverT < 2.2 || this.noWakeCooldown > 0) return;
+    this.noWakeOverT = 0.8; this.noWakeCooldown = 45;
+    const call = z.kind === 'ramp' ? '“No wake at the ramp!”' : z.kind === 'camp' ? '“Idle speed past the dock!”' : '“Cut that wake!”';
+    this.toast(call, `${z.label} · complaint called in`, 2.8);
+    if (this.law) {
+      this.law.stats.wakeWarnings = (this.law.stats.wakeWarnings || 0) + 1;
+      this.law.violation(0.28, `wake complaint · ${z.label.toLowerCase()}`);
+    }
+    if (this.reputation) this.reputation.change('locals', -0.15, 'no-wake', `You threw a wake through ${z.label.toLowerCase()}.`, false);
+    else this.persist();
+  }
   gatorHit(g) {
     const p = this.phys;
     p.hit = Math.max(p.hit, 4.5); p.hitNormal.set(-p.vel.x, -p.vel.y).normalize();
@@ -380,6 +431,7 @@ export class Game {
           if (nc.d < 70 && !this.save.camps.includes(nc.camp.key)) { this.save.camps.push(nc.camp.key); this.addCash(75); this.toast(nc.camp.name, `Fish camp found · +$75 · ${this.save.camps.length} on the chart`, 3.2); this.audio.pickup(); this.bounties.event('discover', 1); }
         }
         this.nearTraps = this.world.trapsNear(p.pos.x, p.pos.y, 80);
+        this.findNoWakeZone(p.pos.x, p.pos.y);
       }
       for (const tr of this.nearTraps) if (Math.hypot(tr.x - p.pos.x, tr.z - p.pos.y) < 4.6) {
         this.world.collectTrap(tr); this.save.traps.push(tr.key); this.addCash(40); this.audio.pickup();
@@ -387,6 +439,7 @@ export class Game {
         this.nearTraps = this.nearTraps.filter(x => x !== tr); break;
       }
       const nc = this.nearCamp; const slow = this.mph() < 6, freeRide = !this.state && !this.story?.blocking() && !this.aftermath?.blocking() && !this.encounters?.active;
+      this.updateNoWake(dt, freeRide);
       this.dockCamp = (freeRide && nc && Math.hypot(nc.camp.tie.x - p.pos.x, nc.camp.tie.z - p.pos.y) < 16 && slow) ? nc.camp : null;
       this.dockJob = null; if (freeRide && slow) { let bd = 14; for (const j of this.jobs) { const d = this.dist(j.x, j.z); if (d < bd) { bd = d; this.dockJob = j; } } }
       this.atBoard = freeRide && slow && !this.dockJob && this.dist(this.dockTie.x, this.dockTie.z) < 18;

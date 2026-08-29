@@ -508,6 +508,10 @@ export class Traffic {
     }
     return Math.max(-0.24, Math.min(0.24, height));
   }
+  playerWakeAt(x, z, t) {
+    const P = this.phys;
+    return wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, 0.22, x, z, t);
+  }
   snapshot() {
     return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), active: b.active, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions }));
   }
