@@ -192,29 +192,56 @@ export class Manatees {
     for (let i = 0; i < count; i++) {
       const m = manateeMesh();
       const z = start.z - 20 - i * 35, x = terrain.riverCenterX(z) + (r() - 0.5) * 30;
-      this.list.push({ mesh: m, pos: new THREE.Vector3(x, -0.7, z), heading: r() * Math.PI * 2, t: r() * 50, speed: 0.6 + r() * 0.5, ph: r() * 6 });
+      const speed = 0.6 + r() * 0.5;
+      this.list.push({
+        mesh: m, pos: new THREE.Vector3(x, -0.7, z), heading: r() * Math.PI * 2, escapeHeading: 0,
+        t: r() * 50, speed, cruiseSpeed: speed, ph: r() * 6, zoneKey: `manatee:${i}`,
+        avoidT: 0, diveT: 0, diveBlend: 0, zoneT: 0, strikeT: 0, nearMissT: 0, surfaced: false,
+      });
     }
+  }
+  alert(m, bx, bz, severity = 1) {
+    if (!m) return;
+    const dx = m.pos.x - bx, dz = m.pos.z - bz;
+    if (dx * dx + dz * dz > 0.01) m.escapeHeading = Math.atan2(-dx, -dz);
+    m.avoidT = Math.max(m.avoidT, 4.5 + severity * 2.5);
+    m.diveT = Math.max(m.diveT, 5.5 + severity * 3.5);
+    m.zoneT = Math.max(m.zoneT, 10);
   }
   update(dt, t, bx = 0, bz = 0) {
     if (!this.rand) this.rand = mulberry32(77);
     for (const m of this.list) {
+      m.avoidT = Math.max(0, m.avoidT - dt); m.diveT = Math.max(0, m.diveT - dt);
+      m.zoneT = Math.max(0, m.zoneT - dt); m.strikeT = Math.max(0, m.strikeT - dt); m.nearMissT = Math.max(0, m.nearMissT - dt);
       if (!m.held && Math.hypot(m.pos.x - bx, m.pos.z - bz) > 700) {
         const spot = findNear(this.T, this.rand, bx, bz, 180, 450, -6, -2.4);
-        if (spot) { m.pos.x = spot.x; m.pos.z = spot.z; }
+        if (spot) {
+          m.pos.x = spot.x; m.pos.z = spot.z; m.avoidT = 0; m.diveT = 0; m.diveBlend = 0;
+          m.zoneT = 0; m.strikeT = 0; m.nearMissT = 0;
+        }
       }
-      // wander, steer toward deep water
+      // Wander in deep water. A fast hull makes them turn away and dive rather than waiting under the prop line.
+      if (m.avoidT > 0) {
+        const dh = Math.atan2(Math.sin(m.escapeHeading - m.heading), Math.cos(m.escapeHeading - m.heading));
+        m.heading += Math.max(-dt * 1.25, Math.min(dt * 1.25, dh));
+      } else m.heading += Math.sin(t * 0.3 + m.ph) * dt * 0.15;
       const ahead = 8;
-      const fx = -Math.sin(m.heading), fz = -Math.cos(m.heading);
+      let fx = -Math.sin(m.heading), fz = -Math.cos(m.heading);
       const hAhead = this.T.heightAt(m.pos.x + fx * ahead, m.pos.z + fz * ahead);
       const hL = this.T.heightAt(m.pos.x + (fx * 0.7 - fz * 0.7) * ahead, m.pos.z + (fz * 0.7 + fx * 0.7) * ahead);
       const hR = this.T.heightAt(m.pos.x + (fx * 0.7 + fz * 0.7) * ahead, m.pos.z + (fz * 0.7 - fx * 0.7) * ahead);
       if (hAhead > -1.6) m.heading += (hL < hR ? 1 : -1) * dt * 0.8;
-      m.heading += Math.sin(t * 0.3 + m.ph) * dt * 0.15;
+      const targetSpeed = m.avoidT > 0 ? Math.min(1.85, m.cruiseSpeed * 1.75) : m.cruiseSpeed;
+      m.speed += (targetSpeed - m.speed) * (1 - Math.exp(-dt * (m.avoidT > 0 ? 1.8 : 0.35)));
+      fx = -Math.sin(m.heading); fz = -Math.cos(m.heading);
       m.pos.x += fx * m.speed * dt; m.pos.z += fz * m.speed * dt;
       const surf = Math.sin(t * 0.25 + m.ph);
-      m.pos.y = -0.75 + Math.max(0, surf - 0.75) * 2.0 * this.surfaceActivity;
+      m.diveBlend += ((m.diveT > 0 ? 1 : 0) - m.diveBlend) * (1 - Math.exp(-dt * (m.diveT > 0 ? 4.2 : 0.5)));
+      m.pos.y = -0.75 + Math.max(0, surf - 0.75) * 2.0 * this.surfaceActivity - m.diveBlend * 1.15;
+      m.surfaced = m.diveBlend < 0.12 && m.pos.y > -0.58;
+      if (m.surfaced) m.zoneT = Math.max(m.zoneT, 8);
       m.mesh.position.copy(m.pos);
-      m.mesh.rotation.set(Math.sin(t * 0.5 + m.ph) * 0.05 - Math.max(0, surf - 0.75) * 0.6, m.heading, 0);
+      m.mesh.rotation.set(Math.sin(t * 0.5 + m.ph) * 0.05 - Math.max(0, surf - 0.75) * 0.6 + m.diveBlend * 0.18, m.heading, 0);
     }
   }
 }

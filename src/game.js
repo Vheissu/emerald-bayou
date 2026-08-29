@@ -8,6 +8,7 @@ const fmtT = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60), r = s - 
 const fmtCash = (c) => '$' + Math.round(c).toLocaleString('en-US');
 const MPH = 2.23694;
 const FT = 3.28084, MI = 1 / 1609.344;
+const HULL_SAMPLES = [-2, 0, 1.6];
 // Florida measures in feet and miles: under about a fifth of a mile in feet, then miles
 export const fmtDist = (m) => m < 300 ? `${Math.round(m * FT / 10) * 10} ft` : m < 16090 ? `${(m * MI).toFixed(m < 3219 ? 2 : 1)} mi` : `${Math.round(m * MI)} mi`;
 const MEDALS = ['BRONZE', 'SILVER', 'GOLD'];
@@ -30,8 +31,8 @@ export class Game {
       air: document.getElementById('airVal'), bounty: document.getElementById('bounty'), prompt: document.getElementById('prompt'), waterRule: document.getElementById('waterRule'),
     };
     this.nearCamp = null; this.nearTraps = []; this.scanT = 0; this.dockCamp = null; this.mapOpen = false; this.map = null;
-    this.noWakeScan = { key: '', label: '', kind: '', d: Infinity, radius: 0 };
-    this.noWakeOverT = 0; this.noWakeCooldown = 0; this.noWakeHudKey = '';
+    this.noWakeScan = { key: '', label: '', kind: '', d: Infinity, radius: 0, limit: 8, priority: 0, animal: null };
+    this.noWakeOverT = 0; this.noWakeCooldown = 0; this.manateeWarnCooldown = 0; this.noWakeHudKey = '';
     this.toastT = 0; this.bountyT = 0; this.shake = 0; this.wpTarget = null; this.mapMarkers = [];
     this.missions = buildMissions(this);
     this.jobs = this.buildJobs();
@@ -39,7 +40,7 @@ export class Game {
     if (this.world) for (const k of this.save.traps) this.world.collected.add(k);
     this.tricks.onEvent = (text, pts, kind, value) => { this.audio.trick(this.tricks.mult); this.bounties.event(kind, value, text); this.record(kind, value); };
     this.tricks.onBank = (pts, mult, n) => { this.audio.bank(); this.addCash(Math.round(pts / 40)); if (this.state && this.state.m.id === 'stunt') this.state.score += pts; this.bounties.event('bank', pts); this.record('bank', pts); this.record('chain', n); };
-    this._v = new THREE.Vector3();
+    this._v = new THREE.Vector3(); this._f = new THREE.Vector2();
     this.fx = null; // set by main: { thud(), splash() } hooks not needed; main reads phys
     window.addEventListener('keydown', e => this.onKey(e));
     this.pagehideHandler = () => this.persist();
@@ -312,46 +313,55 @@ export class Game {
     this.toast(`“${line}”`, angry ? 'You rocked his boat. Idle past anglers.' : 'The angler in the johnboat', 2.4);
     if (angry && this.law) this.law.violation(0.12, 'reckless wake complaint');
   }
-  considerNoWake(out, x, z, key, label, kind, cx, cz, radius) {
+  considerNoWake(out, x, z, key, label, kind, cx, cz, radius, limit = 8, animal = null, priority = 0) {
     const d = Math.hypot(x - cx, z - cz);
-    if (d >= radius || d >= out.d) return;
-    out.key = key; out.label = label; out.kind = kind; out.d = d; out.radius = radius;
+    if (d >= radius || priority < out.priority || (priority === out.priority && d >= out.d)) return;
+    out.key = key; out.label = label; out.kind = kind; out.d = d; out.radius = radius; out.limit = limit; out.priority = priority; out.animal = animal;
   }
   findNoWakeZone(x, z) {
-    const out = this.noWakeScan; out.key = ''; out.label = ''; out.kind = ''; out.d = Infinity; out.radius = 0;
-    if (!this.world) return out;
-    for (const g of this.world.liveCamps.values()) {
-      const c = g.userData.site; if (c) this.considerNoWake(out, x, z, `camp:${c.key}`, c.name, 'camp', c.tie.x, c.tie.z, 88);
+    const out = this.noWakeScan; out.key = ''; out.label = ''; out.kind = ''; out.d = Infinity; out.radius = 0; out.limit = 8; out.priority = 0; out.animal = null;
+    if (this.world) {
+      for (const g of this.world.liveCamps.values()) {
+        const c = g.userData.site; if (c) this.considerNoWake(out, x, z, `camp:${c.key}`, c.name, 'camp', c.tie.x, c.tie.z, 88);
+      }
+      for (const { site: s } of this.world.liveSites.values()) {
+        if (s.kind === 'blind') continue;
+        const center = s.kind === 'house' ? s.tie : s;
+        const radius = s.kind === 'ramp' ? 105 : s.kind === 'boathouse' ? 78 : 82;
+        const label = s.kind === 'ramp' ? 'Public boat ramp' : s.kind === 'boathouse' ? 'Working boathouse' : 'Private dock';
+        this.considerNoWake(out, x, z, `site:${s.key}`, label, s.kind, center.x, center.z, radius);
+      }
     }
-    for (const { site: s } of this.world.liveSites.values()) {
-      if (s.kind === 'blind') continue;
-      const center = s.kind === 'house' ? s.tie : s;
-      const radius = s.kind === 'ramp' ? 105 : s.kind === 'boathouse' ? 78 : 82;
-      const label = s.kind === 'ramp' ? 'Public boat ramp' : s.kind === 'boathouse' ? 'Working boathouse' : 'Private dock';
-      this.considerNoWake(out, x, z, `site:${s.key}`, label, s.kind, center.x, center.z, radius);
-    }
+    if (this.manatees) for (const m of this.manatees.list) if (m.surfaced || m.zoneT > 0) this.considerNoWake(out, x, z, m.zoneKey, 'Manatee ahead', 'manatee', m.pos.x, m.pos.z, 70, 6, m, 1);
     return out;
   }
   updateNoWake(dt, enabled) {
     this.noWakeCooldown = Math.max(0, this.noWakeCooldown - dt);
+    this.manateeWarnCooldown = Math.max(0, this.manateeWarnCooldown - dt);
     const z = this.noWakeScan, active = enabled && Boolean(z.key), mph = this.mph();
     if (!active) {
       this.noWakeOverT = Math.max(0, this.noWakeOverT - dt * 2.5);
       if (this.el.waterRule && this.noWakeHudKey) { this.el.waterRule.classList.remove('on', 'warn'); this.el.waterRule.innerHTML = ''; this.noWakeHudKey = ''; }
       return;
     }
-    const speeding = mph > 8;
+    const manatee = z.kind === 'manatee', speeding = mph > z.limit;
     this.noWakeOverT = speeding ? this.noWakeOverT + dt : Math.max(0, this.noWakeOverT - dt * 3.5);
     const hudKey = `${z.key}:${speeding ? Math.round(mph) : 0}`;
     if (this.el.waterRule && hudKey !== this.noWakeHudKey) {
       this.noWakeHudKey = hudKey;
       this.el.waterRule.classList.add('on'); this.el.waterRule.classList.toggle('warn', speeding);
-      this.el.waterRule.innerHTML = speeding
-        ? `<span>Slow down · ${Math.round(mph)} mph</span><small>No wake · ${z.label}</small>`
-        : `<span>No wake · 5 mph</span><small>${z.label}</small>`;
+      this.el.waterRule.innerHTML = manatee
+        ? speeding ? `<span>Manatee ahead · ${Math.round(mph)} mph</span><small>Idle speed · watch the boil</small>` : '<span>Idle speed · 5 mph</span><small>Manatee ahead</small>'
+        : speeding ? `<span>Slow down · ${Math.round(mph)} mph</span><small>No wake · ${z.label}</small>` : `<span>No wake · 5 mph</span><small>${z.label}</small>`;
     }
-    if (this.noWakeOverT < 2.2 || this.noWakeCooldown > 0) return;
-    this.noWakeOverT = 0.8; this.noWakeCooldown = 45;
+    if (this.noWakeOverT < (manatee ? 1 : 2.2) || (manatee ? this.manateeWarnCooldown : this.noWakeCooldown) > 0) return;
+    this.noWakeOverT = manatee ? 0.35 : 0.8;
+    if (manatee) {
+      this.manateeWarnCooldown = 12;
+      this.manatees.alert(z.animal, this.phys.pos.x, this.phys.pos.y, 0.7);
+      this.audio.warn(); this.toast('Manatee diving', 'Throttle back and hold the last place you saw the boil.', 2.8); return;
+    }
+    this.noWakeCooldown = 45;
     const call = z.kind === 'ramp' ? '“No wake at the ramp!”' : z.kind === 'camp' ? '“Idle speed past the dock!”' : '“Cut that wake!”';
     this.toast(call, `${z.label} · complaint called in`, 2.8);
     if (this.law) {
@@ -360,6 +370,35 @@ export class Game {
     }
     if (this.reputation) this.reputation.change('locals', -0.15, 'no-wake', `You threw a wake through ${z.label.toLowerCase()}.`, false);
     else this.persist();
+  }
+  manateeNearMiss(m) {
+    if (!m || m.nearMissT > 0) return;
+    m.nearMissT = 14; this.manatees.alert(m, this.phys.pos.x, this.phys.pos.y, 1.25);
+    this.manateeWarnCooldown = Math.max(this.manateeWarnCooldown, 14); this.tricks.bust('WILDLIFE'); this.audio.warn();
+    this.toast('Manatee under the bow', 'Kill the throttle. FWC has the wake report.', 3);
+    if (this.law) {
+      this.law.stats.manateeNearMisses = (this.law.stats.manateeNearMisses || 0) + 1;
+      this.law.add(0.55, 'high-speed manatee near-miss', false);
+    }
+    if (this.reputation) this.reputation.change('fwc', -0.3, 'manatee-near-miss', 'FWC logged a high-speed pass over a surfaced manatee.', false);
+    else this.persist();
+  }
+  manateeHit(m) {
+    if (!m || m.strikeT > 0) return;
+    const p = this.phys, dx = p.pos.x - m.pos.x, dz = p.pos.y - m.pos.z, d = Math.hypot(dx, dz) || 1;
+    m.strikeT = 18; m.nearMissT = 18; this.manatees.alert(m, p.pos.x, p.pos.y, 2);
+    p.hit = Math.max(p.hit, 4.8); p.hitNormal.set(dx / d, dz / d); p.hitTag = 'manatee'; p.hitObj = m;
+    p.vel.multiplyScalar(0.78); p.vy = Math.max(p.vy, 0.9); p.rollVel += (Math.random() < 0.5 ? -1 : 1) * 1.7; p.angVel += (Math.random() - 0.5) * 1.2;
+    this.manateeWarnCooldown = Math.max(this.manateeWarnCooldown, 20); this.tricks.bust('WILDLIFE'); this.audio.thud(1.35); this.shake = Math.min(1, this.shake + 0.58);
+    this.toast('Manatee strike', 'Bring the boat to idle. FWC is logging the hull.', 3.4);
+    if (this.law) {
+      this.law.stats.manateeStrikes = (this.law.stats.manateeStrikes || 0) + 1;
+      this.law.add(1.65, 'protected manatee strike', false);
+    }
+    if (this.reputation) {
+      this.reputation.change('fwc', -1.1, 'manatee-strike', 'A protected manatee strike went into the FWC file.', true);
+      this.reputation.change('locals', -0.35, 'manatee-strike', 'Word reached the camps that the tower boat hit a manatee.', false);
+    } else this.persist();
   }
   gatorHit(g) {
     const p = this.phys;
@@ -410,13 +449,25 @@ export class Game {
       const mph = p.speed * MPH; if (mph > 5) { this.record('speed', mph); this.bounties.event('speed', mph); }
       if (this.tricks.driftNow > 0) this.bounties.event('driftnow', this.tricks.driftNow);
       this.bounties.tick(dt);
+      // Large wildlife reacts to the hull footprint, not just the boat's center point.
+      if (this.manatees && p.speed > 2.5 && !p.airborne) {
+        const f = p.forward(this._f), mph = this.mph(), survey = this.state && this.state.m.id === 'manatee';
+        for (const m of this.manatees.list) {
+          let hullD = Infinity;
+          for (const oz of HULL_SAMPLES) { const hx = p.pos.x - f.x * oz, hz = p.pos.y - f.y * oz; hullD = Math.min(hullD, Math.hypot(hx - m.pos.x, hz - m.pos.z)); }
+          if (hullD < 24 && mph > 6) this.manatees.alert(m, p.pos.x, p.pos.y, Math.min(1.5, mph / 24));
+          if (!m.surfaced || m.strikeT > 0) continue;
+          if (hullD < 2.25) this.manateeHit(m);
+          else if (!survey && hullD < 8 && mph > 12) this.manateeNearMiss(m);
+        }
+      }
       // gators under the hull
       if (this.gators && p.speed > 2.5 && !p.airborne) {
-        const f = p.forward();
+        const f = p.forward(this._f);
         for (const g of this.gators.list) {
           if (!g.surfaced || g.hitT > 0) continue;
           const r = 1.6 * g.mesh.scale.x + 1.0;
-          for (const oz of [-2.0, 0, 1.6]) { const hx = p.pos.x - f.x * oz, hz = p.pos.y - f.y * oz; if (Math.hypot(hx - g.pos.x, hz - g.pos.z) < r) { this.gatorHit(g); break; } }
+          for (const oz of HULL_SAMPLES) { const hx = p.pos.x - f.x * oz, hz = p.pos.y - f.y * oz; if (Math.hypot(hx - g.pos.x, hz - g.pos.z) < r) { this.gatorHit(g); break; } }
         }
       }
       if (this.gators && this.gators.list[0]) { const g = this.gators.list[0]; if (g.surfaced && Math.hypot(g.pos.x - p.pos.x, g.pos.z - p.pos.y) < 16) this.bounties.event('seegator', 1); }
@@ -662,19 +713,22 @@ function buildMissions(G) {
     start: (G) => ({ x: G.startX, z: G.startZ, heading: 0 }),
     setup(s, G) { s.logged = new Set(); s.hold = 0; s.warnT = 0; },
     update(s, G, dt) {
-      const list = G.manatees.list.filter(m => !s.logged.has(m));
-      if (!list.length) return 'done';
-      let best = null, bd = 1e9;
-      for (const m of list) { const d = Math.hypot(m.pos.x - G.phys.pos.x, m.pos.z - G.phys.pos.y); if (d < bd) { bd = d; best = m; } }
+      let best = null, bd = 1e9, remaining = 0;
+      for (const m of G.manatees.list) if (!s.logged.has(m)) { remaining++; const d = Math.hypot(m.pos.x - G.phys.pos.x, m.pos.z - G.phys.pos.y); if (d < bd) { bd = d; best = m; } }
+      if (!remaining) return 'done';
       toGate(s, G, { x: best.pos.x, z: best.pos.z, label: 'manatee' }, 0x7be08a, null, false);
       s.warnT -= dt;
-      if (bd < 16 && G.mph() > 12) { s.hold = 0; if (s.warnT <= 0) { s.warnT = 2.5; G.toast('Slow down', 'Manatee zone · idle speed only', 1.8); G.audio.warn(); s.strikes = (s.strikes || 0) + 1; if (s.strikes >= 3) return { fail: 'You ran a manatee down. FWC pulled your permit.' }; } }
-      else if (bd < 8 && G.mph() < 6) { s.hold += dt; if (s.hold >= 2) { s.logged.add(best); s.hold = 0; G.audio.pickup(); G.toast(`Logged ${s.logged.size} / ${G.manatees.list.length}`, '', 1.4); } }
+      if (best.strikeT > 17.5) return { fail: 'You struck a protected manatee. FWC ended the survey.' };
+      if (bd < 16 && G.mph() > 12) {
+        s.hold = 0; G.manatees.alert(best, G.phys.pos.x, G.phys.pos.y, 1.1);
+        if (s.warnT <= 0) { s.warnT = 2.5; G.toast('Slow down', 'Manatee diving · idle speed and wait for it to surface', 2.2); G.audio.warn(); s.strikes = (s.strikes || 0) + 1; if (s.strikes >= 3) return { fail: 'Repeated high-speed passes ended the FWC survey.' }; }
+      }
+      else if (bd < 8 && G.mph() < 6 && best.surfaced) { s.hold += dt; if (s.hold >= 2) { s.logged.add(best); s.hold = 0; G.audio.pickup(); G.toast(`Logged ${s.logged.size} / ${G.manatees.list.length}`, '', 1.4); } }
       else s.hold = Math.max(0, s.hold - dt * 2);
-      s.holdView = s.hold;
+      s.holdView = s.hold; s.waiting = bd < 12 && !best.surfaced;
       return null;
     },
-    hud(s, G) { return { obj: `Logged ${s.logged.size} of ${G.manatees.list.length}`, sub: s.holdView > 0 ? `Holding… ${(s.holdView / 2 * 100).toFixed(0)}%` : 'Watch for the grey backs surfacing' }; },
+    hud(s, G) { return { obj: `Logged ${s.logged.size} of ${G.manatees.list.length}`, sub: s.holdView > 0 ? `Holding… ${(s.holdView / 2 * 100).toFixed(0)}%` : s.waiting ? 'At idle · waiting for it to surface' : 'Watch for the grey backs surfacing' }; },
     markers(s, G, out) { for (const m of G.manatees.list) if (!s.logged.has(m)) out.push({ x: m.pos.x, z: m.pos.z, color: '#7be08a', r: 4 }); },
   };
 
