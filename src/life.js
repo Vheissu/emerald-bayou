@@ -234,6 +234,8 @@ const YELLS = ['Watch it!', 'Hey! Learn to drive that thing!', 'You blind, son?'
 const ANGLER_SLOW = ['Any luck?', 'Nothin\' but gar, all morning', 'They were biting at first light', 'Got a nice bream. Go on, quiet now'];
 const ANGLER_WAKE = ['Slow down! You are rocking my boat!', 'Idle speed, you fool!', 'There goes my whole morning', 'I got a line out here!'];
 const STEER_PROBES = [-0.7, -0.35, 0, 0.35, 0.7];
+const SHELTER_RELEASE_MARGIN = 0.09;
+const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 const TRAFFIC_PROFILES = [
   { id: 'net-nine', callsign: 'NET BOAT 9', operator: 'EDDIE MORA', job: 'mullet netter', duty: [4.5, 14], threshold: 0.22, cruise: 0.72, work: [18, 34, 0.72], maxStorm: 0.58, channel: 'CH 16', faction: 'locals', color: '#78a6bd' },
   { id: 'marsh-ice', callsign: 'MARSH ICE', operator: 'ROSA MENDEZ', job: 'fish buyer', duty: [5.25, 16.2], threshold: 0.38, cruise: 0.82, work: [10, 22, 0.42], maxStorm: 0.66, channel: 'CH 68', faction: 'locals', color: '#8eb895' },
@@ -325,7 +327,8 @@ export class Traffic {
     for (let i = 0; i < hulls.length; i++) {
       const b = hulls[i], profile = TRAFFIC_PROFILES[i];
       const record = this.state.operators[profile.id] ||= { shifts: 0, passes: 0, collisions: 0, lastMet: '', lastShift: '' };
-      Object.assign(b, { profile, record, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
+      const shelter = { active: false, arrived: false, kind: '', key: '', name: '', x: 0, z: 0, heading: 0, distance: 0 };
+      Object.assign(b, { profile, record, shelter, shelterSlot: i, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
       this.addWorkingDetails(b, i);
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
       b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
@@ -402,6 +405,50 @@ export class Traffic {
     if (storm > b.profile.maxStorm) return false;
     return b.profile.essential ? this.activity > 0.08 : this.activity >= b.profile.threshold;
   }
+  stormUnsafe(b) { return (this.environment?.values.storm || 0) > b.profile.maxStorm; }
+  clearShelter(b) {
+    const s = b.shelter; s.active = false; s.arrived = false; s.kind = ''; s.key = ''; s.name = ''; s.distance = 0;
+  }
+  chooseShelter(b) {
+    const s = b.shelter, world = this.fx.game.world;
+    s.active = true; s.arrived = false; s.kind = 'lee'; s.key = ''; s.name = 'the lee bank'; s.x = b.x; s.z = b.z; s.distance = 0;
+    const wind = this.environment?.windDir, wx = wind?.x || 1, wz = wind?.z || 0;
+    s.heading = Math.atan2(wx, wz); // bow toward the weather while holding
+
+    // Named camps are preferred. Fixed berth slots keep the seven persistent crews from stacking on one tie-up.
+    const nearest = world?.nearestCamp(b.x, b.z, 1400);
+    if (nearest?.camp) {
+      const c = nearest.camp, preferred = (b.shelterSlot & 1 ? 1 : -1) * (7.5 + Math.floor(b.shelterSlot / 2) * 7.5);
+      for (let k = 0; k < 11; k++) {
+        const side = k === 0 ? preferred : (k & 1 ? 1 : -1) * (7.5 + Math.floor((k - 1) / 2) * 7.5);
+        const x = c.tie.x - Math.sin(c.ang) * side, z = c.tie.z + Math.cos(c.ang) * side;
+        if (this.T.heightAt(x, z) > -0.65 || world.blockedAt(x, z)) continue;
+        let occupied = false;
+        for (const other of this.boats) if (other !== b && other.shelter.active && other.shelter.key === c.key && Math.hypot(other.shelter.x - x, other.shelter.z - z) < 7) { occupied = true; break; }
+        if (occupied) continue;
+        s.kind = 'camp'; s.key = c.key; s.name = c.name; s.x = x; s.z = z;
+        const outX = -Math.cos(c.ang), outZ = -Math.sin(c.ang); s.heading = Math.atan2(-outX, -outZ);
+        s.distance = Math.hypot(s.x - b.x, s.z - b.z); return s;
+      }
+    }
+
+    // If no camp is close enough, find deep water with a bank on the upwind side and hold there.
+    let best = -1e9;
+    for (let ring = 0; ring < 3; ring++) for (let i = 0; i < 16; i++) {
+      const a = i / 16 * 6.283 + b.shelterSlot * 0.17, r = 70 + ring * 55;
+      const x = b.x + Math.cos(a) * r, z = b.z + Math.sin(a) * r;
+      const h = this.T.heightAt(x, z), mh = this.T.heightAt((b.x + x) * 0.5, (b.z + z) * 0.5);
+      if (h > -0.78 || mh > -0.58 || Math.max(Math.abs(x), Math.abs(z)) > WORLD_HALF - 650) continue;
+      const upwind = this.T.heightAt(x - wx * 34, z - wz * 34);
+      const score = Math.min(4, -h) + Math.max(-1, Math.min(2.5, upwind + 0.7)) * 1.8 - ring * 0.12;
+      if (score > best) { best = score; s.x = x; s.z = z; }
+    }
+    s.distance = Math.hypot(s.x - b.x, s.z - b.z); return s;
+  }
+  beginShelter(b) {
+    this.chooseShelter(b); b.state = 'shelter-run'; b.retiring = false; b.workT = 0; b.leg = 0; b.routeBias = 0;
+    if (b.workRig) b.workRig.visible = false;
+  }
   beginLeg(b, first = false) {
     b.state = 'transit'; b.workT = 0; b.leg = (first ? 220 : 280) + this.rand() * (first ? 260 : 520); b.routeBias = (this.rand() - 0.5) * (b.profile.id === 'back-line' ? 0.72 : 0.46);
     if (b.workRig) b.workRig.visible = false;
@@ -411,7 +458,7 @@ export class Traffic {
     if (b.workRig) b.workRig.visible = !['bay-star', 'fwc-27', 'back-line'].includes(b.profile.id);
   }
   retire(b, delay = 28) {
-    b.active = false; b.retiring = false; b.state = 'off'; b.mesh.visible = false; b.x = b.z = 1e9; b.speed = 0; b.spawnT = delay + this.rand() * delay;
+    this.clearShelter(b); b.active = false; b.retiring = false; b.state = 'off'; b.mesh.visible = false; b.x = b.z = 1e9; b.speed = 0; b.spawnT = delay + this.rand() * delay;
     if (b.workRig) b.workRig.visible = false; if (b.navLights) b.navLights.visible = false; if (b.deckLight) b.deckLight.intensity = 0;
     if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; }
     if (b.beacon) b.beacon.visible = false; if (b.beaconBulbs) b.beaconBulbs.blueLight.intensity = b.beaconBulbs.redLight.intensity = 0;
@@ -426,7 +473,7 @@ export class Traffic {
       let best = null, bd = 0;
       for (let i = 0; i < 12; i++) { const h = i / 12 * 6.283; const d = -hf.compute(x - Math.sin(h) * 40, z - Math.cos(h) * 40) - hf.compute(x - Math.sin(h) * 80, z - Math.cos(h) * 80); if (d > bd) { bd = d; best = h; } }
       if (best === null || bd < 3) continue;
-      b.x = x; b.z = z; b.heading = best; b.speed = b.max * 0.45; b.mesh.visible = true; b.ground = 0; b.active = true; b.retiring = false; this.beginLeg(b, true);
+      this.clearShelter(b); b.x = x; b.z = z; b.heading = best; b.speed = b.max * 0.45; b.mesh.visible = true; b.ground = 0; b.active = true; b.retiring = false; this.beginLeg(b, true);
       const key = this.shiftKey(b);
       if (b.record.lastShift !== key) { b.record.lastShift = key; b.record.shifts++; this.fx.game.persist(); }
       return true;
@@ -439,7 +486,7 @@ export class Traffic {
     const key = this.shiftKey(b); if (b.record.lastMet === key) return;
     b.record.lastMet = key; b.record.passes++; b.greetT = 24; this.fx.game.persist();
     if (b.people?.length) wave(b.people[b.people.length - 1]);
-    const state = b.state === 'work' ? `working · ${b.profile.job}` : b.retiring ? 'heading in' : b.profile.job;
+    const state = b.state === 'shelter-run' ? `making for ${b.shelter.name}` : b.state === 'sheltered' ? `weathered in at ${b.shelter.name}` : b.state === 'work' ? `working · ${b.profile.job}` : b.retiring ? 'heading in' : b.profile.job;
     this.fx.game.toast(`${b.profile.callsign} · ${b.profile.operator}`, state, 2.8);
   }
   updateWorkingDetails(b, t) {
@@ -466,7 +513,8 @@ export class Traffic {
     const P = this.phys, desired = Math.atan2(-(P.pos.x - b.x), -(P.pos.y - b.z));
     const relative = Math.atan2(Math.sin(desired - b.heading), Math.cos(desired - b.heading));
     const look = d < 46 ? Math.max(-0.95, Math.min(0.95, relative)) : 0, k = 1 - Math.exp(-dt * 5.5);
-    const working = b.state === 'work', brace = Math.min(0.32, Math.abs(playerWake) * 3.4);
+    const working = b.state === 'work', stormBrace = b.shelter.active ? (this.environment?.values.sea || 0) * 0.12 : 0;
+    const brace = Math.min(0.32, Math.abs(playerWake) * 3.4 + stormBrace);
     const scannedDriver = b.mesh.userData.driverModel;
     if (scannedDriver) {
       scannedDriver.rotation.y += ((scannedDriver.userData.baseYaw + look * 0.12) - scannedDriver.rotation.y) * k;
@@ -489,7 +537,9 @@ export class Traffic {
     const calls = [];
     for (const b of nearby) {
       const P = b.profile, working = b.state === 'work'; let text = '';
-      if (P.id === 'net-nine') text = working ? 'Net is in the water on the outside bank. Pass my stern and keep your wash off it.' : 'Net Nine is moving to the next set. I will hold the narrow bend.';
+      if (b.state === 'shelter-run') text = `${P.callsign} is making for ${b.shelter.name}. Keep the approach open and pass astern.`;
+      else if (b.state === 'sheltered') text = `${P.callsign} is secured at ${b.shelter.name}. Staying put until the wind comes down.`;
+      else if (P.id === 'net-nine') text = working ? 'Net is in the water on the outside bank. Pass my stern and keep your wash off it.' : 'Net Nine is moving to the next set. I will hold the narrow bend.';
       else if (P.id === 'marsh-ice') text = 'Cold boxes aboard and running back toward the camps. I am taking the next blind turn slow.';
       else if (P.id === 'bay-star') text = 'Guide boat has two passengers aboard. We will idle through the rookery water.';
       else if (P.id === 'bird-crew') text = working ? 'Bird Crew is stopped on a sample station. Give us fifty yards and no wake.' : 'Bird Crew moving between the white stakes. Survey gear is still out.';
@@ -513,7 +563,7 @@ export class Traffic {
     return wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, 0.22, x, z, t);
   }
   snapshot() {
-    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), active: b.active, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions }));
+    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions }));
   }
   // ---- anglers ----
   anglerAt(ci, cj) {
@@ -549,7 +599,8 @@ export class Traffic {
     this.obs.length = 0; let ob = 0, obp = 1;
     for (const b of this.boats) {
       b.yellT = Math.max(0, b.yellT - dt); b.hornT = Math.max(0, b.hornT - dt); b.greetT = Math.max(0, b.greetT - dt); b.wakeT = Math.max(0, b.wakeT - dt);
-      const operate = this.shouldOperate(b);
+      const weather = this.environment?.values, storm = weather?.storm || 0;
+      const operate = this.shouldOperate(b), unsafe = this.stormUnsafe(b);
       if (!b.active) {
         b.mesh.visible = false; if (b.searchBeam) b.searchBeam.visible = false;
         if (!operate) { b.spawnT = Math.max(2, b.spawnT); continue; }
@@ -558,10 +609,19 @@ export class Traffic {
       }
       let d = Math.hypot(b.x - bx, b.z - bz);
       if (d > 980 || b.ground > 3) { this.retire(b, b.ground > 3 ? 18 : 25); continue; }
-      if (!operate) b.retiring = true;
+      if (unsafe && !b.shelter.active) this.beginShelter(b);
+      else if (!unsafe && b.shelter.active && storm <= b.profile.maxStorm - SHELTER_RELEASE_MARGIN) {
+        if (operate) { this.clearShelter(b); this.beginLeg(b); }
+        else if (!this.onDuty(b)) { this.clearShelter(b); this.beginLeg(b); b.retiring = true; }
+      }
+      if (!unsafe && !b.shelter.active && !operate) b.retiring = true;
       if (b.retiring && d > 720) { this.retire(b, 20); continue; }
       b.mesh.visible = true;
-      if (b.retiring && b.state === 'work') this.beginLeg(b);
+      if (b.shelter.active) {
+        const sd = Math.hypot(b.shelter.x - b.x, b.shelter.z - b.z); b.shelter.distance = sd;
+        if (b.state === 'shelter-run' && sd < 8) { b.state = 'sheltered'; b.shelter.arrived = true; }
+        else if (b.state === 'sheltered' && sd > 18) { b.state = 'shelter-run'; b.shelter.arrived = false; }
+      } else if (b.retiring && b.state === 'work') this.beginLeg(b);
       else if (b.state === 'work') { b.workT -= dt; if (b.workT <= 0) this.beginLeg(b); }
       else { b.leg -= b.speed * dt; if (b.leg <= 0) { if (this.rand() < b.profile.work[2]) this.beginWork(b); else this.beginLeg(b); } }
       // steer: probe five headings 24 m out and prefer deep water straight ahead; back off from the player and each other
@@ -570,15 +630,19 @@ export class Traffic {
         const h = b.heading + da; const px = b.x - Math.sin(h) * 24, pz = b.z - Math.cos(h) * 24; const px2 = b.x - Math.sin(h) * 48, pz2 = b.z - Math.cos(h) * 48;
         let sc = Math.min(4, -this.T.heightAt(px, pz)) + Math.min(4, -this.T.heightAt(px2, pz2)) * 0.6 - Math.abs(da - (b.state === 'work' ? 0 : b.routeBias)) * 0.72;
         const dp = Math.hypot(px - bx, pz - bz); if (dp < 22) sc -= (22 - dp) * 0.5;
+        if (b.state === 'shelter-run') {
+          const pd = Math.hypot(px - b.shelter.x, pz - b.shelter.z), desired = Math.atan2(-(b.shelter.x - b.x), -(b.shelter.z - b.z));
+          sc += (b.shelter.distance - pd) * 0.28 - Math.abs(wrapAngle(h - desired)) * 1.8;
+        } else if (b.state === 'sheltered') sc -= Math.abs(wrapAngle(h - b.shelter.heading)) * 3.4;
         // Prefer probes that increase separation so an off-duty boat visibly runs out of the local channel.
         if (b.retiring) sc += (dp - d) * 0.16;
         for (const o of this.boats) if (o !== b && o.active) { const dd = Math.hypot(px - o.x, pz - o.z); if (dd < 18) sc -= (18 - dd) * 0.4; }
         if (sc > bs) { bs = sc; best = da; }
       }
       const fx0 = -Math.sin(b.heading), fz0 = -Math.cos(b.heading);
-      const weather = this.environment?.values, sea = weather?.sea || 0, storm = weather?.storm || 0;
+      const sea = weather?.sea || 0;
       b.weatherSpeedScale = 1 - Math.min(b.retiring ? 0.24 : 0.46, sea * 0.15 + storm * 0.12);
-      let cruise = (b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise) * b.weatherSpeedScale;
+      let cruise = (b.state === 'sheltered' ? 0 : b.state === 'shelter-run' ? b.max * (b.kind === 'canoe' ? 0.72 : 0.82) : b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise) * b.weatherSpeedScale;
       let want = cruise * (bs < 1.5 ? 0.45 : 1); if (d < 30 && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5; // slow for the player ahead
       const playerWake = d < 100 ? wakeSampleAt(bx, bz, P.heading, P.speed, 18, 0.2, b.x, b.z, t) : 0;
       if (b.kind === 'canoe' && d < 72 && P.speed > 4 && Math.abs(playerWake) > 0.012) {
@@ -594,6 +658,10 @@ export class Traffic {
       const windDir = this.environment?.windDir, leeway = (b.kind === 'canoe' ? 0.018 : b.kind === 'air' ? 0.006 : 0.009) * (weather?.wind || 0);
       b.x += (fx * b.speed + (flow ? flow.x : 0) + (windDir ? windDir.x * leeway : 0)) * dt + b.shx * dt;
       b.z += (fz * b.speed + (flow ? flow.y : 0) + (windDir ? windDir.z * leeway : 0)) * dt + b.shz * dt;
+      if (b.state === 'sheltered') {
+        const moor = 1 - Math.exp(-dt * 1.45); b.x += (b.shelter.x - b.x) * moor; b.z += (b.shelter.z - b.z) * moor; b.speed *= Math.exp(-dt * 2.2);
+      }
+      if (b.shelter.active) b.shelter.distance = Math.hypot(b.shelter.x - b.x, b.shelter.z - b.z);
       const sk = Math.exp(-dt * 2); b.shx *= sk; b.shz *= sk;
       const gh = this.T.heightAt(b.x, b.z); b.ground = gh > -0.5 ? b.ground + dt : 0; if (gh > -0.5) b.speed *= 0.9;
       const wy = waveFn(b.x, b.z, t) + playerWake;
