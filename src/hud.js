@@ -16,7 +16,8 @@ export class Minimap {
     this.tileEvictions = 0;
     this.speedEl = document.getElementById('speedVal');
     this.scale = 0.62; // canvas px per metre (drifts down with speed)
-    this.pulse = 0;
+    this.pulse = 0; this.pulseStamp = 0;
+    this.edgeFade = null; // radial gradient cached per canvas size
   }
   tile(i, j) {
     const key = `${i},${j}`;
@@ -35,7 +36,7 @@ export class Minimap {
           const [oldKey, old] = list[k]; old.canvas.width = 0; old.canvas.height = 0; this.tiles.delete(oldKey); this.tileEvictions++;
         }
       }
-    });
+    }).catch(() => { this.inFlight--; this.tiles.delete(key); }); // a failed tile must give its slot back or the radar stops filling in
     return null;
   }
   memoryStats() {
@@ -46,9 +47,11 @@ export class Minimap {
   update(boat, camYaw, markers = []) {
     const c = this.ctx, W = this.canvas.width, H = this.canvas.height;
     const CX = W / 2, CY = H * 0.62;
-    this.pulse += 1 / 60;
+    // wall-clock pulse: the radar is redrawn below 60 Hz, the blip animation should not slow with it
+    const now = performance.now();
+    this.pulse += Math.min(0.1, (now - (this.pulseStamp || now)) / 1000); this.pulseStamp = now;
     const want = 0.62 - Math.min(1, boat.speed / 14) * 0.27;
-    this.scale += (want - this.scale) * 0.03;
+    this.scale += (want - this.scale) * 0.06; // per 30 Hz redraw: same settle time the 0.03-per-60Hz version had
     const k = this.scale, rot = boat.heading; // rotate so forward is up
     c.clearRect(0, 0, W, H);
     c.save();
@@ -121,13 +124,17 @@ export class Minimap {
     // player arrow
     c.fillStyle = '#f4f7f4'; c.strokeStyle = INK; c.lineWidth = 2; c.beginPath(); c.moveTo(0, -13); c.lineTo(9, 9); c.lineTo(0, 4); c.lineTo(-9, 9); c.closePath(); c.fill(); c.stroke();
     c.restore();
-    // edge fade
+    // edge fade (the gradient is a fixed shape; build it once per canvas size)
     c.globalCompositeOperation = 'destination-in';
-    const g = c.createRadialGradient(CX, CY, 20, CX, CY, W * 0.62);
-    g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.85, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0.6)');
-    c.fillStyle = g; c.fillRect(0, 0, W, H);
+    if (!this.edgeFade || this.edgeFadeKey !== `${W}x${H}`) {
+      const g = c.createRadialGradient(CX, CY, 20, CX, CY, W * 0.62);
+      g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.85, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0.6)');
+      this.edgeFade = g; this.edgeFadeKey = `${W}x${H}`;
+    }
+    c.fillStyle = this.edgeFade; c.fillRect(0, 0, W, H);
     c.globalCompositeOperation = 'source-over';
     c.strokeStyle = 'rgba(190,220,205,0.35)'; c.lineWidth = 3; c.strokeRect(1.5, 1.5, W - 3, H - 3);
-    this.speedEl.textContent = Math.round(boat.speed * 2.23694);
+    const mph = String(Math.round(boat.speed * 2.23694));
+    if (this.speedShown !== mph) { this.speedShown = mph; this.speedEl.textContent = mph; }
   }
 }

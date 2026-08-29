@@ -3,8 +3,16 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // Meshy GLBs (decimated offline with gltf-transform, 1K webp textures): loaded once, cloned per use, and every clone
 // shares the geometry and materials. SPEC turns each model's own frame into the game's (bow / head toward -z, metres).
+//
+// The archive is optional (a 150 MB release asset, see README): every load failure resolves to null and callers fall
+// back to procedural stand-ins, so nothing here may throw or leave a promise pending. SPEC fields:
+//   scale   uniform metres-per-model-unit (or `height` in metres to derive it from the model's own bounds)
+//   yaw     rotation that points the bow / head toward -z
+//   y       rest height of the model origin over the waterline; `ground: true` sits the bounding-box floor at y=0
+//   len     hull length in metres, read by boat traffic for spacing and collision
+// Measured with `import('/src/inspect.js')` from the console against a live GLB.
 const loader = new GLTFLoader();
-const cache = new Map();
+const cache = new Map();     // name -> promise of the shared root (null once a load has failed)
 const modelRoot = `${import.meta.env.BASE_URL}models/`;
 export const SPEC = {
   beau_boat: { scale: 2.3, yaw: -Math.PI / 2, y: 0.27, len: 4.4 },
@@ -37,6 +45,8 @@ export function loadModel(name) {
   return cache.get(name);
 }
 // A group that fills itself with the model when it arrives (until then it is empty, or shows `placeholder`).
+// The clone shares geometry and materials with the cached root: cheap to spawn, but a per-instance material
+// change must clone the material first or it repaints every other instance in the world.
 export function spawn(name, placeholder = null, onReady = null) {
   const g = new THREE.Group(); g.name = name;
   if (placeholder) g.add(placeholder);

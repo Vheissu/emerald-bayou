@@ -31,15 +31,19 @@ export class Spray {
     });
     this.points = new THREE.Points(this.geo, this.mat); this.points.frustumCulled = false; this.points.renderOrder = 2;
     this.head = 0;
+    this.clean = true; // the whole pool is dead and its buffers already zeroed: update() can skip the walk and the GPU uploads
   }
   emit(x, y, z, vx, vy, vz, size, life, alpha = 1) {
     const i = this.head; this.head = (this.head + 1) % this.max;
     this.pos[i * 3] = x; this.pos[i * 3 + 1] = y; this.pos[i * 3 + 2] = z;
     this.vel[i * 3] = vx; this.vel[i * 3 + 1] = vy; this.vel[i * 3 + 2] = vz;
     this.life[i] = life; this.maxLife[i] = life; this.size[i] = size; this.alpha[i] = alpha; this.baseAlpha[i] = alpha;
+    this.clean = false;
   }
   update(dt) {
+    if (this.clean) return; // idle boat, nothing airborne: no reason to touch 12k slots or re-upload their buffers
     const p = this.pos, v = this.vel;
+    let live = 0;
     for (let i = 0; i < this.max; i++) {
       if (this.life[i] <= 0) { this.alpha[i] = 0; p[i * 3 + 1] = -100; continue; }
       this.life[i] -= dt;
@@ -51,7 +55,9 @@ export class Spray {
       this.size[i] += dt * 0.1;
       const t = this.life[i] / this.maxLife[i];
       this.alpha[i] = this.baseAlpha[i] * Math.min(1, t * 3.0);
+      if (this.life[i] > 0) live++;
     }
+    this.clean = live === 0; // the pass that killed the last droplet also zeroed every dead slot, so the buffers are safe to freeze
     this.geo.attributes.position.needsUpdate = true; this.geo.attributes.aSize.needsUpdate = true; this.geo.attributes.aAlpha.needsUpdate = true;
   }
 }
@@ -145,6 +151,7 @@ export class Plume {
     });
     this.mesh = new THREE.Mesh(geo, this.mat); this.mesh.frustumCulled = false; this.mesh.renderOrder = 1;
     this.head = 0;
+    this.clean = true; // see Spray: a fully dead, fully zeroed pool skips its walk and uploads
   }
   emit(x, y, z, vx, vy, vz, size, grow, life, alpha = 0.5, smoke = false) {
     const i = this.head; this.head = (this.head + 1) % this.max;
@@ -154,13 +161,18 @@ export class Plume {
     this.rot[i] = Math.random() * 6.283; this.rotV[i] = (Math.random() - 0.5) * 1.2;
     const encodedAlpha = smoke ? -Math.abs(alpha) : Math.abs(alpha);
     this.seed[i] = Math.random(); this.alpha[i] = encodedAlpha; this.baseAlpha[i] = encodedAlpha;
+    this.clean = false;
   }
   update(dt, t) {
-    const p = this.pos, v = this.vel, d = this.data;
     this.mat.uniforms.uTime.value = t;
+    if (this.clean) return;
+    const p = this.pos, v = this.vel, d = this.data;
+    let live = 0;
     for (let i = 0; i < this.max; i++) {
       if (this.life[i] <= 0) { this.alpha[i] = 0; d[i * 4] = 0; p[i * 3 + 1] = -100; continue; }
       this.life[i] -= dt;
+      // a puff can still show through partial erosion the frame it expires; kill its slot before the pool may freeze
+      if (this.life[i] <= 0) { this.alpha[i] = 0; d[i * 4] = 0; p[i * 3 + 1] = -100; continue; }
       const smoke = this.baseAlpha[i] < 0;
       v[i * 3 + 1] += (smoke ? 0.32 : -0.55) * dt;
       const drag = Math.exp(-dt * (smoke ? 0.58 : 1.7));
@@ -175,7 +187,9 @@ export class Plume {
       d[i * 4] = this.size[i]; d[i * 4 + 1] = age; d[i * 4 + 2] = this.rot[i]; d[i * 4 + 3] = this.seed[i];
       this.velAttr[i * 3] = v[i * 3]; this.velAttr[i * 3 + 1] = v[i * 3 + 1]; this.velAttr[i * 3 + 2] = v[i * 3 + 2];
       this.alpha[i] = this.baseAlpha[i] * Math.min(1, age * 5.0);
+      live++;
     }
+    this.clean = live === 0;
     this.geo.attributes.aPos.needsUpdate = true; this.geo.attributes.aData.needsUpdate = true; this.geo.attributes.aAlpha.needsUpdate = true; this.geo.attributes.aVel.needsUpdate = true;
   }
 }
