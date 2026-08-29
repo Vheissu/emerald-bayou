@@ -236,11 +236,26 @@ async function init() {
   // ---- camera state ----
   const camPos = new THREE.Vector3(startX, 4, startZ + 10);
   const camTarget = new THREE.Vector3(startX, 1, startZ);
+  const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3();
   const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2();
+  const input = { throttle: 0, steer: 0, pitch: 0 };
   const clock = new THREE.Timer(); clock.connect(document);
   let time = 0, splashStamp = 0, slowT = 0, slowK = 1, fovKick = 0, airCam = 0, frameNo = 0;
   const stamps = [];
-  const splashPts = [];
+  const hullPoint = { x: 0, z: 0 };
+  const splashPts = [{ x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }];
+  const playerStampPool = Array.from({ length: 10 }, () => ({ x: 0, z: 0, radius: 0, height: 0, foam: 0, foamRadius: 0 }));
+  let playerStampCount = 0;
+  const hullPt = (px, pz, out = hullPoint) => {
+    out.x = phys.pos.x + rgt2.x * px + fwd2.x * -pz;
+    out.z = phys.pos.y + rgt2.y * px + fwd2.y * -pz;
+    return out;
+  };
+  const addPlayerStamp = (p, radius, height, foam = 0, foamRadius = 0) => {
+    const s = playerStampPool[playerStampCount++];
+    s.x = p.x; s.z = p.z; s.radius = radius; s.height = height; s.foam = foam; s.foamRadius = foamRadius;
+    stamps.push(s);
+  };
   // landing splash: the hull slaps a hull-shaped hole in the water; two sheets peel off the chines, a crown lifts at the bow,
   // and a stuffed bow throws a wall of water forward over the deck
   function landingSplash(impact, quality) {
@@ -277,12 +292,10 @@ async function init() {
         spray.emit(p0.x, 0.2, p0.z, fwd2.x * fwdV * 0.5 + jitter() * 3, 3 + Math.random() * 5, fwd2.y * fwdV * 0.5 + jitter() * 3, 0.02 + Math.random() * 0.05, 0.6 + Math.random() * 0.6, 0.8);
       }
     }
-    splashPts.length = 0;
-    for (const z of [-2.2, 0, 2.0]) splashPts.push(hullPt(0, z));
+    hullPt(0, -2.2, splashPts[0]); hullPt(0, 0, splashPts[1]); hullPt(0, 2, splashPts[2]);
     splashStamp = Math.min(3.2, impact / 2.5) * (quality === 'stuffed' || quality === 'wipeout' ? 1.4 : 1);
   }
   const jitter = () => (Math.random() - 0.5);
-  const hullPt = (px, pz) => ({ x: phys.pos.x + rgt2.x * px + fwd2.x * -pz, z: phys.pos.y + rgt2.y * px + fwd2.y * -pz });
   const wakeCenter = new THREE.Vector2();
 
   function frame() {
@@ -292,7 +305,7 @@ async function init() {
     const dt = dtRaw * (slowT > 0 ? slowK : 1);
     time += dt;
     // input
-    const input = { throttle: 0, steer: 0 };
+    input.throttle = 0; input.steer = 0; input.pitch = 0;
     const locked = game.paused || game.inputLock;
     if (!locked) {
       if (keys.KeyW || keys.ArrowUp) input.throttle = 1;
@@ -351,17 +364,17 @@ async function init() {
     // camera
     if (!dragging) { idle += dt; if (idle > 2.5) { camYaw *= Math.exp(-dt * 1.2); camPitch *= Math.exp(-dt * 1.2); } }
     const yaw = phys.heading + camYaw;
-    const back = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    camBack.set(Math.sin(yaw), 0, Math.cos(yaw));
     // in the air the camera hangs back and rises so the ground stays in frame for the landing
     airCam += ((phys.airborne ? Math.min(1, phys.airTime * 1.5) : 0) - airCam) * (1 - Math.exp(-dt * (phys.airborne ? 3 : 5)));
     const cd = camDist + airCam * 2.4;
-    const desired = new THREE.Vector3(phys.pos.x, 0, phys.pos.y).addScaledVector(back, cd * Math.cos(camPitch)).add(new THREE.Vector3(0, 3.9 + cd * Math.sin(camPitch) * 1.2 + Math.max(0, phys.y) * 0.2 + airCam * 1.2, 0));
+    camDesired.set(phys.pos.x, 3.9 + cd * Math.sin(camPitch) * 1.2 + Math.max(0, phys.y) * 0.2 + airCam * 1.2, phys.pos.y).addScaledVector(camBack, cd * Math.cos(camPitch));
     // keep camera above ground / water
-    const gh = terrain.heightAt(desired.x, desired.z);
-    desired.y = Math.max(desired.y, gh + 1.8, 1.2);
-    camPos.lerp(desired, 1 - Math.exp(-dt * 5.5));
-    const tgt = new THREE.Vector3(phys.pos.x - fwd2.x * -4.5, 1.2 + Math.max(0, phys.y) * 0.9, phys.pos.y - fwd2.y * -4.5);
-    camTarget.lerp(tgt, 1 - Math.exp(-dt * 7));
+    const gh = terrain.heightAt(camDesired.x, camDesired.z);
+    camDesired.y = Math.max(camDesired.y, gh + 1.8, 1.2);
+    camPos.lerp(camDesired, 1 - Math.exp(-dt * 5.5));
+    camAim.set(phys.pos.x - fwd2.x * -4.5, 1.2 + Math.max(0, phys.y) * 0.9, phys.pos.y - fwd2.y * -4.5);
+    camTarget.lerp(camAim, 1 - Math.exp(-dt * 7));
     camera.position.copy(camPos);
     if (game.shake > 0.01) { const sh = game.shake * 0.35; camera.position.x += (Math.random() - 0.5) * sh; camera.position.y += (Math.random() - 0.5) * sh; camera.position.z += (Math.random() - 0.5) * sh; }
     camera.lookAt(camTarget);
@@ -406,19 +419,19 @@ async function init() {
     water.mesh.position.set(Math.round(camera.position.x / 50) * 50, water.level, Math.round(camera.position.z / 50) * 50);
 
     // wake stamps
-    stamps.length = 0;
+    stamps.length = 0; playerStampCount = 0;
     const wet = phys.wet;
     const sp = phys.speed * wet, rpm = phys.rpm, thr = Math.max(0, phys.throttle) * wet;
     const spF = Math.min(sp / 12, 1);
-    if (splashStamp > 0) { for (const p of splashPts) stamps.push({ x: p.x, z: p.z, radius: 1.6 + splashStamp * 0.45, height: -2.2 * splashStamp, foam: 2.4 * splashStamp, foamRadius: 2.2 + splashStamp * 0.6 }); splashStamp = 0; }
+    if (splashStamp > 0) { for (const p of splashPts) addPlayerStamp(p, 1.6 + splashStamp * 0.45, -2.2 * splashStamp, 2.4 * splashStamp, 2.2 + splashStamp * 0.6); splashStamp = 0; }
     // rates are per second (simulate() scales by dt)
-    let pt = hullPt(0, -2.7); stamps.push({ ...pt, radius: 1.3, height: -1.4 * spF, foam: 0.12 * spF, foamRadius: 0.9 });
-    pt = hullPt(0, -1.2); stamps.push({ ...pt, radius: 1.5, height: -0.6 * spF, foam: 0 });
-    pt = hullPt(1.0, 0.8); stamps.push({ ...pt, radius: 0.9, height: 0.35 * spF, foam: 0.35 * spF, foamRadius: 0.8 });
-    pt = hullPt(-1.0, 0.8); stamps.push({ ...pt, radius: 0.9, height: 0.35 * spF, foam: 0.35 * spF, foamRadius: 0.8 });
-    pt = hullPt(0, 2.6); stamps.push({ ...pt, radius: 1.5, height: 0.9 * spF + 0.3 * thr, foam: 0.9 * spF + 2.2 * thr * (0.3 + spF), foamRadius: 1.25 });
-    pt = hullPt(0, 4.3); stamps.push({ ...pt, radius: 2.0, height: 0.0, foam: 1.3 * thr * (0.3 + spF), foamRadius: 1.7 });
-    pt = hullPt(0, 6.5); stamps.push({ ...pt, radius: 2.4, height: 0.0, foam: 0.5 * thr * spF, foamRadius: 2.2 });
+    let pt = hullPt(0, -2.7); addPlayerStamp(pt, 1.3, -1.4 * spF, 0.12 * spF, 0.9);
+    pt = hullPt(0, -1.2); addPlayerStamp(pt, 1.5, -0.6 * spF);
+    pt = hullPt(1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
+    pt = hullPt(-1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
+    pt = hullPt(0, 2.6); addPlayerStamp(pt, 1.5, 0.9 * spF + 0.3 * thr, 0.9 * spF + 2.2 * thr * (0.3 + spF), 1.25);
+    pt = hullPt(0, 4.3); addPlayerStamp(pt, 2, 0, 1.3 * thr * (0.3 + spF), 1.7);
+    pt = hullPt(0, 6.5); addPlayerStamp(pt, 2.4, 0, 0.5 * thr * spF, 2.2);
     skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); encounters.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); hazards.stamps(stamps);
     wakeCenter.set(phys.pos.x + fwd2.x * -25, phys.pos.y + fwd2.y * -25);
     water.simulate(wakeCenter, stamps, dt, currentFlow);
