@@ -9,7 +9,7 @@ const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
-const DEBUG_ORDER = ['distress', 'patrol', 'smuggler', 'salvage'];
+const DEBUG_ORDER = ['distress', 'patrol', 'smuggler', 'salvage', 'netline'];
 
 function recolor(group, color) {
   let first = true;
@@ -35,6 +35,47 @@ function makePackage() {
   return g;
 }
 
+function makeGillNet() {
+  const root = new THREE.Group(); root.name = 'illegal monofilament net';
+  const ropeMat = new THREE.MeshStandardMaterial({ color: 0x4d5650, roughness: 0.92 });
+  const netMat = new THREE.LineBasicMaterial({ color: 0xaab4aa, transparent: true, opacity: 0.46, depthWrite: false });
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 22, 6), ropeMat);
+  top.rotation.z = Math.PI / 2; top.position.y = 0.04; root.add(top);
+  const lead = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 22, 5), ropeMat);
+  lead.rotation.z = Math.PI / 2; lead.position.y = -1.3; root.add(lead);
+
+  const points = [];
+  for (let i = 0; i <= 22; i++) {
+    const x = -11 + i;
+    points.push(x, 0.02, 0, x, -1.3, 0);
+  }
+  for (let i = 1; i < 7; i++) {
+    const y = -i * 0.185;
+    points.push(-11, y, 0, 11, y, 0);
+  }
+  const netGeo = new THREE.BufferGeometry(); netGeo.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+  const net = new THREE.LineSegments(netGeo, netMat); net.renderOrder = 3; root.add(net);
+
+  const floatGeo = new THREE.SphereGeometry(0.17, 9, 7);
+  const floatMat = new THREE.MeshStandardMaterial({ color: 0xf0e7cf, roughness: 0.72, emissive: 0x21180b, emissiveIntensity: 0.16 });
+  const floats = new THREE.InstancedMesh(floatGeo, floatMat, 12), matrix = new THREE.Matrix4(), color = new THREE.Color();
+  for (let i = 0; i < 12; i++) {
+    matrix.makeScale(i % 4 === 0 ? 1.18 : 0.9, 0.72, i % 4 === 0 ? 1.18 : 0.9); matrix.setPosition(-10.5 + i * 1.91, 0.1, 0); floats.setMatrixAt(i, matrix);
+    floats.setColorAt(i, color.setHex(i === 2 || i === 9 ? 0xe9682e : i % 3 === 0 ? 0xd6c34d : 0xe8e4d7));
+  }
+  floats.instanceMatrix.needsUpdate = true; floats.instanceColor.needsUpdate = true; floats.castShadow = true; root.add(floats);
+
+  const fishBody = new THREE.SphereGeometry(0.32, 8, 6), fishTail = new THREE.ConeGeometry(0.2, 0.38, 3);
+  const fishMat = new THREE.MeshStandardMaterial({ color: 0x788b87, roughness: 0.72, metalness: 0.12 });
+  for (const [x, y, yaw] of [[-3.2, -0.48, 0.25], [4.4, -0.86, -0.4]]) {
+    const fish = new THREE.Group(), body = new THREE.Mesh(fishBody, fishMat), tail = new THREE.Mesh(fishTail, fishMat);
+    body.scale.set(1.45, 0.42, 0.68); tail.rotation.z = Math.PI / 2; tail.position.x = 0.55; fish.add(body, tail);
+    fish.position.set(x, y, -0.03); fish.rotation.y = yaw; root.add(fish);
+  }
+  root.visible = false; root.userData.net = net; root.userData.floats = floats;
+  return root;
+}
+
 function boatAgent(mesh) {
   return { mesh, x: 0, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: 0, targetZ: 0, decisionT: 0, active: false };
 }
@@ -44,6 +85,12 @@ export class EncounterDirector {
     Object.assign(this, o); // scene, terrain, world, water, phys, game, audio, environment, plume, spray, law, reputation
     this.next = 48; this.active = null; this.seenT = 0; this.interact = false; this.alternate = false; this.enabled = false; this.debugIndex = 0;
     this.obs = []; this.boatObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat' }; this.fixedObs = { x: 0, z: 0, r: 2.1, tag: 'wreck' };
+    this.netObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.32, tag: 'monofilament net', onHit: (into) => {
+      const e = this.active; if (!e || e.type !== 'netline' || e.state === 'recovering' || e.state === 'secured' || e.hitCd > 0 || into < 1.8) return;
+      e.hitCd = 3.5; e.snag = clamp((e.snag || 0) + into * 0.035, 0, 0.65);
+      this.game.toast(into > 5 ? 'Monofilament across the hull' : 'Float line struck', into > 5 ? 'Back off. The net is pulling tight under the stern.' : 'There is a net stretched across the cut.', 2.8);
+      if (into > 4.5) { this.audio.warn(); this.game.shake = Math.max(this.game.shake, 0.22); }
+    } };
     this.phys.addObs('encounters', this.obs);
     this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.smuggler.agent];
     this.keyHandler = e => {
@@ -76,7 +123,9 @@ export class EncounterDirector {
     salvage.wreck.visible = false; this.scene.add(salvage.wreck);
     for (const d of salvage.drums) { d.visible = false; this.scene.add(d); }
 
-    return { distress: { boat: distressBoat, survivor, flare }, patrol, smuggler, salvage };
+    const netline = makeGillNet(); this.scene.add(netline);
+
+    return { distress: { boat: distressBoat, survivor, flare }, patrol, smuggler, salvage, netline };
   }
 
   spot(min = 160, max = 300, sideMax = 170) {
@@ -96,19 +145,20 @@ export class EncounterDirector {
     const heat = this.law ? this.law.attention : 0;
     const runners = this.reputation ? this.reputation.score('runners') : 0, fwc = this.reputation ? this.reputation.score('fwc') : 0;
     const region = this.regions && this.regions.current ? this.regions.current.encounters : {};
-    const weights = { distress: 0.38, patrol: 0.28, salvage: 0.16, smuggler: 0.18 };
+    const weights = { distress: 0.34, patrol: 0.25, salvage: 0.14, smuggler: 0.16, netline: 0.11 };
     weights.patrol *= (region.law ?? 1) * (1 + heat * 1.75) * (1 + Math.max(0, -fwc) * 0.16);
     weights.smuggler *= (region.runners ?? 1) * (night ? 1.9 : 1) * (1 + Math.max(0, -runners) * 0.2);
+    weights.netline *= (0.72 + (region.runners ?? 1) * 0.38) * (night ? 1.24 : 1);
     weights.distress *= region.danger ?? 1;
     weights.salvage *= 0.7 + (region.danger ?? 1) * 0.45;
     if (weather === 'hurricane' || weather === 'tropical' || weather === 'thunderstorm') {
-      weights.distress *= 1.8; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12;
+      weights.distress *= 1.8; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
     } else if (weather === 'squall' || weather === 'hail') {
-      weights.distress *= 1.4; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45;
+      weights.distress *= 1.4; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
     }
     if (heat >= 3) weights.patrol *= 2.1;
     let roll = Math.random() * Object.values(weights).reduce((a, n) => a + n, 0);
-    for (const type of ['distress', 'patrol', 'salvage', 'smuggler']) { roll -= weights[type]; if (roll <= 0) return type; }
+    for (const type of ['distress', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
     return 'distress';
   }
 
@@ -118,6 +168,7 @@ export class EncounterDirector {
     if (type === 'distress') this.startDistress(at);
     else if (type === 'patrol') this.startPatrol(at);
     else if (type === 'smuggler') this.startSmuggler(at);
+    else if (type === 'netline') this.startNetline(at);
     else this.startSalvage(at);
     return true;
   }
@@ -158,6 +209,17 @@ export class EncounterDirector {
     this.active = { type: 'salvage', x: at.x, z: at.z, state: 'waiting', t: 0, known: false, pieces, found: 0, ph: Math.random() * 6 };
   }
 
+  startNetline(at) {
+    const R = this.rigs.netline, rx = Math.cos(at.heading), rz = -Math.sin(at.heading), half = 11;
+    R.visible = true; R.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) + 0.02, at.z); R.rotation.set(0, at.heading, 0); R.scale.set(1, 1, 1);
+    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false;
+    this.rigs.smuggler.boat.visible = false; this.rigs.smuggler.agent.active = false; this.rigs.smuggler.pack.visible = false;
+    this.active = {
+      type: 'netline', x: at.x, z: at.z, heading: at.heading, state: 'waiting', t: 0, known: false, choice: '',
+      recoveryT: 0, resolveT: 0, hitCd: 0, snag: 0, ax: at.x - rx * half, az: at.z - rz * half, bx: at.x + rx * half, bz: at.z + rz * half,
+    };
+  }
+
   debugApproach() {
     const e = this.active, p = this.phys; if (!e) return;
     let target = e;
@@ -165,7 +227,7 @@ export class EncounterDirector {
     else if (e.type === 'smuggler' && e.state === 'chase') target = this.rigs.smuggler.agent;
     else if (e.type === 'salvage') target = e.pieces.find(q => !q.found) || e;
     const dx = target.x - p.pos.x, dz = target.z - p.pos.y, d = Math.hypot(dx, dz) || 1;
-    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : 0;
+    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
     const x = target.x - dx / d * gap, z = target.z - dz / d * gap;
     p.reset(x, z, p.heading); p.y = this.water.waveHeight(x, z, 0);
   }
@@ -208,6 +270,7 @@ export class EncounterDirector {
     this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false;
     this.rigs.smuggler.boat.visible = false; this.rigs.smuggler.agent.active = false; this.rigs.smuggler.pack.visible = false;
     this.rigs.salvage.wreck.visible = false; for (const d of this.rigs.salvage.drums) d.visible = false;
+    this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
     if (this.law) this.law.setPursuit(false);
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
     this.active = null; this.next = success ? 100 + Math.random() * 110 : silent ? 60 : 75 + Math.random() * 90;
@@ -360,6 +423,91 @@ export class EncounterDirector {
     if (e.found >= e.pieces.length) { if (this.law) this.law.cool(0.15); this.complete('Wreckage cleared', 'Three drums recovered before they split.', 140, 1, 'You cleared loose fuel drums out of the storm channel.'); }
   }
 
+  beginNetRecovery(e, choice) {
+    if (e.choice) return;
+    e.choice = choice; e.state = choice === 'fwc' ? 'reported' : 'tipped'; e.recoveryT = 0; this.clearPrompt();
+    const A = choice === 'fwc' ? this.rigs.patrol.agent : this.rigs.smuggler.agent;
+    const fx = -Math.sin(e.heading), fz = -Math.cos(e.heading), side = choice === 'fwc' ? 1 : -1;
+    let distance = 55;
+    for (let candidate = 145; candidate >= 55; candidate -= 15) {
+      const sx = e.x + fx * side * candidate, sz = e.z + fz * side * candidate;
+      if (this.terrain.heightAt(sx, sz) < -0.65 && !this.world.blockedAt(sx, sz)) { distance = candidate; break; }
+    }
+    const x = e.x + fx * side * distance, z = e.z + fz * side * distance, heading = side > 0 ? e.heading + Math.PI : e.heading;
+    Object.assign(A, { x, z, heading, speed: 4.2, want: 7.5, turn: 0, decisionT: 0, active: true });
+    A.mesh.position.set(x, this.water.waveHeight(x, z, 0) - 0.05, z); A.mesh.rotation.set(0, heading, 0); A.mesh.visible = true;
+    if (choice === 'fwc') {
+      this.audio.checkpoint(); this.game.toast('Net position reported', 'FWC says leave the monofilament in place and hold clear.', 3.2);
+    } else {
+      this.audio.horn(0.16); this.game.toast('Backchannel tipped', 'A dark johnboat is coming to lift the net before FWC sees it.', 3.2);
+    }
+  }
+
+  resolveNetline(e) {
+    if (e.state === 'secured') return;
+    e.state = 'secured'; e.resolveT = 5; this.rigs.netline.visible = false;
+    if (e.choice === 'fwc') {
+      this.pay(240, 'FWC net recovery');
+      if (this.reputation) {
+        this.reputation.change('fwc', 1.1, 'illegal-net', 'You held the illegal net in place until FWC could seize it.', true);
+        this.reputation.change('locals', 0.55, 'illegal-net', 'The camps heard you got a killing net out of the cut.', false);
+        this.reputation.change('runners', -0.7, 'illegal-net', 'The backchannel lost a set and knows who held the scene.', false);
+      }
+      if (this.law) this.law.cool(0.45);
+      this.game.toast('Monofilament secured', 'Twenty-seven has the net and the entangled fish aboard.', 3.4);
+    } else {
+      this.pay(330, 'Backchannel recovery');
+      if (this.reputation) {
+        this.reputation.change('runners', 1.15, 'net-warning', 'You warned the net crew before FWC reached the cut.', true);
+        this.reputation.change('locals', -0.45, 'net-warning', 'The illegal set went back aboard instead of into evidence.', false);
+        this.reputation.change('fwc', -0.4, 'net-warning', 'FWC logged radio traffic around a vanished illegal set.', false);
+      }
+      if (this.law) this.law.add(0.45, 'illegal net crew tipped off', false);
+      this.game.toast('Evidence gone', 'The johnboat hauled the line and left no floats behind.', 3.4);
+    }
+    this.game.save.encounters.netline = (this.game.save.encounters.netline || 0) + 1; this.game.persist();
+  }
+
+  updateNetline(e, dt, t) {
+    const R = this.rigs.netline, p = this.phys, d = Math.hypot(e.x - p.pos.x, e.z - p.pos.y);
+    e.hitCd = Math.max(0, e.hitCd - dt);
+    R.position.y = this.water.waveHeight(e.x, e.z, t) + 0.02; R.rotation.z = Math.sin(t * 0.68 + e.heading) * (0.004 + this.environment.values.sea * 0.006);
+    R.userData.net.material.opacity = 0.46 - e.snag * 0.18;
+    if (d < 125) this.known(e, 'Illegal gill net', 'A monofilament wall is hanging from the float line. Fish are still hitting it.');
+    if (e.known && e.state !== 'secured') this.point(e.x, e.z, 'illegal gill net', '#f06c38');
+
+    if (e.state !== 'recovering' && e.state !== 'secured') {
+      Object.assign(this.netObs, { ax: e.ax, az: e.az, bx: e.bx, bz: e.bz }); this.obs.push(this.netObs);
+    }
+    if (e.state === 'waiting') {
+      if (d < 17 && p.speed * MPH < 7 && this.canInteract()) {
+        this.setPrompt('report the illegal net to FWC <i>· F warn the crew on CH 72</i>');
+        if (this.interact) this.beginNetRecovery(e, 'fwc'); else if (this.alternate) this.beginNetRecovery(e, 'runners');
+      }
+      return;
+    }
+
+    const A = e.choice === 'fwc' ? this.rigs.patrol.agent : this.rigs.smuggler.agent;
+    const fx = -Math.sin(e.heading), fz = -Math.cos(e.heading), side = e.choice === 'fwc' ? 1 : -1;
+    if (e.state === 'reported' || e.state === 'tipped') {
+      const tx = e.x + fx * side * 14, tz = e.z + fz * side * 14;
+      this.updateAgent(A, dt, t, tx, tz, e.choice === 'fwc' ? 8.7 : 9.6, 5);
+      if (Math.hypot(A.x - tx, A.z - tz) < 7.5) { e.state = 'recovering'; e.recoveryT = 0; A.speed *= 0.2; }
+    } else if (e.state === 'recovering') {
+      e.recoveryT += dt; const tx = e.x + fx * side * 12, tz = e.z + fz * side * 12;
+      this.updateAgent(A, dt, t, tx, tz, 1.2, 5);
+      const k = clamp(e.recoveryT / 7); R.scale.x = Math.max(0.035, 1 - k * k * (3 - 2 * k));
+      if (e.recoveryT >= 7) this.resolveNetline(e);
+    } else if (e.state === 'secured') {
+      e.resolveT -= dt; this.updateAgent(A, dt, t, e.x - fx * side * 240, e.z - fz * side * 240, e.choice === 'fwc' ? 7.8 : 10.2);
+      if (e.resolveT <= 0) { this.finish(true); return; }
+    }
+    if (e.choice === 'fwc') {
+      const blink = Math.floor(t * 5.2) % 2; this.rigs.patrol.blue.light.intensity = blink ? 86 : 4; this.rigs.patrol.red.light.intensity = blink ? 4 : 86;
+    }
+    this.addBoatObstacle(A, e.choice === 'fwc' ? 'patrol' : 'net crew');
+  }
+
   canInteract() { return !this.game.dockCamp && !this.game.dockJob && !this.game.atBoard; }
 
   update(dt, t, enabled = true) {
@@ -372,6 +520,7 @@ export class EncounterDirector {
     if (e.type === 'distress') this.updateDistress(e, dt, t);
     else if (e.type === 'patrol') this.updatePatrol(e, dt, t);
     else if (e.type === 'smuggler') this.updateSmuggler(e, dt, t);
+    else if (e.type === 'netline') this.updateNetline(e, dt, t);
     else this.updateSalvage(e, dt, t);
     const focus = e.type === 'patrol' ? this.rigs.patrol.agent : e.type === 'smuggler' && e.state === 'chase' ? this.rigs.smuggler.agent : e;
     if (this.active && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) this.finish(false);

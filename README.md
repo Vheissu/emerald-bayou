@@ -65,6 +65,8 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 
 Thirteen jobs unlock in sequence, from a shakedown run through a manatee count, a poacher chase against an AI skiff, a night rescue and a creek gauntlet. On top of that there are daily bounties, per-run records (top speed, longest air, biggest spin, longest drift), a reputation system split three ways between the locals, the FWC and the backchannel, and a story that comes in over channel 68.
 
+Between jobs, you can come across dead motors, FWC stops, watched packages, storm wreckage and illegal monofilament sets. On a net call, either hold the scene for an FWC evidence recovery or warn the crew on channel 72 and watch them pull the set before the patrol arrives.
+
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
 
 Wildlife lives its own life. Alligators bask on banks and slide in when you get close, and the bull will charge an idle hull inside 16 m. Mullet jump near the boat, bait boils off the bow in the shallows, ibis and pelicans run lines low over the water, and vultures circle high. When you get more than 700 m away it all quietly relocates ahead of you.
