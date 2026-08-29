@@ -388,7 +388,9 @@ export class Environment {
     this.hemi.color.set(daylight > 0.1 ? 0x9fc3e8 : 0x203659); this.hemi.groundColor.set(daylight > 0.1 ? 0x3f4a2a : 0x07100c);
     this.scene.environmentIntensity = lerp(0.025, 0.42, daylight) * lerp(1, 0.42, V.storm);
 
-    const shadowSnap = 240 / 4096;
+    // Snap to the active shadow texel. Adaptive quality can resize the map, and using the old 4096-grid on a 1K map
+    // makes the shadow projection crawl even though the lower-resolution map itself is stable.
+    const shadowSnap = 240 / Math.max(1, this.sun.shadow.mapSize.x);
     this.sun.target.position.set(Math.round(this.phys.pos.x / shadowSnap) * shadowSnap, 0, Math.round(this.phys.pos.y / shadowSnap) * shadowSnap);
     this.sun.position.copy(this.lightDir).multiplyScalar(420).add(this.sun.target.position); this.sun.target.updateMatrixWorld();
     this.sky.uniforms.sunDir.value.copy(this.sunDir); this.sky.uniforms.moonDir.value.copy(this.moonDir);

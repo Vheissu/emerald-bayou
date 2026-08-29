@@ -35,11 +35,18 @@ import { RadioDirector } from './radio.js';
 import { WorldIncidents } from './incidents.js';
 import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
-import { MAX_DRAW_PIXELS, pixelRatioFor } from './renderquality.js';
+import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor } from './renderquality.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
-renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio));
+const qualityController = new AdaptiveQualityController({ initialLevel: initialQualityLevel({
+  deviceMemory: navigator.deviceMemory,
+  hardwareConcurrency: navigator.hardwareConcurrency,
+  maxTextureSize: renderer.capabilities.maxTextureSize,
+  saveData: navigator.connection?.saveData === true,
+}) });
+let renderProfile = qualityController.profile;
+renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -62,7 +69,7 @@ async function init() {
   scene.add(sky.mesh);
   const sun = new THREE.DirectionalLight(0xfff2dc, 3.0);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(4096, 4096);
+  sun.shadow.mapSize.set(renderProfile.shadowMapSize, renderProfile.shadowMapSize);
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 900;
   sun.shadow.camera.left = -120; sun.shadow.camera.right = 120; sun.shadow.camera.top = 120; sun.shadow.camera.bottom = -120;
   sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.6; sun.shadow.radius = 2;
@@ -110,7 +117,7 @@ async function init() {
   // ---- vegetation ----
   const veg = new Vegetation(terrain, exclusions);
   // the Meshy grass clumps become instanced kinds before the first chunk is grown; the hero tree gets the wind
-  await preload(['grass_a', 'grass_d', 'tree_c']);
+  await preload(['grass_a', 'grass_d']);
   for (const name of ['grass_a', 'grass_d']) { const r = await loadGeo(name); if (r) veg.addSolid(r.geo, r.mat, r.height); } // b and c stay at ~5.5k tris a clump (separate blades will not collapse), too heavy to instance
   loadModel('tree_c').then(root => { const f = modelBox('tree_c'); if (root && f) root.traverse(o => { if (o.isMesh) veg.windMat(o.material, f.box.min.y, f.box.max.y, f.scale, 0.28); }); });
 
@@ -136,7 +143,7 @@ async function init() {
   }
 
   // ---- water ----
-  const water = new Water(renderer, SUN_DIR);
+  const water = new Water(renderer, SUN_DIR, renderProfile);
 
   // ---- wildlife ----
   const birds = new Birds(terrain, new THREE.Vector3(startX, 0, startZ - 120));
@@ -154,7 +161,7 @@ async function init() {
   fxScene.add(plume.mesh, spray.points);
 
   // ---- post ----
-  const pipeline = new Pipeline(renderer, camera);
+  const pipeline = new Pipeline(renderer, camera, renderProfile);
   pipeline.grade.material.uniforms.sunDir.value.copy(SUN_DIR);
   pipeline.reflTexture = water.reflRT.texture;
   water.uniforms.tRefr.value = pipeline.sceneRT.texture;
@@ -247,7 +254,10 @@ async function init() {
     },
     chart: worldMap.memoryStats(),
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, ...pipeline.memoryStats() }) };
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+    profile: renderProfile.id, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
+    adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
+  }) };
 
   // ---- input ----
   const keys = {};
@@ -292,11 +302,22 @@ async function init() {
   window.addEventListener('wheel', e => { camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
   let resizeTimer = 0;
   const resize = () => {
-    renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio));
+    renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio));
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
     const s = new THREE.Vector2(); renderer.getDrawingBufferSize(s);
     pipeline.resize(s.x, s.y); water.resize(s.x, s.y); plume.mat.uniforms.resolution.value.set(s.x, s.y);
+    qualityController.reset();
+  };
+  let renderFrameNo = 0;
+  const applyRenderQuality = profile => {
+    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile);
+    if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
+      sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
+      if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+      water.uniforms.shadowOn.value = 0;
+    }
+    renderFrameNo = 0; resize();
   };
   window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = window.setTimeout(resize, 120); });
   const startEl = document.getElementById('start');
@@ -370,7 +391,13 @@ async function init() {
 
   function frame() {
     clock.update();
-    const dtRaw = Math.min(clock.getDelta(), 0.05);
+    const frameDelta = clock.getDelta();
+    const dtRaw = Math.min(frameDelta, 0.05);
+    const qualityChange = qualityController.observe(frameDelta, started && !game.paused && !document.hidden);
+    if (qualityChange) {
+      applyRenderQuality(qualityChange.profile);
+      game.toast('Rendering adjusted', `${qualityChange.profile.label} water, lighting and post effects`, 2.8);
+    }
     if (slowT > 0) slowT -= dtRaw;
     const dt = dtRaw * (slowT > 0 ? slowK : 1);
     time += dt;
@@ -577,11 +604,12 @@ async function init() {
     game.projectMarker(camera, window.innerWidth, window.innerHeight);
 
     // render
-    water.renderReflection(scene, camera);
+    if (renderFrameNo % renderProfile.reflectionInterval === 0) water.renderReflection(scene, camera);
     water.setShadow(sun);
     const mode = window.__dbg.mode;
     if (mode === 'raw') { renderer.setRenderTarget(null); renderer.render(scene, camera); }
     else pipeline.render(scene, camera, mode === 'nowater' ? [fxScene] : [water.scene, fxScene], mode);
+    renderFrameNo++;
   }
   renderer.setAnimationLoop(frame);
   // warm the shader cache: everything that can appear later (camps, traps, cargo, the poachers' boat) gets rendered once
