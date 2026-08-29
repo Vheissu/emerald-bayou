@@ -54,6 +54,26 @@ export function clearNavigationEncounter(out) {
   return out;
 }
 
+export function copyNavigationEncounter(source, out) {
+  out.kind = source.kind; out.role = source.role; out.risk = source.risk; out.emergency = source.emergency; out.holdCourse = source.holdCourse;
+  out.distance = source.distance; out.closestApproach = source.closestApproach; out.timeToClosest = source.timeToClosest; out.closingSpeed = source.closingSpeed;
+  out.targetStarboard = source.targetStarboard; out.turn = source.turn; out.speedScale = source.speedScale; out.signalBlasts = source.signalBlasts;
+  return out;
+}
+
+// Prefer an immediate danger, then the encounter with the greater collision risk. Stable distance/time tie-breakers
+// make nearly equal appraisals deterministic when vessels are visited in the traffic pool's fixed order.
+export function navigationEncounterOutranks(candidate, current) {
+  if (candidate.role === NAVIGATION_ROLE.CLEAR) return false;
+  if (current.role === NAVIGATION_ROLE.CLEAR) return true;
+  if (candidate.emergency !== current.emergency) return candidate.emergency;
+  const riskGap = candidate.risk - current.risk;
+  if (Math.abs(riskGap) > 0.015) return riskGap > 0;
+  const timeGap = candidate.timeToClosest - current.timeToClosest;
+  if (Math.abs(timeGap) > 0.2) return timeGap < 0;
+  return candidate.distance < current.distance;
+}
+
 const clamp01 = value => Math.max(0, Math.min(1, value));
 
 // Inland collision-rule appraisal for two vessels in sight of one another. The caller owns `out`, so a traffic
@@ -64,6 +84,7 @@ export function evaluateNavigationEncounter(
   otherX, otherZ, otherHeading, otherSpeed,
   otherVelocityX, otherVelocityZ,
   ownVessel = NAVIGATION_VESSEL.POWER,
+  otherVessel = NAVIGATION_VESSEL.POWER,
   out = createNavigationEncounter(),
 ) {
   clearNavigationEncounter(out);
@@ -118,8 +139,12 @@ export function evaluateNavigationEncounter(
     out.turn = passStarboard ? -1 : 1; out.speedScale = Math.max(0.5, 1 - out.risk * 0.52); out.signalBlasts = passStarboard ? 1 : 2;
   } else if (ownAhead < OVERTAKING_SECTOR) {
     out.kind = 'being-overtaken'; out.role = NAVIGATION_ROLE.STAND_ON; out.holdCourse = true;
-  } else if (ownVessel === NAVIGATION_VESSEL.FISHING) {
+  } else if (ownVessel === NAVIGATION_VESSEL.FISHING && otherVessel !== NAVIGATION_VESSEL.FISHING) {
     out.kind = 'fishing-stand-on'; out.role = NAVIGATION_ROLE.STAND_ON; out.holdCourse = true;
+  } else if (otherVessel === NAVIGATION_VESSEL.FISHING && ownVessel !== NAVIGATION_VESSEL.FISHING) {
+    out.kind = 'fishing-give-way'; out.role = NAVIGATION_ROLE.GIVE_WAY;
+    out.turn = targetStarboard >= 0 ? 1 : -1;
+    out.speedScale = Math.max(0.24, 1 - out.risk * 0.76); out.signalBlasts = out.turn < 0 ? 1 : 2;
   } else if (ownAhead > HEAD_ON_AHEAD && otherAhead > HEAD_ON_AHEAD && courseDot < HEAD_ON_COURSE) {
     out.kind = 'head-on'; out.role = NAVIGATION_ROLE.MUTUAL; out.turn = -1;
     out.speedScale = Math.max(0.58, 1 - out.risk * 0.42); out.signalBlasts = 1;

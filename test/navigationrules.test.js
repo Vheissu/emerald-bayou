@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  NAVIGATION_ROLE, NAVIGATION_VESSEL, PLAYER_NAV_LIGHT_LAYOUT, createNavigationEncounter,
-  evaluateNavigationEncounter, navigationLightVisibility,
+  NAVIGATION_ROLE, NAVIGATION_VESSEL, PLAYER_NAV_LIGHT_LAYOUT, copyNavigationEncounter, createNavigationEncounter,
+  evaluateNavigationEncounter, navigationEncounterOutranks, navigationLightVisibility,
 } from '../src/navigationrules.js';
 
 const velocity = (heading, speed) => ({ x: -Math.sin(heading) * speed, z: -Math.cos(heading) * speed });
-function encounter({ ownX = 0, ownZ = 0, ownHeading = 0, ownSpeed = 8, otherX = 0, otherZ = -100, otherHeading = Math.PI, otherSpeed = 8, vessel = NAVIGATION_VESSEL.POWER } = {}, out = createNavigationEncounter()) {
+function encounter({ ownX = 0, ownZ = 0, ownHeading = 0, ownSpeed = 8, otherX = 0, otherZ = -100, otherHeading = Math.PI, otherSpeed = 8, vessel = NAVIGATION_VESSEL.POWER, otherVessel = NAVIGATION_VESSEL.POWER } = {}, out = createNavigationEncounter()) {
   const otherVelocity = velocity(otherHeading, otherSpeed);
-  return evaluateNavigationEncounter(ownX, ownZ, ownHeading, ownSpeed, otherX, otherZ, otherHeading, otherSpeed, otherVelocity.x, otherVelocity.z, vessel, out);
+  return evaluateNavigationEncounter(ownX, ownZ, ownHeading, ownSpeed, otherX, otherZ, otherHeading, otherSpeed, otherVelocity.x, otherVelocity.z, vessel, otherVessel, out);
 }
 
 test('player navigation lights use the boat local port and starboard sides', () => {
@@ -65,6 +65,15 @@ test('a working fishing vessel stands on unless it is itself overtaking', () => 
   assert.equal(overtaking.kind, 'overtaking-give-way'); assert.equal(overtaking.role, NAVIGATION_ROLE.GIVE_WAY);
 });
 
+test('a power vessel keeps clear of working fishing gear while two fishing vessels use ordinary meeting rules', () => {
+  const power = encounter({ otherX: 50, otherZ: -50, otherHeading: Math.PI / 2, otherVessel: NAVIGATION_VESSEL.FISHING });
+  assert.equal(power.kind, 'fishing-give-way'); assert.equal(power.role, NAVIGATION_ROLE.GIVE_WAY);
+  assert.equal(power.holdCourse, false); assert.equal(power.turn, 1); assert.equal(power.signalBlasts, 2); assert.ok(power.speedScale < 0.5);
+
+  const bothFishing = encounter({ vessel: NAVIGATION_VESSEL.FISHING, otherVessel: NAVIGATION_VESSEL.FISHING });
+  assert.equal(bothFishing.kind, 'head-on'); assert.equal(bothFishing.role, NAVIGATION_ROLE.MUTUAL);
+});
+
 test('close-quarters doubt overrides stand-on behavior with five rapid blasts', () => {
   const result = encounter({ otherX: -16, otherZ: -16, otherHeading: -Math.PI / 2 });
   assert.equal(result.kind, 'crossing-stand-on'); assert.equal(result.emergency, true); assert.equal(result.holdCourse, false);
@@ -77,4 +86,14 @@ test('diverging traffic clears the retained result object without replacing it',
   const result = encounter({ ownSpeed: 4, otherZ: -50, otherHeading: 0, otherSpeed: 8 }, retained);
   assert.equal(result, retained); assert.equal(result.kind, 'none'); assert.equal(result.role, NAVIGATION_ROLE.CLEAR);
   assert.equal(result.risk, 0); assert.equal(result.signalBlasts, 0);
+});
+
+test('encounter selection copies retained state and prioritizes immediate danger', () => {
+  const ordinary = encounter({ otherX: 50, otherZ: -50, otherHeading: Math.PI / 2 });
+  const danger = encounter({ otherX: -16, otherZ: -16, otherHeading: -Math.PI / 2 });
+  assert.equal(danger.emergency, true); assert.equal(navigationEncounterOutranks(danger, ordinary), true);
+
+  const retained = createNavigationEncounter();
+  assert.equal(copyNavigationEncounter(danger, retained), retained);
+  assert.deepEqual(retained, danger);
 });
