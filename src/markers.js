@@ -96,6 +96,20 @@ export function fuelDrum() {
   return g;
 }
 
+// A compact waterproof dispatch case for relay races. Geometry and materials are cached with the other markers, so
+// repeated jobs only create a few lightweight scene nodes and never upload a fresh set of GPU resources.
+export function raceCase() {
+  const g = new THREE.Group();
+  const shell = material('race-case-shell', { color: 0xe26b2d, roughness: 0.48, metalness: 0.08 });
+  const dark = material('race-case-dark', { color: 0x252c29, roughness: 0.72, metalness: 0.18 });
+  const body = new THREE.Mesh(boxGeometry(0.82, 0.36, 0.58), shell); body.position.y = 0.24; g.add(body);
+  const lid = new THREE.Mesh(boxGeometry(0.86, 0.08, 0.62), shell); lid.position.y = 0.46; g.add(lid);
+  for (const x of [-0.27, 0.27]) { const latch = new THREE.Mesh(boxGeometry(0.11, 0.18, 0.04), dark); latch.position.set(x, 0.33, -0.31); g.add(latch); }
+  const handle = new THREE.Mesh(torusGeometry(0.14, 0.025, 6, 14), dark); handle.scale.set(1.45, 1, 1); handle.rotation.x = Math.PI / 2; handle.position.set(0, 0.54, 0); g.add(handle);
+  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
 // the sunken skiff: an old johnboat on its side in the shallows, one gunwale just breaking the surface
 export function wreck() {
   const g = new THREE.Group();
