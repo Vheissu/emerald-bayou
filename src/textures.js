@@ -1,8 +1,42 @@
 import * as THREE from 'three';
 import { mulberry32, tileableNoise } from './noise.js';
+import { sharedResource } from './cache.js';
 
 function canvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 function hsl(h, s, l, a = 1) { return `hsla(${h.toFixed(1)},${s.toFixed(1)}%,${l.toFixed(1)}%,${a})`; }
+
+const SHARED_SURFACE_SPECS = Object.freeze({ bark: Object.freeze([256, 512]), plank: Object.freeze([512, 512]) });
+const sharedSurfaceTextures = new Map(), sharedSurfaceHits = new Map();
+
+function sharedSurfaceTexture(key, create) {
+  let texture = sharedSurfaceTextures.get(key);
+  if (texture) { sharedSurfaceHits.set(key, (sharedSurfaceHits.get(key) || 0) + 1); return texture; }
+  texture = sharedResource(create()); sharedSurfaceTextures.set(key, texture); return texture;
+}
+
+// Texture repeat is immutable once a cached surface is shared. Baking the same repeat into geometry UVs preserves
+// the sampling exactly while letting logs, docks, the tower and vegetation use one CPU canvas and one GPU texture.
+export function scaleTextureUvs(geometry, repeatU = 1, repeatV = 1) {
+  const uv = geometry?.getAttribute?.('uv'); if (!uv) return geometry;
+  const u = Number.isFinite(Number(repeatU)) ? Number(repeatU) : 1, v = Number.isFinite(Number(repeatV)) ? Number(repeatV) : 1;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * u, uv.getY(i) * v);
+  uv.needsUpdate = true; return geometry;
+}
+
+export function sharedSurfaceTextureStats() {
+  let basePixels = 0, avoidedPixels = 0, hits = 0;
+  for (const key of sharedSurfaceTextures.keys()) {
+    const spec = SHARED_SURFACE_SPECS[key]; if (!spec) continue;
+    const pixels = spec[0] * spec[1], count = sharedSurfaceHits.get(key) || 0;
+    basePixels += pixels; avoidedPixels += pixels * count; hits += count;
+  }
+  const bytes = pixels => pixels * 4, mipBytes = pixels => Math.round(bytes(pixels) * 4 / 3);
+  return {
+    textures: sharedSurfaceTextures.size, keys: [...sharedSurfaceTextures.keys()], hits,
+    estimatedCanvasBytes: bytes(basePixels), estimatedGpuBytes: mipBytes(basePixels),
+    estimatedAvoidedBytes: bytes(avoidedPixels) + mipBytes(avoidedPixels),
+  };
+}
 
 function srgbTex(c, repeat = false) {
   const t = new THREE.CanvasTexture(c);
@@ -294,7 +328,7 @@ export function noiseTex() {
   return sharedNoiseTexture;
 }
 
-export function bark() {
+function makeBarkTexture() {
   const W = 256, H = 512;
   const n = tileableNoise(256, 61, 5, 4, 0.55);
   const c = canvas(W, H); const ctx = c.getContext('2d');
@@ -320,8 +354,9 @@ export function bark() {
   ctx.putImageData(img, 0, 0);
   return srgbTex(c, true);
 }
+export function bark() { return sharedSurfaceTexture('bark', makeBarkTexture); }
 
-export function plank() {
+function makePlankTexture() {
   const W = 512, H = 512; const c = canvas(W, H); const ctx = c.getContext('2d'); const r = mulberry32(71);
   const n = tileableNoise(512, 72, 4, 6, 0.5);
   ctx.fillStyle = '#3b332c'; ctx.fillRect(0, 0, W, H);
@@ -339,6 +374,7 @@ export function plank() {
   ctx.putImageData(img, 0, 0);
   return srgbTex(c, true);
 }
+export function plank() { return sharedSurfaceTexture('plank', makePlankTexture); }
 
 export function cageMesh() {
   const S = 64; const c = canvas(S, S); const ctx = c.getContext('2d');

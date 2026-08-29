@@ -303,12 +303,11 @@ export class Vegetation {
       mat.customProgramCacheKey = () => `trunk-${amp}`;
       return mat;
     };
-    texBark.repeat.set(2, 6);
     this.trunkMat = patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, metalness: 0, color: 0x8a867c }), 0.34);
     this.branchMat = patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, color: 0x8f8375 }), 0.30);
     this.kneeMat = new THREE.MeshStandardMaterial({ color: 0x5a4d3f, roughness: 1 });
-    this.trunkGeo = trunkGeo();
-    this.branchGeo = new THREE.CylinderGeometry(0.06, 0.16, 1, 6, 1); this.branchGeo.translate(0, 0.5, 0);
+    this.trunkGeo = TEX.scaleTextureUvs(trunkGeo(), 2, 6);
+    this.branchGeo = TEX.scaleTextureUvs(new THREE.CylinderGeometry(0.06, 0.16, 1, 6, 1), 2, 6); this.branchGeo.translate(0, 0.5, 0);
     this.kneeGeo = new THREE.ConeGeometry(0.18, 1, 6); this.kneeGeo.translate(0, 0.5, 0);
     this.cypTint = new THREE.Color(0.36, 0.48, 0.26); this.oakTint = new THREE.Color(0.30, 0.42, 0.25); this.palmTint = new THREE.Color(0.42, 0.55, 0.34);
     // scratch

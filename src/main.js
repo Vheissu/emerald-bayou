@@ -276,6 +276,7 @@ async function init() {
   const debugResourceSnapshot = import.meta.env.DEV ? () => ({
     renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length },
     audio: audio.spatialStats(),
+    proceduralSurfaces: TEX.sharedSurfaceTextureStats(),
     sky: sky.resourceStats(),
     graph: debugSceneGraphStats(),
     terrain: terrain.memoryStats(),
