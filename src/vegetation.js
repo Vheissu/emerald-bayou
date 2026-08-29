@@ -74,39 +74,41 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
     shader.uniforms.uFade = { value: fade && !isDepth ? new THREE.Vector2(fade[0], fade[1]) : new THREE.Vector2(1e8, 1e8 + 1) };
     mat.userData.shader = shader;
     let vs = shader.vertexShader;
-    vs = vs.replace('#include <common>', `#include <common>\n${WIND_GLSL}\nuniform vec3 uSunDir; uniform vec2 uFade; varying float vFolAO; varying float vFolBack;\n${hasCrown ? 'attribute vec4 aCrown;' : ''}`);
+    vs = vs.replace('#include <common>', `#include <common>\n${WIND_GLSL}
+      uniform vec3 uSunDir; uniform vec2 uFade; varying float vFolAO; varying float vFolBack; varying vec3 vCompactColor;
+      attribute vec3 iPosition; attribute vec4 iQuaternion; attribute vec3 iScale; attribute vec3 iColor;
+      ${hasCrown ? 'attribute vec4 iCrown;' : ''}
+      vec3 compactRotate(vec3 v, vec4 q) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }`);
     if (crownNormals) {
       vs = vs.replace('#include <beginnormal_vertex>', `
-        vec3 wpN = (instanceMatrix * vec4(position, 1.0)).xyz;
-        vec3 objectNormal = normalize(wpN - aCrown.xyz + vec3(0.0, 0.35, 0.0));`)
+        vec3 wpN = compactRotate(position * iScale, iQuaternion) + iPosition;
+        vec3 objectNormal = normalize(wpN - compactCrownCenter + vec3(0.0, 0.35, 0.0));`)
         .replace('#include <defaultnormal_vertex>', `vec3 transformedNormal = normalMatrix * objectNormal;`);
+    } else {
+      vs = vs.replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+        vec3 compactSafeScale = sign(iScale) * max(abs(iScale), vec3(0.0001));
+        objectNormal = normalize(compactRotate(objectNormal / compactSafeScale, iQuaternion));`);
     }
+    vs = vs.replace('void main() {', `void main() {
+      vCompactColor = iColor;
+      ${hasCrown ? 'vec3 compactCrownCenter = iPosition + iCrown.xyz;' : ''}`)
+      .replace('#include <begin_vertex>', `vec3 transformed = compactRotate(vec3(position) * iScale, iQuaternion) + iPosition;`);
     vs = vs.replace('#include <project_vertex>', `
-      vec3 wBase = transformed;
-      #ifdef USE_INSTANCING
-        wBase = ${hasCrown ? 'aCrown.xyz' : '(instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz'};
-      #endif
+      vec3 wBase = ${hasCrown ? 'compactCrownCenter' : 'iPosition'};
       float keep = 1.0 - smoothstep(uFade.x, uFade.y, distance(cameraPosition, wBase));
-      vec4 mvPosition = vec4(transformed * keep, 1.0);
-      #ifdef USE_INSTANCING
-        mvPosition = instanceMatrix * mvPosition;
-      #endif
-      float hFac = ${pin === 'bottom' ? 'uv.y' : pin === 'top' ? '(1.0 - uv.y)' : pin === 'y' ? `clamp(position.y / ${pinH.toFixed(3)}, 0.0, 1.0)` : (hasCrown ? 'clamp(mvPosition.y / max(aCrown.y, 1.0), 0.0, 1.0)' : '1.0')};
-      #ifdef USE_INSTANCING
-        vec3 cardOrigin = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
-      #else
-        vec3 cardOrigin = wBase;
-      #endif
+      vec4 mvPosition = vec4(iPosition + (transformed - iPosition) * keep, 1.0);
+      float hFac = ${pin === 'bottom' ? 'uv.y' : pin === 'top' ? '(1.0 - uv.y)' : pin === 'y' ? `clamp(position.y / ${pinH.toFixed(3)}, 0.0, 1.0)` : (hasCrown ? 'clamp(mvPosition.y / max(compactCrownCenter.y, 1.0), 0.0, 1.0)' : '1.0')};
+      vec3 cardOrigin = iPosition;
       float gW = gust(wBase);
       mvPosition.xyz += windOffset(wBase, hFac, ${amp.toFixed(3)}, gW) + (windFlutter(cardOrigin, ${(amp * 0.07).toFixed(3)}, gW) + windBranch(cardOrigin, hFac, ${(amp * 0.55).toFixed(3)}, gW)) * ${hasCrown ? '1.0' : (pin === 'top' ? '(1.0 - uv.y)' : pin === 'y' ? 'hFac' : 'uv.y')};
       ${hasCrown ? `
         // crown-depth AO: cards deep inside the crown are darker, the outer shell is lit
-        vec3 dc = mvPosition.xyz - aCrown.xyz; dc.y *= 1.6;
-        float rc = clamp(length(dc) / max(aCrown.w, 0.5), 0.0, 1.0);
+        vec3 dc = mvPosition.xyz - compactCrownCenter; dc.y *= 1.6;
+        float rc = clamp(length(dc) / max(iCrown.w, 0.5), 0.0, 1.0);
         vFolAO = 0.55 + 0.45 * smoothstep(0.0, 1.0, rc);
         { float vd = length((modelViewMatrix * vec4(wBase, 1.0)).xyz); vFolAO = mix(vFolAO, 1.0, smoothstep(90.0, 320.0, vd)); }
         // upper hemisphere sees more sky
-        vFolAO *= 0.8 + 0.2 * clamp(dc.y / max(aCrown.w, 0.5) + 0.5, 0.0, 1.0);
+        vFolAO *= 0.8 + 0.2 * clamp(dc.y / max(iCrown.w, 0.5) + 0.5, 0.0, 1.0);
         vec3 nW = normalize(dc);
         vFolBack = pow(max(-dot(nW, uSunDir), 0.0), 1.5) * (0.55 + 0.45 * rc);` : 'vFolAO = 1.0; vFolBack = 0.0;'}
       mvPosition = modelViewMatrix * mvPosition;
@@ -114,8 +116,8 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
     shader.vertexShader = vs;
     if (!isDepth) {
       let fs = shader.fragmentShader;
-      fs = fs.replace('#include <common>', `#include <common>\nvarying float vFolAO; varying float vFolBack;`);
-      fs = fs.replace('#include <color_fragment>', `#include <color_fragment>\n diffuseColor.rgb *= vFolAO;`);
+      fs = fs.replace('#include <common>', `#include <common>\nvarying float vFolAO; varying float vFolBack; varying vec3 vCompactColor;`);
+      fs = fs.replace('#include <color_fragment>', `#include <color_fragment>\n diffuseColor.rgb *= vCompactColor * vFolAO;`);
       if (trans > 0) fs = fs.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(1.0, 0.93, 0.62) * (${trans.toFixed(3)} * vFolBack);`);
       shader.fragmentShader = fs;
@@ -175,13 +177,53 @@ class Batch {
   build(bounds) {
     if (!this.n) return null;
     const k = this.kind;
-    const geo = k.opts.hasCrown ? k.geo.clone() : k.geo;
-    const mesh = new THREE.InstancedMesh(geo, k.mat, this.n);
-    mesh.instanceMatrix.array.set(this.m.subarray(0, this.n * 16)); mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor = new THREE.InstancedBufferAttribute(this.col.slice(0, this.n * 3), 3);
-    if (k.opts.hasCrown) geo.setAttribute('aCrown', new THREE.InstancedBufferAttribute(this.crown.slice(0, this.n * 4), 4));
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setIndex(k.geo.index);
+    const sharedAttributeNames = Object.keys(k.geo.attributes);
+    for (const name of sharedAttributeNames) geo.setAttribute(name, k.geo.attributes[name]);
+    for (const group of k.geo.groups) geo.addGroup(group.start, group.count, group.materialIndex);
+    geo.setDrawRange(k.geo.drawRange.start, k.geo.drawRange.count);
+    geo.instanceCount = this.n;
+
+    // Static foliage never needs a general 4x4 matrix. Store the exact same transform as position + a
+    // normalized 16-bit quaternion + half-float scale. Colour and crown data are half floats as well.
+    // A crown card falls from 92 resident bytes to 40; every placement, tint and wind response stays intact.
+    const pos = new Float32Array(this.n * 3), quat = new Int16Array(this.n * 4);
+    const scale = new Uint16Array(this.n * 3), color = new Uint16Array(this.n * 3);
+    const crown = k.opts.hasCrown ? new Uint16Array(this.n * 4) : null;
+    const matrix = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    for (let i = 0; i < this.n; i++) {
+      const mi = i * 16, pi = i * 3, qi = i * 4;
+      matrix.fromArray(this.m, mi).decompose(p, q, s);
+      pos[pi] = p.x; pos[pi + 1] = p.y; pos[pi + 2] = p.z;
+      quat[qi] = Math.round(THREE.MathUtils.clamp(q.x, -1, 1) * 32767);
+      quat[qi + 1] = Math.round(THREE.MathUtils.clamp(q.y, -1, 1) * 32767);
+      quat[qi + 2] = Math.round(THREE.MathUtils.clamp(q.z, -1, 1) * 32767);
+      quat[qi + 3] = Math.round(THREE.MathUtils.clamp(q.w, -1, 1) * 32767);
+      scale[pi] = THREE.DataUtils.toHalfFloat(s.x); scale[pi + 1] = THREE.DataUtils.toHalfFloat(s.y); scale[pi + 2] = THREE.DataUtils.toHalfFloat(s.z);
+      color[pi] = THREE.DataUtils.toHalfFloat(this.col[pi]); color[pi + 1] = THREE.DataUtils.toHalfFloat(this.col[pi + 1]); color[pi + 2] = THREE.DataUtils.toHalfFloat(this.col[pi + 2]);
+      if (crown) {
+        crown[qi] = THREE.DataUtils.toHalfFloat(this.crown[qi] - p.x); crown[qi + 1] = THREE.DataUtils.toHalfFloat(this.crown[qi + 1] - p.y);
+        crown[qi + 2] = THREE.DataUtils.toHalfFloat(this.crown[qi + 2] - p.z); crown[qi + 3] = THREE.DataUtils.toHalfFloat(this.crown[qi + 3]);
+      }
+    }
+    const halfAttribute = (array, itemSize) => {
+      const attribute = new THREE.Float16BufferAttribute(array, itemSize);
+      attribute.isInstancedBufferAttribute = true; attribute.meshPerAttribute = 1;
+      return attribute;
+    };
+    geo.setAttribute('iPosition', new THREE.InstancedBufferAttribute(pos, 3));
+    geo.setAttribute('iQuaternion', new THREE.InstancedBufferAttribute(quat, 4, true));
+    geo.setAttribute('iScale', halfAttribute(scale, 3));
+    geo.setAttribute('iColor', halfAttribute(color, 3));
+    if (crown) geo.setAttribute('iCrown', halfAttribute(crown, 4));
+    geo.boundingSphere = bounds;
+    geo.userData.compactFoliage = { sharedAttributeNames, sharedIndex: !!k.geo.index };
+
+    const mesh = new THREE.Mesh(geo, k.mat);
     mesh.castShadow = k.shadow; mesh.receiveShadow = true;
     mesh.boundingSphere = bounds; mesh.frustumCulled = true;
+    mesh.userData.instanceCount = this.n;
     if (k.small) mesh.layers.set(1);
     mesh.customDepthMaterial = k.depth;
     return mesh;
@@ -282,7 +324,17 @@ export class Vegetation {
   disposeChunk(chunk) {
     if (!chunk.veg) return;
     chunk.veg.parent && chunk.veg.parent.remove(chunk.veg);
-    for (const mesh of chunk.veg.children) { if (mesh.geometry.getAttribute('aCrown')) mesh.geometry.dispose(); mesh.dispose(); }
+    for (const mesh of chunk.veg.children) {
+      const compact = mesh.geometry.userData.compactFoliage;
+      if (compact) {
+        // The base card/model buffers are shared by every chunk. Detach them before disposal so only this
+        // chunk's compact instance buffers leave the GPU cache.
+        for (const name of compact.sharedAttributeNames) mesh.geometry.deleteAttribute(name);
+        if (compact.sharedIndex) mesh.geometry.setIndex(null);
+        mesh.geometry.dispose();
+      }
+      if (mesh.dispose) mesh.dispose();
+    }
     chunk.veg = null; chunk.colliders = [];
   }
 

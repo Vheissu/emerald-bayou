@@ -325,8 +325,9 @@ export class Terrain {
       const geometry = (c.mesh?.geometry?.attributes.position?.array?.byteLength || 0) + (c.mesh?.geometry?.attributes.normal?.array?.byteLength || 0);
       let veg = 0, instances = 0, meshes = 0;
       if (c.veg) for (const m of c.veg.children) {
-        meshes++; instances += m.count || 0;
-        veg += (m.instanceMatrix?.array?.byteLength || 0) + (m.instanceColor?.array?.byteLength || 0) + (m.geometry.getAttribute('aCrown')?.array?.byteLength || 0);
+        meshes++; instances += m.isInstancedMesh ? m.count : (m.geometry.instanceCount || m.userData.instanceCount || 0);
+        veg += (m.instanceMatrix?.array?.byteLength || 0) + (m.instanceColor?.array?.byteLength || 0);
+        for (const name of ['iPosition', 'iQuaternion', 'iScale', 'iColor', 'iCrown']) veg += m.geometry.getAttribute(name)?.array?.byteLength || 0;
       }
       terrainGrid += grid; terrainGeometry += geometry; vegetation += veg; vegetationInstances += instances; vegetationMeshes += meshes; colliders += c.colliders.length;
       l.terrainGrid += grid; l.terrainGeometry += geometry; l.vegetation += veg; l.vegetationInstances += instances; l.vegetationMeshes += meshes; l.colliders += c.colliders.length;
