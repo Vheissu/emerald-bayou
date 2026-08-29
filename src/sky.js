@@ -20,6 +20,9 @@ export class Sky {
     this.uniforms = {
       sunDir: { value: this.sunDir },
       moonDir: { value: this.sunDir.clone().multiplyScalar(-1) },
+      lightDir: { value: this.sunDir.clone() },
+      windDir: { value: new THREE.Vector2(1, 0.35).normalize() },
+      windSpeed: { value: 3.5 },
       uTime: { value: 0 },
       cover: { value: 0.47 },
       daylight: { value: 1 },
@@ -39,19 +42,19 @@ export class Sky {
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: `
-        varying vec3 vDir; uniform vec3 sunDir, moonDir; uniform float uTime, cover, daylight, storm, flash;
+        varying vec3 vDir; uniform vec3 sunDir, moonDir, lightDir; uniform vec2 windDir; uniform float windSpeed, uTime, cover, daylight, storm, flash;
         ${SKY_FRAG_NOISE}
         void main() {
           vec3 d = normalize(vDir);
           float y = d.y;
           float mu = dot(d, sunDir);
-          vec3 dayZenith = vec3(0.05, 0.16, 0.50);
-          vec3 dayHorizon = vec3(0.50, 0.60, 0.72);
+          vec3 dayZenith = vec3(0.025, 0.13, 0.43);
+          vec3 dayHorizon = vec3(0.43, 0.55, 0.68);
           vec3 nightZenith = vec3(0.0025, 0.008, 0.025);
           vec3 nightHorizon = vec3(0.018, 0.035, 0.060);
           vec3 zenith = mix(nightZenith, dayZenith, daylight);
           vec3 horizon = mix(nightHorizon, dayHorizon, daylight);
-          vec3 sky = mix(horizon, zenith, pow(clamp(y, 0.0, 1.0), 0.5));
+          vec3 sky = mix(horizon, zenith, pow(clamp(y, 0.0, 1.0), 0.43));
           // sun-side brightening + haze
           sky += vec3(0.9, 0.85, 0.75) * pow(max(mu, 0.0), 6.0) * 0.22 * daylight;
           sky += vec3(1.0, 0.97, 0.9) * pow(max(mu, 0.0), 420.0) * 30.0 * daylight;
@@ -65,16 +68,17 @@ export class Sky {
           float yy = max(y, 0.0);
           float hf = smoothstep(0.0, 0.14, yy);
           if (hf > 0.001) {
-            vec2 p = d.xz / (yy + 0.09) + vec2(uTime * 0.006, uTime * 0.0025);
+            vec2 drift = windDir * uTime * (0.0015 + windSpeed * 0.00018);
+            vec2 p = d.xz / (yy + 0.09) + drift;
             vec2 warp = vec2(fbm6(p * 0.22 + 7.0), fbm6(p * 0.22 + 19.0)) - 0.5;
             float big = fbm6(p * 0.27 + warp * 1.6);            // tower mass
             float det = fbm6(p * 0.95 + warp * 0.8 + 3.0);      // cauliflower edge
             float n = big * 0.68 + det * 0.32;
             float dens = smoothstep(cover, cover + 0.17, n);
             float thick = smoothstep(cover, cover + 0.45, n);
-            // self-shadowing: sample toward the sun and compare
-            vec2 toSun = normalize(sunDir.xz + 1e-4) * 0.09;
-            float nS = fbm6((p + toSun) * 0.27 + warp * 1.6) * 0.68 + fbm6((p + toSun) * 0.95 + warp * 0.8 + 3.0) * 0.32;
+            // self-shadowing: sample toward the active sun or moon and compare
+            vec2 toLight = normalize(lightDir.xz + 1e-4) * 0.09;
+            float nS = fbm6((p + toLight) * 0.27 + warp * 1.6) * 0.68 + fbm6((p + toLight) * 0.95 + warp * 0.8 + 3.0) * 0.32;
             float lit = clamp((n - nS) * 7.0 + 0.5, 0.0, 1.0);
             // towers: the thicker the cell, the darker its flat base and the brighter its lit crown
             vec3 shade = mix(vec3(0.015, 0.021, 0.032), vec3(0.40, 0.45, 0.56), daylight);
@@ -91,8 +95,13 @@ export class Sky {
             // lower cloud bases catch the haze near the horizon
             cloud = mix(cloud, horizon * 1.05, (1.0 - hf) * 0.6);
             sky = mix(sky, cloud, dens * hf * 0.985);
+            // A severe cell hangs a ragged shelf below the main deck. Reusing the cloud field keeps
+            // this free of another noise octave stack and removes the clean horizontal storm ceiling.
+            float shelfBand = smoothstep(0.015, 0.12, yy) * (1.0 - smoothstep(0.24, 0.48, yy));
+            vec3 scud = mix(vec3(0.018, 0.027, 0.032), vec3(0.12, 0.15, 0.16), lit * 0.45 + flash * 0.8);
+            sky = mix(sky, scud, dens * shelfBand * storm * 0.74);
             // thin high cirrus
-            vec2 p2 = d.xz / (yy + 0.12) * 0.7 + vec2(uTime * 0.003, 0.0);
+            vec2 p2 = d.xz / (yy + 0.12) * 0.7 + drift * 0.55;
             float ci = smoothstep(0.62, 0.9, fbm6(p2 * 1.7 + 30.0)) * 0.18;
             sky = mix(sky, mix(vec3(0.09, 0.11, 0.16), vec3(0.95, 0.97, 1.0), daylight), ci * hf * (1.0 - dens));
           }
@@ -101,7 +110,7 @@ export class Sky {
             vec2 starUv = d.xz / (abs(y) + 0.22);
             vec2 starCell = floor(starUv * 185.0);
             float sh = hash21(starCell);
-            float star = smoothstep(0.9965, 1.0, sh) * (0.65 + 0.35 * sin(uTime * (1.5 + sh * 2.0) + sh * 80.0));
+            float star = smoothstep(0.9977, 1.0, sh) * (0.72 + 0.28 * sin(uTime * (1.2 + sh * 1.6) + sh * 80.0));
             star *= (1.0 - daylight) * (1.0 - storm) * smoothstep(0.03, 0.18, y);
             sky += vec3(0.72, 0.82, 1.0) * star * 1.8;
           }

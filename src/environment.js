@@ -153,6 +153,7 @@ export class Environment {
     this.gust = 1; this.waterLevel = 0; this.tideRate = 0; this.syncClockAndTide(); this.persistT = 10;
     this.precip = new Precipitation(this.fxScene);
     this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
+    this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a);
     this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.hailKick = 0;
@@ -338,37 +339,48 @@ export class Environment {
     const daylight = smooth(-0.08, 0.16, sunY), night = 1 - smooth(-0.04, 0.18, sunY);
     const horizon = 1 - smooth(0.04, 0.52, Math.max(0, sunY));
     const stormShade = 1 - V.storm * 0.7;
+    const moonLight = night * lerp(0.055, 0.14, smooth(0.04, 0.68, this.moonDir.y)) * lerp(1, 0.34, V.storm);
+    const cloudX = this.phys.pos.x + this.windDir.x * realTime * V.wind * 14;
+    const cloudZ = this.phys.pos.y + this.windDir.z * realTime * V.wind * 14;
+    const overheadCloud = clamp(0.5 + Math.sin(cloudX * 0.0017 + cloudZ * 0.0008) * 0.28 + Math.sin(cloudX * -0.0006 + cloudZ * 0.0021 + 1.7) * 0.18);
+    this.cloudLight = 1 - smooth(V.cloud, V.cloud + 0.2, overheadCloud) * lerp(0.12, 0.045, V.storm);
+    const sunBase = daylight * smooth(-0.01, 0.055, sunY) * lerp(3.15, 2.6, horizon) * stormShade * this.cloudLight;
+    const useMoon = moonLight > sunBase;
+    this.lightDir.copy(useMoon ? this.moonDir : this.sunDir);
 
     this.flash *= Math.exp(-dt * 12);
     if (V.lightning > 0.05 && !paused) { this.lightningT -= step; if (this.lightningT <= 0) this.triggerLightning(camera); }
     if (this.boltT > 0) { this.boltT -= dt; this.bolt.material.opacity = clamp(this.boltT / 0.14); if (this.boltT <= 0) this.bolt.visible = false; }
     if (this.thunderT >= 0) { this.thunderT -= dt; if (this.thunderT < 0) this.thunder(0.65 + V.storm * 0.35); }
 
-    const sunBase = daylight * lerp(3.15, 2.6, horizon) * stormShade;
-    this.sun.intensity = Math.max(night * 0.045, sunBase) + this.flash * 4.5;
-    this.sun.color.copy(this.sunDay).lerp(this.sunWarm, horizon * daylight * (1 - V.storm * 0.6)).lerp(this.flashColor, this.flash);
+    this.sun.intensity = Math.max(moonLight, sunBase) + this.flash * 4.5;
+    this.sun.color.copy(useMoon ? this.sunNight : this.sunDay);
+    if (!useMoon) this.sun.color.lerp(this.sunWarm, horizon * daylight * (1 - V.storm * 0.6));
+    this.sun.color.lerp(this.flashColor, this.flash);
     this.hemi.intensity = lerp(0.09, 0.46, daylight) * lerp(1, 0.48, V.storm) + this.flash * 0.9;
     this.hemi.color.set(daylight > 0.1 ? 0x9fc3e8 : 0x203659); this.hemi.groundColor.set(daylight > 0.1 ? 0x3f4a2a : 0x07100c);
     this.scene.environmentIntensity = lerp(0.025, 0.42, daylight) * lerp(1, 0.42, V.storm);
 
     const shadowSnap = 240 / 4096;
     this.sun.target.position.set(Math.round(this.phys.pos.x / shadowSnap) * shadowSnap, 0, Math.round(this.phys.pos.y / shadowSnap) * shadowSnap);
-    this.sun.position.copy(this.sunDir).multiplyScalar(420).add(this.sun.target.position); this.sun.target.updateMatrixWorld();
+    this.sun.position.copy(this.lightDir).multiplyScalar(420).add(this.sun.target.position); this.sun.target.updateMatrixWorld();
     this.sky.uniforms.sunDir.value.copy(this.sunDir); this.sky.uniforms.moonDir.value.copy(this.moonDir);
+    this.sky.uniforms.lightDir.value.copy(this.lightDir); this.sky.uniforms.windDir.value.set(this.windDir.x, this.windDir.z); this.sky.uniforms.windSpeed.value = V.wind;
     this.sky.uniforms.daylight.value = daylight; this.sky.uniforms.storm.value = V.storm; this.sky.uniforms.flash.value = this.flash; this.sky.uniforms.cover.value = V.cloud;
 
     this.water.setConditions({ level: this.waterLevel, seaState: V.sea, windAngle: this.windAngle, rain: V.rain, wind: V.wind });
-    this.water.uniforms.sunDir.value.copy(this.sunDir);
-    this.water.uniforms.sunIntensity.value = Math.max(0.025, daylight * 1.55 * stormShade) + this.flash * 2;
+    this.water.uniforms.sunDir.value.copy(this.lightDir);
+    this.water.uniforms.sunIntensity.value = Math.max(0.025, useMoon ? moonLight * 2.1 : daylight * 1.55 * stormShade) + this.flash * 2;
     this.water.uniforms.sunColor.value.copy(this.sun.color);
     this.water.uniforms.rippleStrength.value = 0.13 + V.sea * 0.075 + V.rain * 0.08;
 
     const fog = this.pipeline.grade.material.uniforms;
     fog.exposure.value = lerp(0.54, V.exposure, daylight) + this.flash * 0.25;
-    fog.fogDensity.value = V.fog * lerp(1.28, 1, daylight);
+    const dawnHaze = Math.exp(-Math.pow((this.hour - 6.5) / 1.8, 2)) * (1 - smooth(5, 19, V.wind));
+    fog.fogDensity.value = V.fog * lerp(1.28, 1, daylight) * (1 + dawnHaze * 0.3);
     fog.fogColor.value.copy(this.fogNight).lerp(this.fogDay, daylight).lerp(this.fogStorm, V.storm * 0.78);
     fog.bloomAmt.value = lerp(0.18, 0.1, daylight) + V.rain * 0.03;
-    fog.sunDir.value.copy(this.sunDir);
+    fog.sunDir.value.copy(this.lightDir);
 
     this.precip.update(dt, camera, this.windDir, V.rain, V.hail, this.waterLevel);
     if (this.audio && this.audio.weather) this.audio.weather(V.wind * this.gust, V.rain, night, V.storm);

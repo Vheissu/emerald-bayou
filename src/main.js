@@ -384,7 +384,7 @@ async function init() {
     // world updates
     sky.update(time, camera.position);
     terrain.update(time, camera.position);
-    veg.update(time, SUN_DIR, wind);
+    veg.update(time, environment.lightDir, wind);
     birds.update(time, camera.position, dt);
     manatees.update(dt, time, phys.pos.x, phys.pos.y);
     gators.update(dt, time, phys.pos.x, phys.pos.y, phys.speed);
@@ -425,7 +425,7 @@ async function init() {
 
     // ---- spray ----
     // sun direction in view space drives the lighting of droplets / plume
-    sunView.copy(SUN_DIR).transformDirection(camera.matrixWorldInverse);
+    sunView.copy(environment.lightDir).transformDirection(camera.matrixWorldInverse);
     spray.mat.uniforms.sunView.value.copy(sunView); plume.mat.uniforms.sunView.value.copy(sunView);
     const washF = Math.max(0, rpm - 0.2) * wet; // prop wash strength (0 at idle, nothing to blow when out of the water)
     camVel.subVectors(camera.position, camPrev).multiplyScalar(1 / Math.max(dt, 1e-3)); camPrev.copy(camera.position);

@@ -71,7 +71,7 @@ export class Pipeline {
           vec3 fc = mix(fogColor, vec3(0.95, 0.9, 0.8), sunAmt * 0.5);
           if (d < 0.99999) {
             float z = linZ(d);
-            float dist = z / max(abs(vdir.z) > 0.0 ? 1.0 : 1.0, 1.0);
+            float dist = z;
             float f = 1.0 - exp(-dist * fogDensity);
             f = clamp(f, 0.0, 0.6);
             c = mix(c, fc * 1.05, f);
