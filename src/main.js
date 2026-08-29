@@ -21,7 +21,7 @@ import { WorldMap } from './worldmap.js';
 import { Life } from './life.js';
 import { pickSite, buildSite } from './sites.js';
 import { person, canoe } from './folk.js';
-import { spawn, preload, loadGeo, loadModel, modelBox } from './models.js';
+import { configureModelLoading, loadGeo, loadModel, modelBox, modelLoadingStats, preload, releaseDeferredModels, spawn } from './models.js';
 import { Environment } from './environment.js';
 import { EncounterDirector } from './encounters.js';
 import { BoatCondition } from './condition.js';
@@ -30,16 +30,31 @@ import { Law } from './law.js';
 import { StormHazards } from './stormhazards.js';
 import { Reputation } from './reputation.js';
 import { CurrentField } from './currents.js';
-import { RegionDirector } from './regions.js';
+import { RegionDirector, regionAt } from './regions.js';
 import { RadioDirector } from './radio.js';
 import { WorldIncidents } from './incidents.js';
 import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
-import { AdaptiveQuality, MAX_DRAW_PIXELS, pixelRatioFor } from './renderquality.js';
+import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor, webglRendererName } from './renderquality.js';
+import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel, readQualityPreference, writeQualityPreference } from './displaysettings.js';
+import { startupPlan, startupTerrainReady } from './startup.js';
+import { FieldDiscoveryDirector } from './discoveries.js';
+import { NavigationAids } from './navigationaids.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
-renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio));
+const gpuRenderer = webglRendererName(renderer.getContext());
+const hardwareQualityLevel = initialQualityLevel({
+  deviceMemory: navigator.deviceMemory,
+  hardwareConcurrency: navigator.hardwareConcurrency,
+  maxTextureSize: renderer.capabilities.maxTextureSize,
+  saveData: navigator.connection?.saveData === true,
+  gpuRenderer,
+});
+let qualityPreference = readQualityPreference();
+const qualityController = new AdaptiveQualityController(qualityControllerConfig(qualityPreference, hardwareQualityLevel));
+let renderProfile = qualityController.profile;
+renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -57,12 +72,14 @@ const fxScene = new THREE.Scene();
 const SUN_DIR = new THREE.Vector3(-0.42, 0.72, -0.55).normalize();
 
 async function init() {
+  const startup = startupPlan(renderProfile.id);
+  configureModelLoading({ deferOptional: startup.deferOptionalModels, concurrency: startup.modelConcurrency });
   // ---- sky & lighting ----
   const sky = new Sky(SUN_DIR);
   scene.add(sky.mesh);
   const sun = new THREE.DirectionalLight(0xfff2dc, 3.0);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(4096, 4096);
+  sun.shadow.mapSize.set(renderProfile.shadowMapSize, renderProfile.shadowMapSize);
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 900;
   sun.shadow.camera.left = -120; sun.shadow.camera.right = 120; sun.shadow.camera.top = 120; sun.shadow.camera.bottom = -120;
   sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.6; sun.shadow.radius = 2;
@@ -110,7 +127,7 @@ async function init() {
   // ---- vegetation ----
   const veg = new Vegetation(terrain, exclusions);
   // the Meshy grass clumps become instanced kinds before the first chunk is grown; the hero tree gets the wind
-  await preload(['grass_a', 'grass_d', 'tree_c']);
+  await preload(['grass_a', 'grass_d']);
   for (const name of ['grass_a', 'grass_d']) { const r = await loadGeo(name); if (r) veg.addSolid(r.geo, r.mat, r.height); } // b and c stay at ~5.5k tris a clump (separate blades will not collapse), too heavy to instance
   loadModel('tree_c').then(root => { const f = modelBox('tree_c'); if (root && f) root.traverse(o => { if (o.isMesh) veg.windMat(o.material, f.box.min.y, f.box.max.y, f.scale, 0.28); }); });
 
@@ -136,7 +153,7 @@ async function init() {
   }
 
   // ---- water ----
-  const water = new Water(renderer, SUN_DIR);
+  const water = new Water(renderer, SUN_DIR, renderProfile);
 
   // ---- wildlife ----
   const birds = new Birds(terrain, new THREE.Vector3(startX, 0, startZ - 120));
@@ -154,7 +171,7 @@ async function init() {
   fxScene.add(plume.mesh, spray.points);
 
   // ---- post ----
-  const pipeline = new Pipeline(renderer, camera);
+  const pipeline = new Pipeline(renderer, camera, renderProfile);
   pipeline.grade.material.uniforms.sunDir.value.copy(SUN_DIR);
   pipeline.reflTexture = water.reflRT.texture;
   water.uniforms.tRefr.value = pipeline.sceneRT.texture;
@@ -174,6 +191,7 @@ async function init() {
   const world = new World(terrain, scene, (x, z, t) => water.waveHeight(x, z, t)); world.phys = phys; world.wind = wind;
   veg.blocked = (x, z) => world.blockedAt(x, z);
   const game = new Game({ phys, T: terrain, scene, audio, tricks, manatees, gators, skiff, boat: boat.group, dockTie, startX, startZ, world });
+  game.paused = true; // loading and the title screen are presentation states, not unobserved play time
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
   const life = new Life({ terrain, scene, water, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
@@ -194,7 +212,7 @@ async function init() {
   life.traffic.reputation = reputation; life.traffic.law = law;
   const encounters = new EncounterDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, plume, spray, law, reputation });
   game.encounters = encounters;
-  law.onAttention = () => { if (!game.state) encounters.next = Math.min(encounters.next, 12); };
+  law.onAttention = attention => { encounters.requestPatrol(attention); };
   const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   environment.onLightning = strike => hazards.lightning(strike);
@@ -207,6 +225,9 @@ async function init() {
   game.incidents = incidents; game.story = story; radio.incidents = incidents; radio.story = story;
   const aftermath = new StormRecovery({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, incidents, encounters, story, radio, reputation, condition });
   game.aftermath = aftermath; radio.aftermath = aftermath;
+  const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
+  game.discoveries = discoveries;
+  const navigationAids = new NavigationAids({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition });
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
     const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
     const addMaterial = material => {
@@ -244,13 +265,20 @@ async function init() {
       anchoredAnglers: { live: life.traffic.liveAnglers.size, cachedCells: life.traffic.anglerCells.size, cacheEvictions: life.traffic.anglerCacheEvictions },
       shoreFolk: { live: life.folk.live.size, cachedCells: life.folk.cells.size, cacheEvictions: life.folk.cacheEvictions, disposedLineGeometries: life.folk.disposedLineGeometries },
       fishFallbackReleased: life.fish.fallbackReleased,
+      fieldDiscoveries: discoveries.resourceStats(),
+      navigationAids: navigationAids.resourceStats(),
     },
     chart: worldMap.memoryStats(),
+    models: modelLoadingStats(),
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, adaptive: adaptive.stats(), ...pipeline.memoryStats() }) };
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+    profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
+    adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
+  }) };
 
   // ---- input ----
   const keys = {};
+  let started = false;
   let encounterStressRunning = false;
   window.addEventListener('keydown', e => {
     keys[e.code] = true;
@@ -259,7 +287,7 @@ async function init() {
     }
     if (import.meta.env.DEV && e.code === 'F7' && !e.repeat) {
       e.preventDefault(); if (encounterStressRunning) return; encounterStressRunning = true;
-      const types = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats();
+      const types = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'race', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats();
       let iteration = 0, started = 0;
       const rotate = () => {
         const end = Math.min(6000, iteration + 240);
@@ -276,7 +304,7 @@ async function init() {
       document.documentElement.dataset.emeraldResource = JSON.stringify(snapshot);
       console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: snapshot.graph, terrain: snapshot.terrain, minimap: snapshot.minimap, wildlife: snapshot.wildlife, chart: snapshot.chart, fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
     }
-    if (e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
+    if (started && e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
   });
   window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
   window.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -290,27 +318,79 @@ async function init() {
     lastX = e.clientX; lastY = e.clientY;
   });
   window.addEventListener('wheel', e => { camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
-  // One path applies both a window resize and an adaptive rung change: pixel ratio carries the governor's
-  // render scale, and every dependent target (post chain, reflection, soft-particle depth) resizes with it.
   let resizeTimer = 0;
-  const adaptive = new AdaptiveQuality(() => resize());
   const resize = () => {
-    renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio) * adaptive.renderScale);
+    renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio));
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
     const s = new THREE.Vector2(); renderer.getDrawingBufferSize(s);
-    pipeline.resize(s.x, s.y, adaptive.msaaCap); water.resize(s.x, s.y); plume.mat.uniforms.resolution.value.set(s.x, s.y);
-    if (sun.shadow.mapSize.x !== adaptive.shadowMapSize) {
-      sun.shadow.mapSize.setScalar(adaptive.shadowMapSize);
-      // three only rebuilds a shadow map it finds missing; the next shadow pass recreates it at the new size
-      if (sun.shadow.map) { if (sun.shadow.map.depthTexture) sun.shadow.map.depthTexture.dispose(); sun.shadow.map.dispose(); sun.shadow.map = null; }
+    pipeline.resize(s.x, s.y); water.resize(s.x, s.y); plume.mat.uniforms.resolution.value.set(s.x, s.y);
+    qualityController.reset();
+  };
+  let renderFrameNo = 0;
+  const applyRenderQuality = profile => {
+    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile);
+    if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
+      sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
+      if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+      water.uniforms.shadowOn.value = 0;
     }
+    renderFrameNo = 0; resize();
   };
   window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = window.setTimeout(resize, 120); });
-  window.__dbg.adaptive = adaptive; // __dbg.adaptive.change(n) forces a rung; renderQuality() reports the governor's state
   const startEl = document.getElementById('start');
-  let started = false;
-  startEl.addEventListener('click', () => { audio.start(); started = true; startEl.classList.add('hidden'); });
+  const titlePrimary = document.getElementById('titlePrimary');
+  const titleNew = document.getElementById('titleNew');
+  const cashLabel = value => '$' + Math.round(value).toLocaleString('en-US');
+  const renderTitle = () => {
+    const progress = game.hasProgress(), region = regionAt(phys.pos.x, phys.pos.y), resetArmed = game.newGameArmed();
+    titlePrimary.querySelector('.action-name').textContent = progress ? 'Continue' : 'Ride out';
+    document.getElementById('titleContinueDetail').textContent = game.state
+      ? `${game.state.m.title} paused · ${region.name}`
+      : `${region.name} · day ${environment.day}, ${environment.clockLabel()} · ${cashLabel(game.save.cash)}`;
+    document.getElementById('titleJobsDetail').textContent = `${game.save.done.length} / ${game.missions.length} jobs finished · ${game.story?.menuLine() || 'Running Dark not started'}`;
+    document.getElementById('titleGraphicsDetail').textContent = qualityPreferenceLabel(qualityPreference, renderProfile.id);
+    document.getElementById('titleWorldDetail').textContent = `Day ${environment.day} · ${environment.weatherLabel()} · ${environment.tideLabel()}`;
+    titleNew.hidden = !progress;
+    titleNew.classList.toggle('danger', resetArmed);
+    titleNew.querySelector('.action-name').textContent = resetArmed ? 'Confirm new game' : 'New game';
+    titleNew.querySelector('.action-detail').textContent = resetArmed ? 'Select again now to clear jobs, cash, records and world history' : 'Clear this hull and return to the tower dock';
+  };
+  const cycleRenderQuality = () => {
+    qualityPreference = writeQualityPreference(nextQualityPreference(qualityPreference));
+    const profile = qualityController.configure(qualityControllerConfig(qualityPreference, hardwareQualityLevel));
+    applyRenderQuality(profile); renderTitle();
+    if (started && !game.menuOpen) game.toast('Graphics changed', qualityPreferenceLabel(qualityPreference, profile.id), 1.8);
+    return profile;
+  };
+  const beginGame = (jobs = false) => {
+    audio.start(); started = true; game.playing = true; game.paused = false;
+    startEl.classList.add('hidden'); startEl.setAttribute('aria-hidden', 'true');
+    window.setTimeout(() => releaseDeferredModels(), startup.modelReleaseDelayMs);
+    if (jobs) game.openMenu('jobs');
+  };
+  const showTitle = (persist = true) => {
+    game.closeMap(); game.closeMenu(); game.closeResult();
+    started = false; game.playing = false; game.paused = true;
+    for (const key in keys) keys[key] = false;
+    if (persist) game.persist();
+    renderTitle(); startEl.classList.remove('hidden'); startEl.setAttribute('aria-hidden', 'false');
+    requestAnimationFrame(() => titlePrimary.focus({ preventScroll: true }));
+  };
+  game.getQualityLabel = () => qualityPreferenceLabel(qualityPreference, renderProfile.id);
+  game.getWorldLabel = () => `Day ${environment.day} · ${environment.clockLabel()} · ${environment.weatherLabel()} · ${environment.tideLabel()}`;
+  game.getWorldShortLabel = () => regionAt(phys.pos.x, phys.pos.y).name;
+  game.onCycleQuality = cycleRenderQuality;
+  game.onReturnToTitle = () => showTitle(true);
+  game.onResetArmed = renderTitle;
+  startEl.addEventListener('click', event => {
+    const button = event.target.closest('[data-title-action]'); if (!button) return;
+    const action = button.dataset.titleAction;
+    if (action === 'continue') beginGame(false);
+    else if (action === 'jobs') beginGame(true);
+    else if (action === 'graphics') cycleRenderQuality();
+    else if (action === 'new') game.requestNewGame();
+  });
 
   // ---- camera state ----
   const camPos = new THREE.Vector3(startX, 4, startZ + 10);
@@ -379,15 +459,19 @@ async function init() {
 
   function frame() {
     clock.update();
-    const frameMs = clock.getDelta() * 1000;
-    if (started) adaptive.frame(frameMs); // unclamped: the governor filters its own outliers
-    const dtRaw = Math.min(frameMs / 1000, 0.05);
+    const frameDelta = clock.getDelta();
+    const dtRaw = Math.min(frameDelta, 0.05);
+    const qualityChange = qualityController.observe(frameDelta, started && !game.paused && !document.hidden);
+    if (qualityChange) {
+      applyRenderQuality(qualityChange.profile);
+      game.toast('Rendering adjusted', `${qualityChange.profile.label} water, lighting and post effects`, 2.8);
+    }
     if (slowT > 0) slowT -= dtRaw;
     const dt = dtRaw * (slowT > 0 ? slowK : 1);
     time += dt;
     // input
     input.throttle = 0; input.steer = 0; input.pitch = 0;
-    const locked = game.paused || game.inputLock;
+    const locked = !started || game.paused || game.inputLock;
     if (!locked) {
       if (keys.KeyW || keys.ArrowUp) input.throttle = 1;
       if (keys.KeyS || keys.ArrowDown) input.throttle = -0.35;
@@ -396,8 +480,8 @@ async function init() {
       input.pitch = ((keys.KeyS || keys.ArrowDown) ? 1 : 0) - ((keys.ShiftLeft || keys.ShiftRight) ? 1 : 0); // in the air: S leans back (nose up), Shift leans forward
     }
 
-    if (!game.paused) {
-      if (started) currents.flowAt(phys.pos.x, phys.pos.y, currentFlow); else currentFlow.set(0, 0);
+    if (started && !game.paused) {
+      currents.flowAt(phys.pos.x, phys.pos.y, currentFlow);
       phys.update(dt, input, playerWater, time, currentFlow);
     }
     else { phys.impact = 0; phys.hit = 0; phys.landedFrame = false; }
@@ -474,6 +558,8 @@ async function init() {
     aftermath.update(dtRaw, time, started && !game.paused);
     ecology.update(dtRaw, time, started && !game.paused);
     incidents.update(dtRaw, time, started && !game.paused && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
+    discoveries.update(dtRaw, time, started && !game.paused);
+    navigationAids.update(dtRaw, time, started && !game.paused);
     radio.update(dtRaw, started && !game.paused);
 
     // world updates
@@ -584,57 +670,64 @@ async function init() {
     spray.update(dt);
     plume.update(dt, time);
 
-    audio.update(phys.rpm, Math.max(0, phys.throttle), phys.speed, time);
+    audio.update(started ? phys.rpm : 0, started ? Math.max(0, phys.throttle) : 0, started ? phys.speed : 0, time);
     if ((frameNo & 1) === 0) minimap.update(phys, yaw, game.mapMarkers); // a radar reads fine at 30 Hz; the full-canvas redraw is real CPU on old machines
     game.projectMarker(camera, window.innerWidth, window.innerHeight);
 
     // render
-    water.renderReflection(scene, camera);
+    if (renderFrameNo % renderProfile.reflectionInterval === 0) water.renderReflection(scene, camera);
     water.setShadow(sun);
     const mode = window.__dbg.mode;
     if (mode === 'raw') { renderer.setRenderTarget(null); renderer.render(scene, camera); }
     else pipeline.render(scene, camera, mode === 'nowater' ? [fxScene] : [water.scene, fxScene], mode);
+    renderFrameNo++;
   }
   renderer.setAnimationLoop(frame);
-  // warm the shader cache: everything that can appear later (camps, traps, cargo, the poachers' boat) gets rendered once
-  // through every pass now, behind the loading screen, instead of compiling mid-ride
-  const warm = new THREE.Group();
-  { const nc = world.campAt(1, 1) || world.campsNear(0, 0, 5000)[0]; if (nc) { const g = world.buildCamp(nc); g.position.set(startX - nc.x, 0, startZ - 20 - nc.z); warm.add(g); } }
-  for (const [i, mk] of [crabFloat(), fuelDrum(), wreck(), shack(), kayak()].entries()) { mk.position.set(startX - 6 + i * 3, 0.2, startZ - 8); warm.add(mk); }
-  { const spill = encounters.spills[0], sheen = spill.mesh.clone(); spill.uniforms.uAlpha.value = 0.35; sheen.visible = true; sheen.position.set(startX + 10, 0.15, startZ - 12); sheen.scale.set(5, 1, 3.4); warm.add(sheen); }
-  { const funnel = hazards.spout.group.clone(true); funnel.traverse(o => { o.visible = true; }); warm.add(funnel); for (const d of hazards.debris.slice(0, 3)) { const m = d.mesh.clone(true); m.visible = true; warm.add(m); } }
-  { const rr = mulberry32(3); const hf = terrain.hf; let i = 0;
-    for (const kind of ['house', 'ramp', 'boathouse', 'blind']) { // one of each structure kind, anywhere the placer accepts, moved in front of the dock
-      let st = null; for (let k = 0; k < 40 && !st; k++) { const cx = (Math.floor(rr() * 20) - 10) * 800, cz = (Math.floor(rr() * 20) - 10) * 800; const r2 = mulberry32(k * 31 + i); st = pickSite(hf, 'warm', cx, cz, () => { const v = r2(); return v; }, () => 5000); if (st && st.kind !== kind) st = null; }
-      if (st) { const g = buildSite(st, terrain); g.position.set(startX - st.x + 20 + i * 14, 0, startZ - 40 - st.z); warm.add(g); st.colliders = []; } i++;
+  // Cinematic machines absorb the full shader/model warm-up behind the loading card. Lower profiles render the real
+  // dock scene only and open as soon as local terrain is visible; distant terrain and optional models keep streaming.
+  let warm = null;
+  if (startup.warmShaders) {
+    warm = new THREE.Group();
+    { const nc = world.campAt(1, 1) || world.campsNear(0, 0, 5000)[0]; if (nc) { const g = world.buildCamp(nc); g.position.set(startX - nc.x, 0, startZ - 20 - nc.z); warm.add(g); } }
+    for (const [i, mk] of [crabFloat(), fuelDrum(), wreck(), shack(), kayak()].entries()) { mk.position.set(startX - 6 + i * 3, 0.2, startZ - 8); warm.add(mk); }
+    { const spill = encounters.spills[0], sheen = spill.mesh.clone(); spill.uniforms.uAlpha.value = 0.35; sheen.visible = true; sheen.position.set(startX + 10, 0.15, startZ - 12); sheen.scale.set(5, 1, 3.4); warm.add(sheen); }
+    { const funnel = hazards.spout.group.clone(true); funnel.traverse(o => { o.visible = true; }); warm.add(funnel); for (const d of hazards.debris.slice(0, 3)) { const m = d.mesh.clone(true); m.visible = true; warm.add(m); } }
+    { const rr = mulberry32(3); const hf = terrain.hf; let i = 0;
+      for (const kind of ['house', 'ramp', 'boathouse', 'blind']) {
+        let st = null; for (let k = 0; k < 40 && !st; k++) { const cx = (Math.floor(rr() * 20) - 10) * 800, cz = (Math.floor(rr() * 20) - 10) * 800; const r2 = mulberry32(k * 31 + i); st = pickSite(hf, 'warm', cx, cz, () => r2(), () => 5000); if (st && st.kind !== kind) st = null; }
+        if (st) { const g = buildSite(st, terrain); g.position.set(startX - st.x + 20 + i * 14, 0, startZ - 40 - st.z); warm.add(g); st.colliders = []; } i++;
+      }
+      const warmDebris = [];
+      for (let j = -4; j <= 4 && warmDebris.length < 4; j++) for (let i = -4; i <= 4 && warmDebris.length < 4; i++) {
+        for (const d of life.debris.cellAt(i, j)) { warmDebris.push(d); if (warmDebris.length === 4) break; }
+      }
+      for (const d of warmDebris) { const m = life.debris.build(d); m.position.set(startX - 10 + Math.random() * 20, 0, startZ - 25); warm.add(m); }
+      for (const b of life.traffic.boats) {
+        b.mesh.visible = true; b.mesh.position.set(startX + 8, 0, startZ - 10);
+        if (b.searchRig) { b.searchRig.visible = true; b.searchLight.intensity = 0.01; b.searchBeam.visible = true; b.searchBeam.position.set(startX + 8, 0.05, startZ - 10); b.searchBeam.scale.set(b.searchWidth * 0.004, b.searchLength * 0.004, 1); }
+      }
+      for (let k = 0; k < 6; k++) life.fish.launch(startX + k, startZ - 6, 3, 0, 0, 1, 0, true);
+      { const pr = mulberry32(11); let k = 0; for (const pose of ['stand', 'sit', 'sitEdge', 'crouch']) { const pp = person(pr, { pose, rod: k % 2 === 0, gun: k === 3 }); pp.position.set(startX - 8 + k * 2, 0.4, startZ - 6); warm.add(pp); k++; } const cn = canoe(pr); cn.position.set(startX + 6, 0, startZ - 8); warm.add(cn); }
+      for (const [k, name] of ['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat'].entries()) { const m = spawn(name); m.position.set(startX - 10 + k * 5, 0.3, startZ - 16); warm.add(m); }
     }
-    const warmDebris = [];
-    for (let j = -4; j <= 4 && warmDebris.length < 4; j++) for (let i = -4; i <= 4 && warmDebris.length < 4; i++) {
-      for (const d of life.debris.cellAt(i, j)) { warmDebris.push(d); if (warmDebris.length === 4) break; }
-    }
-    for (const d of warmDebris) { const m = life.debris.build(d); m.position.set(startX - 10 + Math.random() * 20, 0, startZ - 25); warm.add(m); }
-    for (const b of life.traffic.boats) {
-      b.mesh.visible = true; b.mesh.position.set(startX + 8, 0, startZ - 10);
-      if (b.searchRig) { b.searchRig.visible = true; b.searchLight.intensity = 0.01; b.searchBeam.visible = true; b.searchBeam.position.set(startX + 8, 0.05, startZ - 10); b.searchBeam.scale.set(b.searchWidth * 0.004, b.searchLength * 0.004, 1); }
-    }
-    for (let k = 0; k < 6; k++) life.fish.launch(startX + k, startZ - 6, 3, 0, 0, 1, 0, true);
-    // the people and the Meshy models: a figure in each pose, a canoe, every hull, the gator, a turtle
-    { const pr = mulberry32(11); let k = 0; for (const pose of ['stand', 'sit', 'sitEdge', 'crouch']) { const pp = person(pr, { pose, rod: k % 2 === 0, gun: k === 3 }); pp.position.set(startX - 8 + k * 2, 0.4, startZ - 6); warm.add(pp); k++; } const cn = canoe(pr); cn.position.set(startX + 6, 0, startZ - 8); warm.add(cn); }
-    for (const [k, name] of ['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat'].entries()) { const m = spawn(name); m.position.set(startX - 10 + k * 5, 0.3, startZ - 16); warm.add(m); }
+    warm.scale.setScalar(0.004); warm.position.set(startX, 0.3, startZ - 6);
+    scene.add(warm); skiff.mesh.visible = true; skiff.mesh.position.set(startX, 0, startZ - 12);
   }
-  warm.scale.setScalar(0.004); warm.position.set(startX, 0.3, startZ - 6); // still rendered (so every program compiles) but a speck, not a lineup of dummies behind the start screen
-  scene.add(warm); skiff.mesh.visible = true; skiff.mesh.position.set(startX, 0, startZ - 12);
-  // hold the start screen until the world around the dock has streamed in, so the first thing seen is a finished bayou.
-  // The model preload is capped: on a slow connection the GLBs keep downloading behind the title card and pop in
-  // when they arrive (spawn() groups fill themselves), instead of holding the loading screen hostage for minutes
   const t0 = performance.now();
-  const capped = (promise, ms) => Promise.race([promise, new Promise(r => setTimeout(r, ms))]);
-  await Promise.all([capped(preload(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a']), 15000), new Promise(r => { const poll = () => { if ((terrain.settled() && performance.now() - t0 > 800) || performance.now() - t0 > 20000) r(); else setTimeout(poll, 100); }; poll(); })]);
-  await new Promise(r => setTimeout(r, 250)); // one more frame with the models in, so their programs are compiled
-  scene.remove(warm); encounters.spills[0].uniforms.uAlpha.value = 0; window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false; for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
+  const terrainReady = new Promise(r => { const poll = () => {
+    const elapsed = performance.now() - t0;
+    const ready = startupTerrainReady(startup.terrainReadiness, { settled: terrain.settled(), localVisible: terrain.visibleAt(startX, startZ) });
+    if ((ready && elapsed >= startup.minWaitMs) || elapsed >= startup.maxWaitMs) r(); else setTimeout(poll, 100);
+  }; poll(); });
+  await Promise.all([startup.blockingModels.length ? preload(startup.blockingModels) : Promise.resolve(), terrainReady]);
+  if (startup.compileDelayMs) await new Promise(r => setTimeout(r, startup.compileDelayMs));
+  if (warm) {
+    scene.remove(warm); encounters.spills[0].uniforms.uAlpha.value = 0; window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false;
+    for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
+  }
   if (import.meta.env.DEV) document.documentElement.dataset.emeraldResource = JSON.stringify(debugResourceSnapshot());
   document.getElementById('loading').remove();
-  startEl.classList.remove('hidden');
+  showTitle(false);
 }
 
 init().catch(e => { console.error(e); document.getElementById('loading').textContent = 'Error: ' + e.message; });

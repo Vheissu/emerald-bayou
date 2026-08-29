@@ -206,7 +206,7 @@ export class Environment {
 
   onKey(e) {
     if (e.repeat) return;
-    if (e.code === 'KeyL' && !this.game.menuOpen && !this.game.mapOpen) {
+    if (e.code === 'KeyL' && this.game.playing && !this.game.paused && !this.game.menuOpen && !this.game.mapOpen) {
       this.spotOn = !this.spotOn; this.game.toast(`Spotlight ${this.spotOn ? 'on' : 'off'}`, this.spotOn ? 'L sweeps the channel ahead' : '', 1.3);
     }
     // Test hooks are keys as well as methods on window.__dbg.environment. They make every extreme state inspectable.
@@ -222,6 +222,15 @@ export class Environment {
     const astronomical = (Math.sin(tidePhase) * 0.34 + Math.sin(tidePhase * 0.5 + 0.8) * 0.08) * this.tideRange;
     this.waterLevel = astronomical + (this.values.surge || 0);
     this.tideRate = (Math.cos(tidePhase) * 0.34 + Math.cos(tidePhase * 0.5 + 0.8) * 0.04) * this.tideRange;
+  }
+  clockLabel() {
+    const h = Math.floor(this.hour), m = Math.floor((this.hour - h) * 60), ap = h >= 12 ? 'PM' : 'AM', hh = h % 12 || 12;
+    return `${hh}:${String(m).padStart(2, '0')} ${ap}`;
+  }
+  weatherLabel() { return WEATHER[this.key].label; }
+  tideLabel() {
+    const tideFt = this.waterLevel * FT;
+    return `${this.tideRate >= 0 ? 'Rising' : 'Falling'} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
   }
   lunarSnapshot() { return { age: this.lunarAge, phase: this.lunarPhase, name: lunarPhaseName(this.lunarPhase), illumination: this.moonIllumination, tideRange: this.tideRange, altitude: this.moonDir?.y || 0 }; }
   persistState(write = true) {
@@ -388,7 +397,9 @@ export class Environment {
     this.hemi.color.set(daylight > 0.1 ? 0x9fc3e8 : 0x203659); this.hemi.groundColor.set(daylight > 0.1 ? 0x3f4a2a : 0x07100c);
     this.scene.environmentIntensity = lerp(0.025, 0.42, daylight) * lerp(1, 0.42, V.storm);
 
-    const shadowSnap = 240 / this.sun.shadow.mapSize.x; // snap the follow target to shadow texels (map size can change with render quality)
+    // Snap to the active shadow texel. Adaptive quality can resize the map, and using the old 4096-grid on a 1K map
+    // makes the shadow projection crawl even though the lower-resolution map itself is stable.
+    const shadowSnap = 240 / Math.max(1, this.sun.shadow.mapSize.x);
     this.sun.target.position.set(Math.round(this.phys.pos.x / shadowSnap) * shadowSnap, 0, Math.round(this.phys.pos.y / shadowSnap) * shadowSnap);
     this.sun.position.copy(this.lightDir).multiplyScalar(420).add(this.sun.target.position); this.sun.target.updateMatrixWorld();
     this.sky.uniforms.sunDir.value.copy(this.sunDir); this.sky.uniforms.moonDir.value.copy(this.moonDir);

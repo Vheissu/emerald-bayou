@@ -2,7 +2,7 @@
 
 # Emerald Bayou
 
-An airboat game set in the south Florida backcountry. Runs in a browser, built on three.js and Vite, with no game engine underneath it. You get a 16 mile square of streamed swamp, thirteen jobs, a radio that talks back, and weather that will ruin your afternoon.
+An airboat game set in the south Florida backcountry. Runs in a browser, built on three.js and Vite, with no game engine underneath it. You get a 16 mile square of streamed swamp, sixteen jobs, a radio that talks back, and weather that will ruin your afternoon.
 
 [Play Emerald Bayou](https://vheissu.github.io/emerald-bayou/)
 
@@ -28,7 +28,7 @@ npm install
 npm run dev
 ```
 
-Then open http://127.0.0.1:5173. You want a machine with a real GPU. It targets 60 fps at dpr 2 and the cost is almost entirely fill rate, so if it drags, shrink the window before you touch anything else.
+Then open http://127.0.0.1:5173. Graphics starts on Auto, which caps known older or software GPUs conservatively and steps down after sustained frame pressure or repeated long stalls. Fallback, Performance, Balanced and Cinematic can also be locked from the title or pause menu. Lower profiles keep the full map and simulation while reducing render-target, reflection, shadow and post-processing cost.
 
 `npm run build` produces a static `dist/` you can drop on any host.
 
@@ -53,7 +53,7 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 | `A` / `D` | rudder, and spin while airborne |
 | `S` / `Shift` in the air | lean back, lean forward |
 | drag | look around |
-| `E` | interact (job posts, docks, traps) |
+| `E` | interact (job posts, docks, traps, field notes, aid reports) |
 | `M` | jobs board |
 | `Tab` | chart |
 | `L` | spotlight |
@@ -63,7 +63,7 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 
 <img src="docs/screenshots/06-jobs.jpg" alt="The jobs board" width="100%">
 
-Thirteen jobs unlock in sequence, from a shakedown run through a manatee count, a poacher chase against an AI skiff, a night rescue and a creek gauntlet. On top of that there are daily bounties, per-run records (top speed, longest air, biggest spin, longest drift), a reputation system split three ways between the locals, the FWC and the backchannel, and a story that comes in over channel 68.
+Sixteen jobs unlock in sequence, from a shakedown run through a manatee count, a poacher chase against an AI skiff, a night rescue and a creek gauntlet. The last three add split-gate racing, a ramp circuit and a pickup-route-dropoff relay where hard landings can throw the case back into the water. On top of that there are daily bounties, per-run records, three-way reputation between the locals, FWC and the backchannel, and a story that comes in over channel 68.
 
 Between jobs, you can come across dead motors, FWC stops, watched packages, storm wreckage, drifting fuel drums and illegal monofilament sets. A hard strike can split a drum and leave a sheen moving with the current. It can also stop one of the resident working boats: kill the prop and hold alongside while the crew checks everyone aboard, or leave and hear your hull reported over the radio.
 
@@ -71,13 +71,19 @@ The seven resident crews keep their own schedules, jobs and operator records. Th
 
 On clear, low-wind nights, dense fog can settle over the backcountry before dawn and burn off after sunrise. Visibility drops to a few hundred metres. Powerboats slow down, show their navigation lights and sound a prolonged blast while making way; every crew keeps its own signal clock.
 
+The marked channels now match the radio traffic. Red aids carry even numbers, green aids carry odd numbers, and each light keeps its own flash characteristic while the float moves with chop and current. Hail, tropical weather, hurricanes and vessel strikes can leave a marker dim, dark, off station or down. Idle alongside a bad aid to report the exact fix; it stays on the working chart until FWC maintenance clears it.
+
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
 
 The Moon advances through a 29.531-day cycle. Its rise time, crescent or quarter terminator, moonlight and shadows all come from the same phase. New and full moons retain the strongest spring range; quarter moons soften the water and currents into a neap range. Clouds now hide the stars and Moon instead of letting either draw over the weather.
 
-The renderer budgets its internal drawing buffer toward three million pixels instead of blindly doubling every Retina dimension. Dense displays use two hardware samples plus the final FXAA pass; smaller buffers keep four samples. The map, streaming distance, simulation and asset detail stay unchanged while the largest HDR and depth attachments remain bounded.
+The renderer budgets its internal drawing buffer instead of blindly doubling every Retina dimension. Performance profiles release the full-size optional post targets, reduce reflection and shadow work, and defer optional GLB decoding until the dock scene is playable. The map, streaming distance and simulation stay unchanged while the largest HDR and depth attachments remain bounded.
+
+Navigation aids are streamed from seeded 360 m cells and capped at 36 around the boat. Six instanced meshes draw the whole local network, including the flashing lanterns, with no per-marker light objects or model downloads. Collision objects only enter physics inside a roughly 100 m working set, and the persistent fault ledger is capped at twelve records.
 
 Wildlife lives its own life. Alligators bask on banks and slide in when you get close, and the bull will charge an idle hull inside 16 m. Mullet jump near the boat, bait boils off the bow in the shallows, ibis and pelicans run lines low over the water, and vultures circle high. When you get more than 700 m away it all quietly relocates ahead of you.
+
+Rare field signs depend on the place and the water rather than a mission marker. Roseate spoonbills settle in Rookery Lakes around first and last light, and a real player wake reaching the bank will flush them. A tagged smalltooth sawfish moves through Mangrove Reach on a rising tide; its receiver ping closes up as the boat approaches, but the fix only resolves while the hull stays at idle distance. Falling water in Cypress Reach can uncover a logging skiff long enough to copy its builder plate. Successful observations stay in the boat log and on the chart.
 
 On some calm nights, a plankton bloom reaches Mangrove Reach. The water stays black until something moves through it: hull wakes, fish, paddles and splashes leave blue fire behind them. The bloom runs through the existing wake and particle buffers, so it adds no extra scene assets.
 
@@ -107,6 +113,10 @@ src/
   water.js         reflection, refraction, murk, tide
   airboat.js       hull physics, air control, landing quality
   game.js          jobs, bounties, records, save
+  discoveries.js   tide, time and region-driven field observations
+  navigationaids.js seeded channel markers, light failures and reports
+  encounters.js    rescues, patrols, races, contraband and wildlife calls
+  law.js           wanted attention and pursuit state
   story.js         the channel 68 arc
   folk.js          jointed people and the pose target animation
   life.js          fish, debris, NPC traffic, bank anglers
@@ -127,6 +137,8 @@ __dbg.environment.minutesPerSecond = 0    // freeze the clock
 __dbg.environment.setHour(17.4)           // pick the light
 __dbg.environment.lunarSnapshot()         // phase, illumination, tide range, altitude
 __dbg.ecology.setBioluminescence(1, true) // force the disturbed-water glow
+__dbg.discoveries.start('roseate-roost', true, true) // force a nearby field sign
+__dbg.navigationAids.resourceStats()     // active aids, draw calls, faults and reports
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera
 __dbg.terrain.hf.computeBase(x, z)        // { h, s, lake, prairie, hammock }
 ```

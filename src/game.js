@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { Beacon, crabFloat, kayak, fuelDrum, wreck, shack } from './markers.js';
+import { Beacon, crabFloat, kayak, fuelDrum, raceCase, wreck, shack } from './markers.js';
 import { mulberry32 } from './noise.js';
 import { WORLD_HALF } from './heightfield.js';
+import { cargoEjectionReason, rampPoint, splitRemaining } from './raceformats.js';
 
 const SAVE_KEY = 'emeraldBayou.save.v2';
 const fmtT = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60), r = s - m * 60; return `${m}:${r < 10 ? '0' : ''}${r.toFixed(1)}`; };
@@ -9,6 +10,8 @@ const fmtCash = (c) => '$' + Math.round(c).toLocaleString('en-US');
 const MPH = 2.23694;
 const FT = 3.28084, MI = 1 / 1609.344;
 const HULL_SAMPLES = [-2, 0, 1.6];
+const MENU_TABS = ['jobs', 'world', 'records', 'system'];
+const esc = value => String(value ?? '').replace(/[&<>"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
 // Florida measures in feet and miles: under about a fifth of a mile in feet, then miles
 export const fmtDist = (m) => m < 300 ? `${Math.round(m * FT / 10) * 10} ft` : m < 16090 ? `${(m * MI).toFixed(m < 3219 ? 2 : 1)} mi` : `${Math.round(m * MI)} mi`;
 // The HUD is rebuilt every frame but its markup rarely changes; assigning identical innerHTML still re-parses
@@ -24,8 +27,8 @@ export class Game {
     this.positionSaveT = 8;
     this.positionRestored = this.restoreBoatPosition();
     this.state = null; // active mission runtime
-    this.paused = false; this.inputLock = false; this.menuOpen = false; this.resultOpen = false;
-    this.sel = 0;
+    this.paused = false; this.playing = false; this.inputLock = false; this.menuOpen = false; this.resultOpen = false;
+    this.sel = 0; this.systemSel = 0; this.menuTab = 'jobs'; this.resetArmedUntil = 0; this.resetTimer = 0; this.persistenceDisabled = false;
     this.beacon = new Beacon(0xf07a2e, 5); this.beacon2 = new Beacon(0xf3ede0, 4.5); this.beacon2.uniforms.alpha.value = 0.35;
     this.scene.add(this.beacon.group, this.beacon2.group);
     this.el = {
@@ -86,6 +89,34 @@ export class Game {
     this.phys.reset(x, z, Math.atan2(Math.sin(heading), Math.cos(heading)));
     return true;
   }
+  hasProgress() {
+    const s = this.save, rec = s.rec || {}, story = s.story || {}, incidents = s.incidents || {};
+    const travelled = s.boatPosition && Math.hypot(Number(s.boatPosition.x) - this.startX, Number(s.boatPosition.z) - this.startZ) > 30;
+    return Boolean(
+      this.state || (s.done || []).length || Number(s.cash) || (s.camps || []).length || (s.traps || []).length || Number(s.runs)
+      || Object.values(rec).some(value => Number(value) > 0)
+      || Object.values(s.encounters || {}).some(value => Number(value) > 0)
+      || Number(incidents.heard) || (s.reputation?.deeds || []).length
+      || (s.discoveries?.found || []).length
+      || (s.navigationAids?.reports || []).length
+      || (story.stage && story.stage !== 'dormant') || travelled
+    );
+  }
+  newGameArmed() { return Date.now() < this.resetArmedUntil; }
+  requestNewGame() {
+    if (this.newGameArmed()) {
+      this.persistenceDisabled = true;
+      try { localStorage.removeItem(SAVE_KEY); localStorage.removeItem('emeraldBayou.save.v1'); } catch (error) { /* an unavailable store already has nothing durable to clear */ }
+      location.reload(); return true;
+    }
+    this.resetArmedUntil = Date.now() + 6000;
+    clearTimeout(this.resetTimer);
+    this.resetTimer = setTimeout(() => {
+      if (this.newGameArmed()) return;
+      this.resetArmedUntil = 0; if (this.menuOpen) this.renderMenu(); this.onResetArmed?.();
+    }, 6100);
+    if (this.menuOpen) this.renderMenu(); this.onResetArmed?.(); return false;
+  }
   captureBoatPosition() {
     const p = this.phys;
     if (!p || !this.safeBoatPosition(p.pos.x, p.pos.y, true)) return false;
@@ -97,7 +128,7 @@ export class Game {
     };
     return true;
   }
-  persist() { this.captureBoatPosition(); try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.save)); } catch (e) { /* ignore */ } }
+  persist() { if (this.persistenceDisabled) return; this.captureBoatPosition(); try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.save)); } catch (e) { /* ignore */ } }
   addCash(n) { this.save.cash += n; this.persist(); }
   unlocked(i) { return i === 0 || this.save.done.includes(this.missions[i - 1].id) || this.save.done.includes(this.missions[i].id) || this.debugUnlock; }
   unlockAll() { this.debugUnlock = true; this.renderMenu(); }
@@ -133,7 +164,7 @@ export class Game {
 
   // ---- job posts: every mission has a place on the water where it starts; a ring marks it, E takes it ----
   buildJobs() {
-    const ICON = { shakedown: ['S', '#f3ede0', 0xf3ede0], manatee: ['M', '#7be08a', 0x7be08a], sprint: ['flag', '#f07a2e', 0xf07a2e], traps: ['T', '#f07a2e', 0xf07a2e], chase: ['P', '#e0554a', 0xe0554a], stunt: ['star', '#e5c063', 0xe5c063], cargo: ['C', '#f3ede0', 0xf3ede0], rescue: ['R', '#7be08a', 0x7be08a], gator: ['G', '#7be08a', 0x7be08a], gauntlet: ['flag', '#f07a2e', 0xf07a2e], sonar: ['W', '#8fb8d8', 0x8fb8d8], bigair: ['star', '#e5c063', 0xe5c063], tour: ['flag', '#f07a2e', 0xf07a2e] };
+    const ICON = { shakedown: ['S', '#f3ede0', 0xf3ede0], manatee: ['M', '#7be08a', 0x7be08a], sprint: ['flag', '#f07a2e', 0xf07a2e], traps: ['T', '#f07a2e', 0xf07a2e], chase: ['P', '#e0554a', 0xe0554a], stunt: ['star', '#e5c063', 0xe5c063], cargo: ['C', '#f3ede0', 0xf3ede0], rescue: ['R', '#7be08a', 0x7be08a], gator: ['G', '#7be08a', 0x7be08a], gauntlet: ['flag', '#f07a2e', 0xf07a2e], sonar: ['W', '#8fb8d8', 0x8fb8d8], bigair: ['star', '#e5c063', 0xe5c063], tour: ['flag', '#f07a2e', 0xf07a2e], splits: ['flag', '#f07a2e', 0xf07a2e], rampcircuit: ['star', '#e5c063', 0xe5c063], relay: ['D', '#8fb8d8', 0x8fb8d8] };
     const posts = [];
     for (const [i, m] of this.missions.entries()) {
       const st = m.start(this); let x = st.x, z = st.z, n = 0;
@@ -240,22 +271,29 @@ export class Game {
   }
 
   // ---- menu ----
-  openMenu() { this.menuOpen = true; this.paused = true; this.renderMenu(); this.el.menu.classList.remove('hidden'); document.getElementById('hud').classList.add('dim'); }
-  closeMenu() { this.menuOpen = false; this.paused = this.resultOpen; this.el.menu.classList.add('hidden'); if (!this.resultOpen) document.getElementById('hud').classList.remove('dim'); }
+  openMenu(tab = 'jobs') {
+    this.menuTab = MENU_TABS.includes(tab) ? tab : 'jobs'; this.menuOpen = true; this.paused = true; this.renderMenu();
+    this.el.menu.classList.remove('hidden'); this.el.menu.setAttribute('aria-hidden', 'false'); document.getElementById('hud').classList.add('dim');
+    requestAnimationFrame(() => this.el.menu.focus({ preventScroll: true }));
+  }
+  closeMenu() {
+    this.menuOpen = false; this.paused = this.resultOpen; this.el.menu.classList.add('hidden'); this.el.menu.setAttribute('aria-hidden', 'true');
+    if (!this.resultOpen) document.getElementById('hud').classList.remove('dim');
+  }
   renderMenu() {
     const rows = this.missions.map((m, i) => {
       const b = this.save.best[m.id]; const lock = !this.unlocked(i);
       let best = '';
       if (b) { best = b.score !== undefined ? `${b.score.toLocaleString()} pts` : b.time ? fmtT(b.time) : ''; if (b.medal) best += `<i>${b.medal}</i>`; }
       const goal = m.gold ? `Gold ${fmtT(m.gold)}` : m.scoreMedal ? `Gold ${m.scoreMedal[0].toLocaleString()}` : m.timeLimit ? `${fmtT(m.timeLimit)} limit` : '';
-      return `<div class="m ${i === this.sel ? 'sel' : ''} ${lock ? 'locked' : ''} ${b ? 'done' : ''}" data-i="${i}"><span class="n">${String(i + 1).padStart(2, '0')}</span><span class="t">${m.title}</span><span class="best">${lock ? 'LOCKED' : best || fmtCash(m.reward)}</span><span class="d">${lock ? 'Finish the previous job first.' : m.desc}${goal && !lock ? `<em>${goal}</em>` : ''}</span></div>`;
+      return `<button type="button" class="m ${i === this.sel ? 'sel' : ''} ${lock ? 'locked' : ''} ${b ? 'done' : ''}" data-mission="${i}" ${lock ? 'disabled' : ''}><span class="n">${String(i + 1).padStart(2, '0')}</span><span class="t">${m.title}</span><span class="best">${lock ? 'LOCKED' : best || fmtCash(m.reward)}</span><span class="d">${lock ? 'Finish the previous job first.' : m.desc}${goal && !lock ? `<em>${goal}</em>` : ''}</span></button>`;
     }).join('');
     const r = this.save.rec;
-    const rec = [
+    const records = [
       ['Top speed', r.speed ? `${Math.round(r.speed)} mph` : '—'], ['Longest air', r.air ? `${r.air.toFixed(2)} s` : '—'], ['Highest air', r.peak ? `${r.peak.toFixed(1)} m` : '—'],
       ['Biggest spin', r.spin ? `${r.spin}°` : '—'], ['Longest drift', r.drift ? `${r.drift.toFixed(1)} s` : '—'], ['Best chain', r.bank ? `${Math.round(r.bank).toLocaleString()} pts` : '—'],
       ['Longest run', r.run ? `${r.run.toFixed(1)} mi` : '—'], ['Camps found', `${this.save.camps.length}`], ['Traps recovered', `${this.save.traps.length}`],
-    ].map(([k, v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('');
+    ];
     const bl = this.bounties.today().map(b => `<div class="b ${b.done ? 'done' : ''}"><span class="chk">${b.done ? '✓' : ''}</span><span class="bt">${b.text}${b.count > 1 && !b.done ? ` <i>${b.progress} / ${b.count}</i>` : ''}</span><span class="pay">${fmtCash(b.pay)}</span></div>`).join('');
     const encounterCount = Object.values(this.save.encounters || {}).reduce((n, v) => n + (Number(v) || 0), 0);
     const incidents = this.save.incidents || {}, incidentResolved = Number(incidents.resolved) || 0, incidentHeard = Number(incidents.heard) || 0;
@@ -264,33 +302,99 @@ export class Game {
     const standing = this.reputation ? { locals: this.reputation.rank('locals'), fwc: this.reputation.rank('fwc'), runners: this.reputation.rank('runners') } : { locals: 'unproven', fwc: 'unknown hull', runners: 'unproven' };
     const storyLine = this.story ? this.story.menuLine() : 'Running Dark · not started';
     const contractLine = this.contracts ? this.contracts.menuLine() : 'no resident work logged';
-    this.el.menu.innerHTML = `<div class="cols"><div class="left"><h1>Emerald <em>Bayou</em></h1><div class="lead">Jobs on the board</div><div class="list">${rows}</div><div class="stats">Bankroll <b>${fmtCash(this.save.cash)}</b> &nbsp;·&nbsp; style points <b>${this.tricks.total.toLocaleString()}</b> &nbsp;·&nbsp; jobs done <b>${this.save.done.length} / ${this.missions.length}</b><span class="world">World encounters <b>${encounterCount}</b> &nbsp;·&nbsp; regions seen <b>${regionsSeen} / ${regionTotal}</b> &nbsp;·&nbsp; FWC citations <b>${citations}</b></span><span class="world">Live calls resolved <b>${incidentResolved} / ${incidentHeard}</b> &nbsp;·&nbsp; FWC assists <b>${Number(incidents.fwc) || 0}</b> &nbsp;·&nbsp; backchannel favors <b>${Number(incidents.runners) || 0}</b></span><span class="world">Story &nbsp;·&nbsp; <b>${storyLine}</b></span><span class="world">Resident work &nbsp;·&nbsp; <b>${contractLine}</b></span><span class="world">Standing &nbsp;·&nbsp; locals <b>${standing.locals}</b> &nbsp;·&nbsp; FWC <b>${standing.fwc}</b> &nbsp;·&nbsp; backchannel <b>${standing.runners}</b></span></div><div class="foot">↑ ↓ choose &nbsp;·&nbsp; Enter start &nbsp;·&nbsp; M / Esc back to the water</div></div>
-      <div class="side"><div class="h">Today's bounties</div><div class="bl">${bl}</div><div class="h">Records</div><div class="rl">${rec}</div><div class="h">On the water</div><div class="keys">W / S throttle · A / D rudder<br>In the air: S lean back, Shift lean forward, A / D spin<br>R reset · M jobs board · drag to look</div></div></div>`;
-    this.el.menu.querySelectorAll('.m').forEach(el => {
-      el.addEventListener('click', () => { const i = +el.dataset.i; if (this.unlocked(i)) { this.sel = i; this.start(i); } });
-      el.addEventListener('mouseenter', () => { const i = +el.dataset.i; if (this.unlocked(i)) { this.sel = i; this.el.menu.querySelectorAll('.m').forEach(x => x.classList.toggle('sel', +x.dataset.i === i)); } });
+    const fieldNotes = this.discoveries?.menuEntries?.() || [];
+    const fieldNoteCount = fieldNotes.filter(entry => entry.found).length;
+    const fieldNoteRows = fieldNotes.length ? fieldNotes.map(entry => `<div class="deed ${entry.found ? 'found' : ''}"><b>${entry.found ? esc(entry.short) : 'Unlogged'}</b>${esc(entry.found ? `${entry.place} · day ${entry.record?.day || '—'}` : entry.hint)}</div>`).join('') : '<div class="deed">No field observations logged.</div>';
+    records.push(['Field notes', `${fieldNoteCount} / ${fieldNotes.length || 3}`]);
+    records.push(['Aid reports', `${Math.max(0, Number(this.save.navigationAids?.stats?.reports) || 0)}`]);
+    const wanted = Math.max(0, Math.min(5, Math.ceil(Number(this.law?.attention) || 0)));
+    const deeds = (this.reputation?.deeds || []).slice(-6).reverse();
+    const deedRows = deeds.length ? deeds.map(deed => `<div class="deed"><b>${esc(deed.faction)} ${deed.delta > 0 ? '+' : ''}${Number(deed.delta).toFixed(1)}</b>${esc(deed.text)}</div>`).join('') : '<div class="deed">Nobody has made up their mind about this hull yet.</div>';
+    const quality = esc(this.getQualityLabel?.() || 'Auto');
+    const resetArmed = this.newGameArmed();
+    let kicker = '', title = '', copy = '', content = '', keyHelp = '';
+    if (this.menuTab === 'jobs') {
+      kicker = 'Jobs board'; title = 'Work the water'; copy = 'Races, freight, rescues and recovery work. Finished jobs stay open for better times and repeat pay.';
+      content = `<div class="menu-grid"><div><div class="list">${rows}</div><div class="stats">Bankroll <b>${fmtCash(this.save.cash)}</b> &nbsp;·&nbsp; style <b>${this.tricks.total.toLocaleString()} pts</b> &nbsp;·&nbsp; complete <b>${this.save.done.length} / ${this.missions.length}</b></div></div><aside><section class="menu-card"><div class="h">Today's bounties</div>${bl}</section><section class="menu-card"><div class="h">Story on the water</div><div class="deed"><b>Main line</b>${esc(storyLine)}</div><div class="deed"><b>Residents</b>${esc(contractLine)}</div></section></aside></div>`;
+      keyHelp = '<span><b>↑ ↓</b> choose &nbsp; <b>Enter</b> start</span><span><b>M / Esc</b> back to the water</span>';
+    } else if (this.menuTab === 'world') {
+      kicker = 'Living world'; title = 'Water remembers'; copy = 'Calls, favors and collisions change how camps, runners and FWC receive this boat.';
+      content = `<div class="world-grid"><section class="menu-card"><div class="h">Current picture</div><div class="kpis"><div class="kpi"><b>${encounterCount}</b><span>encounters</span></div><div class="kpi"><b>${regionsSeen}/${regionTotal}</b><span>regions</span></div><div class="kpi"><b>${incidentResolved}/${incidentHeard}</b><span>calls resolved</span></div><div class="kpi"><b>${wanted ? '★'.repeat(wanted) : 'Clear'}</b><span>FWC wanted</span></div><div class="kpi"><b>${citations}</b><span>citations</span></div><div class="kpi"><b>${Number(incidents.fwc) || 0}/${Number(incidents.runners) || 0}</b><span>FWC / runners</span></div></div></section><section class="menu-card"><div class="h">Standing</div><div class="standing"><span>Locals</span><b>${esc(standing.locals)}</b><em>${this.reputation ? this.reputation.score('locals').toFixed(1) : '0.0'}</em></div><div class="standing"><span>FWC</span><b>${esc(standing.fwc)}</b><em>${this.reputation ? this.reputation.score('fwc').toFixed(1) : '0.0'}</em></div><div class="standing"><span>Backchannel</span><b>${esc(standing.runners)}</b><em>${this.reputation ? this.reputation.score('runners').toFixed(1) : '0.0'}</em></div></section><section class="menu-card"><div class="h">Open threads</div><div class="deed"><b>Story</b>${esc(storyLine)}</div><div class="deed"><b>Resident work</b>${esc(contractLine)}</div><div class="deed"><b>Conditions</b>${esc(this.getWorldLabel?.() || 'South Florida backcountry')}</div></section><section class="menu-card"><div class="h">What people remember</div>${deedRows}</section><section class="menu-card field-notes"><div class="h">Field notes · ${fieldNoteCount} / ${fieldNotes.length || 3}</div><div class="field-note-grid">${fieldNoteRows}</div></section></div>`;
+      keyHelp = '<span><b>Tab / ← →</b> change section</span><span><b>Esc</b> back to the water</span>';
+    } else if (this.menuTab === 'records') {
+      kicker = 'Boat log'; title = 'Records'; copy = 'Fastest runs, biggest air and the work already put behind this hull.';
+      content = `<div class="records-grid"><section class="menu-card"><div class="h">Hull &amp; style</div>${records.slice(0, 6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}</section><section class="menu-card"><div class="h">Backcountry work</div>${records.slice(6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}<div class="r"><span>Jobs finished</span><b>${this.save.done.length} / ${this.missions.length}</b></div><div class="r"><span>Camp runs</span><b>${Number(this.save.runs) || 0}</b></div><div class="r"><span>Cash earned</span><b>${fmtCash(this.save.cash)}</b></div></section></div>`;
+      keyHelp = '<span><b>Tab / ← →</b> change section</span><span><b>Esc</b> back to the water</span>';
+    } else {
+      kicker = 'Paused'; title = 'Tower radio'; copy = 'Resume the water, set the rendering budget, or return to the title.';
+      const systemActions = [
+        ['resume', 'Resume', 'Return to the boat', 'Esc', false],
+        ['graphics', 'Graphics', 'Auto adapts after sustained frame pressure; fixed modes stay locked', quality, false],
+        ['title', 'Return to title', "Save the hull's current position and leave the water paused", 'Title', false],
+      ];
+      if (this.hasProgress()) systemActions.push(['new', resetArmed ? 'Confirm new game' : 'New game', resetArmed ? 'Select again now to clear jobs, cash, records and world history' : 'Start over at the tower dock; graphics choice is kept', resetArmed ? 'Clear save' : 'Reset', resetArmed]);
+      this.systemSel = Math.max(0, Math.min(this.systemSel, systemActions.length - 1));
+      const actions = systemActions.map(([action, name, detail, value, danger], i) => `<button type="button" class="system-action ${i === this.systemSel ? 'sel' : ''} ${danger ? 'danger' : ''}" data-action="${action}"><strong>${name}</strong><small>${detail}</small><em>${value}</em></button>`).join('');
+      content = `<div class="menu-grid"><div class="system-list">${actions}</div><aside><section class="menu-card"><div class="h">On the water</div><div class="keys">W / S throttle · A / D rudder<br>Drag to look · wheel to change camera distance<br>L spotlight · Tab chart · M jobs<br>In the air: S nose up · Shift nose down · A / D spin<br>R reset the hull</div></section></aside></div>`;
+      keyHelp = '<span><b>↑ ↓ / Enter</b> choose &nbsp; <b>Tab / ← →</b> change section</span><span><b>Esc</b> resume</span>';
+    }
+    const tabs = { jobs: ['▤', 'Jobs'], world: ['⌖', 'World'], records: ['△', 'Records'], system: ['⚙', 'System'] };
+    const rail = MENU_TABS.map(tab => `<button type="button" class="rail-tab ${tab === this.menuTab ? 'active' : ''}" data-tab="${tab}" ${tab === this.menuTab ? 'aria-current="page"' : ''}><span>${tabs[tab][0]}</span>${tabs[tab][1]}</button>`).join('');
+    this.el.menu.innerHTML = `<nav class="menu-rail" aria-label="Pause menu"><div class="rail-mark">EB</div>${rail}<div class="rail-status">${fmtCash(this.save.cash)}<br>${esc(this.getWorldShortLabel?.() || 'Open water')}</div></nav><main class="menu-stage"><section class="menu-view"><header class="menu-head"><div><p>${kicker}</p><h1>${title}</h1></div><p class="menu-copy">${copy}</p></header>${content}</section></main><footer class="menu-keybar">${keyHelp}</footer>`;
+    this.el.menu.querySelectorAll('[data-tab]').forEach(element => element.addEventListener('click', () => { this.menuTab = element.dataset.tab; this.renderMenu(); this.el.menu.focus({ preventScroll: true }); }));
+    this.el.menu.querySelectorAll('[data-mission]').forEach(element => {
+      element.addEventListener('click', () => { const i = +element.dataset.mission; if (this.unlocked(i)) { this.sel = i; this.start(i); } });
+      element.addEventListener('mouseenter', () => { const i = +element.dataset.mission; if (this.unlocked(i)) { this.sel = i; this.el.menu.querySelectorAll('.m').forEach(candidate => candidate.classList.toggle('sel', +candidate.dataset.mission === i)); } });
+    });
+    this.el.menu.querySelectorAll('[data-action]').forEach((element, index) => {
+      element.addEventListener('mouseenter', () => { this.systemSel = index; this.el.menu.querySelectorAll('.system-action').forEach((candidate, i) => candidate.classList.toggle('sel', i === index)); });
+      element.addEventListener('click', () => {
+        const action = element.dataset.action;
+        if (action === 'resume') this.closeMenu();
+        else if (action === 'graphics') { this.onCycleQuality?.(); this.renderMenu(); }
+        else if (action === 'title') this.onReturnToTitle?.();
+        else if (action === 'new') this.requestNewGame();
+      });
     });
     const selEl = this.el.menu.querySelector('.m.sel'); if (selEl) selEl.scrollIntoView({ block: 'nearest' });
   }
   onKey(e) {
+    if (!this.playing) return;
     if (this.resultOpen) {
       if (e.code === 'Enter' || e.code === 'Space') this.closeResult();
       else if (e.code === 'KeyR' && this.lastMission) { this.closeResult(); this.startMission(this.lastMission); }
       else if (e.code === 'KeyM' || e.code === 'Escape') { this.closeResult(); this.openMenu(); }
       e.preventDefault(); return;
     }
-    if (e.code === 'Tab') { e.preventDefault(); if (!this.menuOpen) { this.mapOpen ? this.closeMap() : this.openMap(); } return; }
+    if (this.menuOpen) {
+      if (e.code === 'Escape' || e.code === 'KeyM') { this.closeMenu(); e.preventDefault(); return; }
+      if (e.code === 'Tab' || e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+        const direction = e.code === 'ArrowLeft' || (e.code === 'Tab' && e.shiftKey) ? -1 : 1;
+        this.menuTab = MENU_TABS[(MENU_TABS.indexOf(this.menuTab) + MENU_TABS.length + direction) % MENU_TABS.length]; this.renderMenu(); e.preventDefault(); return;
+      }
+      if (this.menuTab === 'jobs' && (e.code === 'ArrowDown' || e.code === 'KeyS')) { do { this.sel = (this.sel + 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); e.preventDefault(); return; }
+      if (this.menuTab === 'jobs' && (e.code === 'ArrowUp' || e.code === 'KeyW')) { do { this.sel = (this.sel + this.missions.length - 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); e.preventDefault(); return; }
+      if (this.menuTab === 'system' && (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ArrowUp' || e.code === 'KeyW')) {
+        const count = Math.max(1, this.el.menu.querySelectorAll('[data-action]').length), direction = e.code === 'ArrowDown' || e.code === 'KeyS' ? 1 : -1;
+        this.systemSel = (this.systemSel + count + direction) % count; this.renderMenu(); e.preventDefault(); return;
+      }
+      if (e.code === 'Enter' || e.code === 'Space') {
+        const focused = document.activeElement;
+        if (focused?.matches?.('#menu button')) focused.click();
+        else if (this.menuTab === 'jobs' && this.unlocked(this.sel)) this.start(this.sel);
+        else if (this.menuTab === 'system') this.el.menu.querySelector('.system-action.sel')?.click();
+        e.preventDefault(); return;
+      }
+      return;
+    }
+    if (e.code === 'Tab') { e.preventDefault(); this.mapOpen ? this.closeMap() : this.openMap(); return; }
     if (this.mapOpen) { if (e.code === 'Escape' || e.code === 'KeyM') this.closeMap(); return; }
-    if (e.code === 'KeyM' || (e.code === 'Escape' && this.menuOpen)) { this.menuOpen ? this.closeMenu() : this.openMenu(); return; }
+    if (e.code === 'KeyM') { this.openMenu('jobs'); return; }
+    if (e.code === 'Escape') { this.openMenu('system'); return; }
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.story?.capturesInput(e.code)) return;
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.aftermath?.capturesInput(e.code)) return;
+    if (e.code === 'KeyE' && this.navigationAids?.capturesInput(e.code)) return;
     if (e.code === 'KeyE' && !this.state && !this.paused) { if (this.dockJob) { if (this.unlocked(this.dockJob.i)) this.start(this.dockJob.i); else this.toast('Locked', `Finish ${this.missions[this.dockJob.i - 1].title} first`, 2); return; } if (this.dockCamp) { this.startRun(this.dockCamp); return; } if (this.atBoard) { this.openMenu(); return; } }
-    if (this.menuOpen) {
-      if (e.code === 'ArrowDown' || e.code === 'KeyS') { do { this.sel = (this.sel + 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); }
-      if (e.code === 'ArrowUp' || e.code === 'KeyW') { do { this.sel = (this.sel + this.missions.length - 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); }
-      if (e.code === 'Enter' || e.code === 'Space') { if (this.unlocked(this.sel)) this.start(this.sel); }
-      e.preventDefault(); return;
-    }
     if (e.code === 'KeyR' && this.state && (this.state.m.countdown || this.state.m.restartOnR)) { this.start(this.missions.indexOf(this.state.m)); }
   }
 
@@ -310,8 +414,14 @@ export class Game {
     const P = b.profile, name = P ? `${P.callsign} · ${P.operator}` : 'another boat';
     this.toast(`“${lines[Math.floor(Math.random() * lines.length)]}”`, into > 6 ? `${name} · hard collision` : `${name} · hull contact`, 2.4);
     this.tricks.bust('BOAT');
-    if (this.law && into > 3.5) this.law.violation((P?.id === 'fwc-27' ? 0.8 : 0.35) + Math.min(0.7, into * 0.06), P?.id === 'fwc-27' ? 'collision with FWC patrol' : `${P?.callsign || 'boat'} collision reported`);
+    if (P?.id === 'fwc-27' && into > 2.5) {
+      if (this.law) { this.law.stats.patrolRams = (this.law.stats.patrolRams || 0) + 1; this.law.add(1.75 + Math.min(1.1, into * 0.1), 'rammed FWC patrol boat', true); }
+      if (this.reputation) this.reputation.change('fwc', -Math.min(0.9, 0.38 + into * 0.045), 'patrol-ram', 'FWC logged the tower airboat striking twenty-seven.', false);
+      return Boolean(this.encounters?.forcePatrolPursuit?.(b, into));
+    }
+    if (this.law && into > 3.5) this.law.violation(0.35 + Math.min(0.7, into * 0.06), `${P?.callsign || 'boat'} collision reported`);
     if (P && this.reputation && into > 3.5) this.reputation.change(P.faction, -Math.min(0.45, 0.12 + into * 0.025), 'working-boat-collision', `${P.callsign} logged the collision against the tower airboat.`, false);
+    return false;
   }
   anglerSay(a, line, angry = false) {
     this.toast(`“${line}”`, angry ? 'You rocked his boat. Idle past anglers.' : 'The angler in the johnboat', 2.4);
@@ -566,6 +676,10 @@ export class Game {
       setHTML(e.mission, `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`);
       setHTML(e.timer, ''); e.timer.classList.remove('warn');
       setHTML(e.wp, this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '');
+    } else if (this.discoveries?.hud()) {
+      const h = this.discoveries.hud();
+      setHTML(e.mission, `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`);
+      setHTML(e.timer, ''); e.timer.classList.remove('warn'); setHTML(e.wp, '');
     } else if (this.life?.traffic?.activeCollision()) {
       const b = this.life.traffic.activeCollision(), c = b.collision, checking = c.stage === 'disabled', restarting = c.stage === 'restart';
       setHTML(e.mission, `<div class="title">Collision aftermath</div><div class="obj">${checking ? `Idle below 5.5 mph and hold alongside ${b.profile.callsign}` : restarting ? `${b.profile.callsign} is restarting` : `${b.profile.callsign} reported the collision`}</div><div class="sub">${checking ? 'Stay until the crew accounts for everyone' : restarting ? 'The collision stays on the log, but you did not leave them' : 'FWC has your hull and direction'}</div>`);
@@ -668,7 +782,7 @@ class Bounties {
 // ------------------------------------------------------------------------------------------
 // Mission definitions
 // ------------------------------------------------------------------------------------------
-function buildMissions(G) {
+export function buildMissions(G) {
   const T = G.T;
   const gateAt = (pt, label) => ({ x: pt.x, z: pt.z, r: 9, label });
   const toGate = (s, G, g, color = 0xf07a2e, next, column = true) => {
@@ -1026,5 +1140,128 @@ function buildMissions(G) {
   tourGates.push({ ...gateAt(G.river(G.startZ)), label: 'Finish at the start' });
   const tour = { id: 'tour', title: 'Bayou Grand Tour', desc: `The big lap: down the river, across the back pools, up the creek and back over the flats. ${tourGates.length} gates. Gold under 1:50.`, reward: 900, countdown: true, gold: 110, silver: 135, bronze: 170, start: (G) => ({ x: G.startX, z: G.startZ + 20, heading: 0 }), ...sequence(tourGates) };
 
-  return [shakedown, manatee, sprint, traps, chase, stunt, cargo, rescue, gator, gauntlet, sonar, bigair, tour];
+  // 14. Split clock -------------------------------------------------------------------------
+  // Every gate starts a new deadline. A weak leg cannot be hidden inside one very fast straight, so the driver has
+  // to hold speed through every bend rather than learning one shortcut through a single global stopwatch.
+  const splitStart = gateAt(G.river(440), 'Starting line');
+  const splitZ = [360, 285, 210, 135, 55, -30, -110, -190, -280, -380];
+  const splitGates = splitZ.map((z, i) => gateAt(G.river(z, i % 2 ? 0.58 : -0.58)));
+  {
+    let prev = splitStart;
+    for (const [i, gate] of splitGates.entries()) {
+      const distance = Math.hypot(gate.x - prev.x, gate.z - prev.z);
+      gate.limit = Math.max(11, Math.min(18, Math.ceil(distance / 7.2) + 4));
+      gate.label = `Split ${i + 1} · ${gate.limit} seconds`; prev = gate;
+    }
+  }
+  const splits = {
+    id: 'splits', title: 'Redline Splits', desc: `${splitGates.length} checkpoint clocks down the river. Every gate starts a fresh deadline; miss one split and the run is over.`, reward: 760, countdown: true, gold: 66, silver: 82, bronze: 105,
+    start: (G) => ({ x: splitStart.x, z: splitStart.z, heading: G.headingTo(splitStart.x, splitStart.z, splitGates[0].x, splitGates[0].z) }),
+    setup(s) { s.i = 0; s.limitStart = 0; s.limitOverride = splitGates[0].limit; s.splits = []; },
+    update(s, G) {
+      const gate = splitGates[s.i], remaining = splitRemaining(s.t, s.limitStart, gate.limit);
+      toGate(s, G, gate, s.i === splitGates.length - 1 ? 0x7be08a : 0xf07a2e, splitGates[s.i + 1]);
+      if (reached(G, gate)) {
+        const legTime = s.t - s.limitStart; s.splits.push(legTime); s.i++; G.audio.checkpoint();
+        if (s.i >= splitGates.length) return 'done';
+        s.limitStart = s.t; s.limitOverride = splitGates[s.i].limit;
+        G.toast(`Split ${s.i} · ${fmtT(legTime)}`, `${splitGates[s.i].limit} seconds to the next gate`, 1.4);
+      } else if (remaining <= 0) return { fail: `Missed split ${s.i + 1}. The next gate closed.` };
+      return null;
+    },
+    hud(s) { const gate = splitGates[Math.min(s.i, splitGates.length - 1)]; return { obj: `Split ${Math.min(s.i + 1, splitGates.length)} of ${splitGates.length}`, sub: `${splitRemaining(s.t, s.limitStart, gate.limit).toFixed(1)} seconds to make the gate` }; },
+    markers(s, G, out) { for (let i = s.i; i < Math.min(splitGates.length, s.i + 3); i++) out.push({ x: splitGates[i].x, z: splitGates[i].z, color: i === s.i ? '#f07a2e' : 'rgba(243,237,224,0.6)', r: i === s.i ? 5 : 3 }); },
+  };
+
+  // 15. Three-kicker circuit ---------------------------------------------------------------
+  const rampCourse = (park.length >= 3 ? park : kickers).slice(0, 3).map(bar => ({ bar, approach: rampPoint(bar, -40), landing: rampPoint(bar, 25) }));
+  const rampcircuit = {
+    id: 'rampcircuit', title: 'Three-Kicker Circuit', desc: 'Line up all three lagoon kickers. A gate only counts after the correct launch and a landing on the far side.', reward: 820, countdown: true, gold: 68, silver: 88, bronze: 118,
+    start: (G) => { const first = rampCourse[0]; return { x: first.approach.x, z: first.approach.z, heading: G.headingTo(first.approach.x, first.approach.z, first.bar.x, first.bar.z) }; },
+    setup(s) { s.i = 0; s.stage = 'approach'; s.penalties = 0; },
+    update(s, G) {
+      const run = rampCourse[s.i], p = G.phys;
+      if (s.stage === 'approach') {
+        toGate(s, G, { ...run.approach, label: `Line up kicker ${s.i + 1}` }, 0xf07a2e, run.bar);
+        if (G.dist(run.approach.x, run.approach.z) < 11) { s.stage = 'ramp'; G.audio.checkpoint(); G.toast(`Kicker ${s.i + 1}`, 'Hold the line through the crest', 1.5); }
+      } else if (s.stage === 'ramp') {
+        toGate(s, G, { x: run.bar.x, z: run.bar.z, label: `Kicker ${s.i + 1}` }, 0xe5c063, run.landing);
+        if ((p.takeoffFrame || p.airborne) && G.dist(run.bar.x, run.bar.z) < 22) { s.stage = 'air'; G.audio.checkpoint(); }
+      } else {
+        toGate(s, G, { ...run.landing, label: 'Land beyond the kicker' }, 0x7be08a, rampCourse[s.i + 1]?.approach);
+        if (p.landedFrame) {
+          const quality = G.tricks.lastLanding?.q || p.landQuality; const onLine = G.dist(run.landing.x, run.landing.z) < 65;
+          if (p.airTime > 0.35 && quality !== 'wipeout' && onLine) {
+            if (quality === 'stuffed') { s.t += 3; s.penalties += 3; G.toast('Heavy landing · +3 seconds', `${s.i + 1} of ${rampCourse.length} kickers cleared`, 1.7); }
+            else G.toast('Kicker cleared', `${s.i + 1} of ${rampCourse.length}`, 1.2);
+            s.i++; G.audio.checkpoint();
+            if (s.i >= rampCourse.length) return 'done';
+            s.stage = 'approach';
+          } else {
+            s.t += 4; s.penalties += 4; s.stage = 'approach';
+            G.toast('Ramp does not count · +4 seconds', onLine ? 'Land it without a wipeout' : 'Use the marked kicker and land beyond it', 2);
+          }
+        }
+      }
+      return null;
+    },
+    hud(s) { const action = s.stage === 'approach' ? 'Line up' : s.stage === 'ramp' ? 'Take the kicker' : 'Land beyond the crest'; return { obj: `${action} · ${Math.min(s.i + 1, rampCourse.length)} of ${rampCourse.length}`, sub: s.penalties ? `${s.penalties} seconds in penalties` : 'The launch and landing both have to register' }; },
+    markers(s, G, out) { const run = rampCourse[Math.min(s.i, rampCourse.length - 1)]; out.push({ x: run.bar.x, z: run.bar.z, color: '#e5c063', r: 5 }); for (let i = s.i + 1; i < rampCourse.length; i++) out.push({ x: rampCourse[i].bar.x, z: rampCourse[i].bar.z, color: 'rgba(229,192,99,0.55)', r: 3 }); },
+  };
+
+  // 16. Dispatch relay ---------------------------------------------------------------------
+  const crossPool = (z, amount = 0.5) => { const river = G.river(z), creek = creekPt(z); return { x: river.x + (creek.x - river.x) * amount, z }; };
+  const relayLegs = [
+    { name: 'Tower case', pickup: { x: dockTie.x, z: dockTie.z }, drop: G.river(-260, 0.28), limit: 62, gates: [gateAt(G.river(-40, -0.45), 'South bend'), gateAt(G.river(-135, 0.5), 'Cut inside'), gateAt(G.river(-220, -0.4), 'Handoff ahead')] },
+    { name: 'River case', pickup: G.river(-300, -0.42), drop: campWater, limit: 78, gates: [gateAt(G.river(-365, 0.45), 'Leave the main channel'), { ...crossPool(-420, 0.52), r: 10, label: 'Cross the back pools' }, { ...creekPt(-470), r: 8, label: 'Enter the creek' }] },
+    { name: 'Camp case', pickup: { x: campWater.x + 4, z: campWater.z + 2 }, drop: { x: dockTie.x, z: dockTie.z }, limit: 105, gates: [{ ...creekPt(-420), r: 8, label: 'Down the creek' }, { ...crossPool(-350, 0.48), r: 10, label: 'Cross to the river' }, gateAt(G.river(-275, -0.35), 'Main channel'), gateAt(G.river(-145, 0.45), 'North bend'), gateAt(G.river(-35, -0.35), 'Tower ahead')] },
+  ];
+  const relay = {
+    id: 'relay', title: 'Dispatch Relay', desc: 'Three waterproof cases, three pickups and three handoffs. Hit the route gates, slow down at both ends, and recover anything thrown overboard.', reward: 980, countdown: true, gold: 185, silver: 225, bronze: 285,
+    start: (G) => ({ x: G.startX, z: G.startZ, heading: G.headingTo(G.startX, G.startZ, dockTie.x, dockTie.z) }),
+    setup(s, G) {
+      s.leg = 0; s.stage = 'pickup'; s.route = 0; s.ejections = 0;
+      s.cases = relayLegs.map((leg, i) => { const m = raceCase(); m.position.set(leg.pickup.x, 0.18, leg.pickup.z); m.rotation.y = i * 1.7; G.scene.add(m); return { m, x: leg.pickup.x, z: leg.pickup.z, phase: i * 1.9, delivered: false }; });
+    },
+    cleanup(s, G) { for (const box of s.cases) box.m.removeFromParent(); G.phys.loaded = 0; },
+    attach(s, G, recovered = false) {
+      const leg = relayLegs[s.leg], box = s.cases[s.leg]; box.m.removeFromParent(); G.boat.add(box.m); box.m.position.set(0, 0.7, -1.55); box.m.rotation.set(0, 0, 0);
+      G.phys.loaded = 0.42; s.stage = s.route >= leg.gates.length ? 'dropoff' : 'route';
+      if (!recovered) { s.route = 0; s.limitStart = s.t; s.limitOverride = leg.limit; }
+      G.audio.checkpoint(); G.toast(recovered ? 'Case recovered' : `${leg.name} aboard`, recovered ? 'The split clock kept running' : `${leg.limit} seconds to the handoff`, 2);
+    },
+    eject(s, G, reason) {
+      const box = s.cases[s.leg], p = G.phys; box.m.removeFromParent(); G.scene.add(box.m); box.x = p.pos.x; box.z = p.pos.y; box.m.position.set(box.x, 0.18, box.z); box.m.rotation.set(0.15, p.heading, 0.25);
+      G.phys.loaded = 0; s.stage = 'recover'; s.ejections++; G.audio.warn(); G.toast('Case overboard', `${reason} · slow down and recover it`, 2.4);
+    },
+    deliver(s, G) {
+      const leg = relayLegs[s.leg], box = s.cases[s.leg]; box.m.removeFromParent(); G.scene.add(box.m); box.x = leg.drop.x + (s.leg - 1) * 1.1; box.z = leg.drop.z + s.leg * 0.8; box.m.position.set(box.x, 0.18, box.z); box.m.rotation.set(0, s.leg * 1.4, 0); box.delivered = true;
+      G.phys.loaded = 0; delete s.limitOverride; G.audio.pickup(); G.toast(`Handoff ${s.leg + 1} of ${relayLegs.length}`, s.leg + 1 < relayLegs.length ? 'Next case is marked' : 'Relay complete', 1.8);
+      s.leg++; s.route = 0; s.stage = 'pickup';
+      return s.leg >= relayLegs.length ? 'done' : null;
+    },
+    update(s, G, dt, t) {
+      for (const box of s.cases) if (box.m.parent === G.scene) { box.m.position.y = 0.18 + Math.sin(t * 1.25 + box.phase) * 0.05; box.m.rotation.z = Math.sin(t * 0.8 + box.phase) * 0.06; }
+      const leg = relayLegs[s.leg], box = s.cases[s.leg];
+      if (s.stage !== 'pickup' && splitRemaining(s.t, s.limitStart, leg.limit) <= 0) return { fail: `The ${leg.name.toLowerCase()} missed its handoff window.` };
+      if (s.stage === 'pickup' || s.stage === 'recover') {
+        const recovering = s.stage === 'recover'; toGate(s, G, { x: box.x, z: box.z, label: recovering ? 'case overboard' : leg.name.toLowerCase() }, recovering ? 0xe5c063 : 0x8fb8d8, leg.gates[0]);
+        if (G.dist(box.x, box.z) < 5.5 && G.mph() < 7) this.attach(s, G, recovering);
+        return null;
+      }
+      const reason = cargoEjectionReason(G.phys); if (reason) { this.eject(s, G, reason); return null; }
+      if (s.stage === 'route') {
+        const gate = leg.gates[s.route]; toGate(s, G, gate, 0xf07a2e, leg.gates[s.route + 1] || leg.drop);
+        if (reached(G, gate)) { s.route++; G.audio.checkpoint(); if (s.route >= leg.gates.length) { s.stage = 'dropoff'; G.toast('Handoff ahead', 'Bring it in under 7 mph', 1.5); } }
+      } else {
+        toGate(s, G, { ...leg.drop, label: 'handoff' }, 0x7be08a);
+        if (G.dist(leg.drop.x, leg.drop.z) < 7 && G.mph() < 7) return this.deliver(s, G);
+      }
+      return null;
+    },
+    hud(s) { const leg = relayLegs[Math.min(s.leg, relayLegs.length - 1)]; if (s.stage === 'pickup') return { obj: `Pickup ${Math.min(s.leg + 1, relayLegs.length)} of ${relayLegs.length}`, sub: `${leg.name} · slow below 7 mph` }; if (s.stage === 'recover') return { obj: 'Recover the case', sub: `${splitRemaining(s.t, s.limitStart, leg.limit).toFixed(1)} seconds remain · below 7 mph alongside` }; if (s.stage === 'dropoff') return { obj: `Handoff ${s.leg + 1} of ${relayLegs.length}`, sub: 'Under 7 mph inside the green marker' }; return { obj: `Route gate ${Math.min(s.route + 1, leg.gates.length)} of ${leg.gates.length}`, sub: `${splitRemaining(s.t, s.limitStart, leg.limit).toFixed(1)} seconds remain · ${s.ejections} cases thrown overboard` }; },
+    markers(s, G, out) { if (s.leg >= relayLegs.length) return; const leg = relayLegs[s.leg], box = s.cases[s.leg]; if (s.stage === 'pickup' || s.stage === 'recover') out.push({ x: box.x, z: box.z, color: s.stage === 'recover' ? '#e5c063' : '#8fb8d8', r: 5 }); else if (s.stage === 'route') { for (let i = s.route; i < Math.min(leg.gates.length, s.route + 3); i++) out.push({ x: leg.gates[i].x, z: leg.gates[i].z, color: i === s.route ? '#f07a2e' : 'rgba(243,237,224,0.6)', r: i === s.route ? 5 : 3 }); } else out.push({ x: leg.drop.x, z: leg.drop.z, color: '#7be08a', r: 5 }); },
+  };
+
+  return [shakedown, manatee, sprint, traps, chase, stunt, cargo, rescue, gator, gauntlet, sonar, bigair, tour, splits, rampcircuit, relay];
 }

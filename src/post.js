@@ -11,21 +11,22 @@ function quadPass(material) {
 }
 
 export class Pipeline {
-  constructor(renderer, camera) {
+  constructor(renderer, camera, quality = {}) {
     this.renderer = renderer; this.camera = camera;
+    this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false;
     const size = new THREE.Vector2(); renderer.getDrawingBufferSize(size);
     this.size = size;
     const w = size.x, h = size.y;
     const depthA = new THREE.DepthTexture(w, h); depthA.format = THREE.DepthFormat; depthA.type = THREE.UnsignedIntType;
-    this.sceneRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthTexture: depthA, depthBuffer: true, samples: msaaSamplesFor(w, h) });
+    this.sceneRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthTexture: depthA, depthBuffer: true, samples: msaaSamplesFor(w, h, quality.msaaSamples) });
     const depthB = new THREE.DepthTexture(w, h); depthB.format = THREE.DepthFormat; depthB.type = THREE.UnsignedIntType;
-    // The opaque scene has already been resolved from 4x MSAA before it reaches this target. Water and spray are
+    // The opaque scene has already been resolved from hardware MSAA before it reaches this target. Water and spray are
     // full-screen or alpha-soft, and the composite is followed by FXAA, so a second multisample colour + depth pair
     // only duplicates a very large set of GPU attachments (about 169 MiB at a 2560x1440 drawing buffer).
     this.compRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthTexture: depthB, depthBuffer: true });
     this.ldrRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.UnsignedByteType, depthBuffer: false });
-    this.aaRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.UnsignedByteType, depthBuffer: false });
-    const bw = Math.floor(w / 4), bh = Math.floor(h / 4);
+    this.aaRT = new THREE.WebGLRenderTarget(this.finalEnabled ? w : 1, this.finalEnabled ? h : 1, { type: THREE.UnsignedByteType, depthBuffer: false });
+    const bw = this.bloomEnabled ? Math.max(1, Math.floor(w / 4)) : 1, bh = this.bloomEnabled ? Math.max(1, Math.floor(h / 4)) : 1;
     this.bloomA = new THREE.WebGLRenderTarget(bw, bh, { type: THREE.HalfFloatType, depthBuffer: false });
     this.bloomB = new THREE.WebGLRenderTarget(bw, bh, { type: THREE.HalfFloatType, depthBuffer: false });
 
@@ -57,12 +58,12 @@ export class Pipeline {
       uniforms: {
         tColor: { value: this.compRT.texture }, tDepth: { value: depthB }, tBloom: { value: this.bloomA.texture },
         near: { value: camera.near }, far: { value: camera.far }, exposure: { value: 1.0 },
-        fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, fogMax: { value: 0.6 }, bloomAmt: { value: 0.12 },
+        fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, fogMax: { value: 0.6 }, bloomAmt: { value: 0.12 }, bloomQuality: { value: this.bloomEnabled ? 1 : 0 },
         invProj: { value: new THREE.Matrix4() }, camMat: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       },
       vertexShader: QUAD_VS,
       fragmentShader: `
-        uniform sampler2D tColor, tDepth, tBloom; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt; uniform vec3 fogColor, sunDir;
+        uniform sampler2D tColor, tDepth, tBloom; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt, bloomQuality; uniform vec3 fogColor, sunDir;
         uniform mat4 invProj, camMat; varying vec2 vUv;
         vec3 aces(vec3 x) { const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14; return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0); }
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
@@ -80,7 +81,7 @@ export class Pipeline {
             f = clamp(f, 0.0, fogMax);
             c = mix(c, fc * 1.05, f);
           }
-          c += texture2D(tBloom, vUv).rgb * bloomAmt;
+          c += texture2D(tBloom, vUv).rgb * bloomAmt * bloomQuality;
           c *= exposure;
           // gentle filmic grade: lift greens, soft contrast
           c = aces(c);
@@ -149,24 +150,32 @@ export class Pipeline {
         }`,
       depthTest: false, depthWrite: false,
     }));
+    this.setQuality(quality);
   }
-  resize(w, h, msaaCap = 4) {
+  setQuality(quality = {}) {
+    this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false;
+    if (this.grade) this.grade.material.uniforms.bloomQuality.value = this.bloomEnabled ? 1 : 0;
+  }
+  resize(w, h) {
+    w = Math.max(1, Math.floor(w)); h = Math.max(1, Math.floor(h));
     this.size.set(w, h);
-    const samples = msaaSamplesFor(w, h, msaaCap), sameSize = this.sceneRT.width === w && this.sceneRT.height === h;
+    const samples = msaaSamplesFor(w, h, this.quality.msaaSamples), sameSize = this.sceneRT.width === w && this.sceneRT.height === h;
     if (this.sceneRT.samples !== samples) { this.sceneRT.samples = samples; if (sameSize) this.sceneRT.dispose(); }
-    this.sceneRT.setSize(w, h); this.compRT.setSize(w, h); this.ldrRT.setSize(w, h); this.aaRT.setSize(w, h);
-    this.final.material.uniforms.resolution.value.set(w, h); this.final.material.uniforms.maxCoc.value = h * 0.0022;
-    this.bloomA.setSize(Math.floor(w / 4), Math.floor(h / 4)); this.bloomB.setSize(Math.floor(w / 4), Math.floor(h / 4));
+    this.sceneRT.setSize(w, h); this.compRT.setSize(w, h); this.ldrRT.setSize(w, h);
+    this.aaRT.setSize(this.finalEnabled ? w : 1, this.finalEnabled ? h : 1);
+    this.final.material.uniforms.resolution.value.set(w, h); this.final.material.uniforms.maxCoc.value = this.finalEnabled ? h * 0.0022 : 0;
+    const bw = this.bloomEnabled ? Math.max(1, Math.floor(w / 4)) : 1, bh = this.bloomEnabled ? Math.max(1, Math.floor(h / 4)) : 1;
+    this.bloomA.setSize(bw, bh); this.bloomB.setSize(bw, bh);
     this.fxaa.material.uniforms.resolution.value.set(1 / w, 1 / h);
   }
   memoryStats() {
     const width = this.size.x, height = this.size.y, pixels = width * height, samples = this.sceneRT.samples;
     // Approximate WebGL attachment bytes: RGBA16F + D32 resolve targets, their multisample renderbuffers, the second
-    // HDR/depth composite, two RGBA8 passes and two quarter-resolution RGBA16F bloom targets.
+    // HDR/depth composite, the active RGBA8 passes and the optional quarter-resolution RGBA16F bloom targets.
     const sceneBytes = pixels * 12 * (1 + samples);
-    const compositeBytes = pixels * 12, postBytes = pixels * 8;
-    const bloomBytes = Math.floor(width / 4) * Math.floor(height / 4) * 16;
-    return { width, height, pixels, samples, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
+    const compositeBytes = pixels * 12, postBytes = pixels * 4 + (this.finalEnabled ? pixels * 4 : 4);
+    const bloomBytes = this.bloomEnabled ? Math.floor(width / 4) * Math.floor(height / 4) * 16 : 16;
+    return { width, height, pixels, samples, bloom: this.bloomEnabled, finalPass: this.finalEnabled, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
   }
   // scene: opaque world. overlays: array of scenes rendered on top (water, fx)
   render(scene, camera, overlays, mode = 'full') {
@@ -179,17 +188,24 @@ export class Pipeline {
     const prevAuto = r.autoClear; r.autoClear = false;
     for (const s of overlays) r.render(s, camera);
     r.autoClear = prevAuto;
-    // bloom
-    r.setRenderTarget(this.bloomA); r.render(this.bright.scene, this.bright.cam);
-    this.blur.material.uniforms.tColor.value = this.bloomA.texture; this.blur.material.uniforms.dir.value.set(1 / this.bloomA.width, 0);
-    r.setRenderTarget(this.bloomB); r.render(this.blur.scene, this.blur.cam);
-    this.blur.material.uniforms.tColor.value = this.bloomB.texture; this.blur.material.uniforms.dir.value.set(0, 1 / this.bloomA.height);
-    r.setRenderTarget(this.bloomA); r.render(this.blur.scene, this.blur.cam);
+    // Bloom remains part of the cinematic and balanced paths. The two lower tiers keep the weather grade but avoid
+    // three extra render-target passes and the attachments behind them.
+    if (this.bloomEnabled) {
+      r.setRenderTarget(this.bloomA); r.render(this.bright.scene, this.bright.cam);
+      this.blur.material.uniforms.tColor.value = this.bloomA.texture; this.blur.material.uniforms.dir.value.set(1 / this.bloomA.width, 0);
+      r.setRenderTarget(this.bloomB); r.render(this.blur.scene, this.blur.cam);
+      this.blur.material.uniforms.tColor.value = this.bloomB.texture; this.blur.material.uniforms.dir.value.set(0, 1 / this.bloomA.height);
+      r.setRenderTarget(this.bloomA); r.render(this.blur.scene, this.blur.cam);
+    }
     // grade
     const u = this.grade.material.uniforms;
     u.invProj.value.copy(camera.projectionMatrixInverse); u.camMat.value.copy(camera.matrixWorld);
     r.setRenderTarget(this.ldrRT); r.render(this.grade.scene, this.grade.cam);
-    r.setRenderTarget(this.aaRT); r.render(this.fxaa.scene, this.fxaa.cam);
-    r.setRenderTarget(null); r.render(this.final.scene, this.final.cam);
+    if (this.finalEnabled) {
+      r.setRenderTarget(this.aaRT); r.render(this.fxaa.scene, this.fxaa.cam);
+      r.setRenderTarget(null); r.render(this.final.scene, this.final.cam);
+    } else {
+      r.setRenderTarget(null); r.render(this.fxaa.scene, this.fxaa.cam);
+    }
   }
 }

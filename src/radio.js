@@ -83,7 +83,7 @@ export class RadioDirector {
     this.enabled = false; this.started = false; this.lastAmbient = '';
     this.lastWeather = this.environment.key; this.lastRegion = null;
     this.lastEncounter = null; this.lastEncounterKnown = false; this.lastEncounterState = '';
-    this.lastLawBand = 0; this.lastPursuit = false; this.lastCargo = false; this.lastDisabled = false;
+    this.lastLawBand = 0; this.lastPursuit = false; this.lastPursuitUnits = 0; this.lastCargo = false; this.lastDisabled = false;
   }
 
   intro() {
@@ -98,6 +98,8 @@ export class RadioDirector {
     const pool = region ? [...(REGION_TRAFFIC[region.id] || [])] : [];
     const working = this.game.life?.traffic?.radioPool?.() || [];
     for (const call of working) pool.push(call);
+    const navigation = this.navigationAids?.radioPool?.() || [];
+    for (const call of navigation) pool.push(call);
     const hour = this.environment.hour, night = hour < 5.5 || hour > 20.5;
     const locals = this.reputation ? this.reputation.score('locals') : 0;
     const fwc = this.reputation ? this.reputation.score('fwc') : 0;
@@ -136,7 +138,11 @@ export class RadioDirector {
     if (memory.outcome === 'spotlight-spooked') return { channel: 'CH 16', speaker: 'MARA KEENE · TOWER', text: 'FWC checked the refuge cut after the warning shot. No dead animal located; blackout skiff remains unidentified.' };
     if (memory.outcome === 'spotlight-taken') return { channel: 'FWC TAC', speaker: 'FWC DISPATCH', text: 'Evidence team found the take site in the closed cut. No tag, no restraint gear, no clean hull number.' };
     if (memory.outcome === 'spotlight-escaped') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Blackout skiff did not make the public ramp. Hull description stays active on the refuge file.' };
+    if (memory.outcome === 'race-won') return { channel: 'CH 72', speaker: 'MUD HEN', text: 'Tower Boat ran all six clean. Money is paid. We will mark another cut when the tide turns.' };
+    if (memory.outcome === 'race-dirty') return { channel: 'CH 72', speaker: 'MUD HEN', text: 'Tower Boat crossed first. My rub rail says half that purse came off their bow.' };
+    if (memory.outcome === 'race-lost') return { channel: 'CH 72', speaker: 'MUD HEN', text: 'Six marks, one winner. Tower Boat knows which hull crossed first.' };
     if (memory.outcome === 'patrol-seizure') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Evidence bag from the tower airboat is aboard twenty-seven. Citation remains open.' };
+    if (memory.outcome === 'patrol-cited') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Tower airboat stopped in the backcountry. Citation is written and the patrol is clear.' };
     if (memory.outcome === 'patrol-cleared') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Dispatch, twenty-seven. Tower airboat checked clean. Clear the stop.' };
     if (memory.outcome === 'patrol-escaped') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Tower airboat got into the narrow water. Keep the hull on the call sheet.' };
     if (memory.outcome === 'package-returned') return { channel: 'CH 72', speaker: 'CAL ROOK · LOST KEY', text: 'Parcel made it back unopened. Tower Boat kept their word.' };
@@ -216,7 +222,8 @@ export class RadioDirector {
     else if (e.type === 'fire') this.transmit({ channel: 'CH 16', speaker: 'BURNING SKIFF', text: 'Mayday, mayday. Outboard and portable tank are burning. One person pinned forward. Any vessel close, come in from the bow.', priority: 4, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
     else if (e.type === 'manatee') this.transmit({ channel: 'CH 16', speaker: 'MARA KEENE · TOWER', text: 'Tower Boat, that numbered float is moving with a manatee. Hold outside its turn, get the exact position, and call Wildlife Alert. Do not touch the gear.', priority: 3, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
     else if (e.type === 'spotlight') this.transmit({ channel: 'CH 16', speaker: 'MARA KEENE · TOWER', text: 'Black skiff is sweeping a closed refuge cut with no navigation lights. Long gun visible, no restraint line. Copy the hull and position; do not crowd them.', priority: 4, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
-    else if (e.type === 'patrol') this.transmit({ channel: 'CH 16', speaker: 'WARDEN SOTO · FWC 27', text: e.wanted ? 'Emerald airboat, reduce speed and hold your line. This is a directed stop.' : e.recognized ? 'Tower Boat, Soto on twenty-seven. Bring the prop to idle for a quick check.' : 'Airboat ahead, this is FWC twenty-seven. Idle and maintain your heading.', priority: e.wanted ? 4 : 3, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
+    else if (e.type === 'race') this.transmit({ channel: 'CH 72', speaker: 'MUD HEN', text: `Tower Boat, six marks through the cut. ${e.stake ? 'Hundred dollars down' : 'Open purse'}, first hull through all six. Keep it in the water.`, priority: 2, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
+    else if (e.type === 'patrol') this.transmit({ channel: 'CH 16', speaker: 'WARDEN SOTO · FWC 27', text: e.state === 'pursuit' ? 'Tower airboat, you struck a patrol vessel. Stop your engine now.' : e.wanted ? 'Emerald airboat, reduce speed and hold your line. This is a directed stop.' : e.recognized ? 'Tower Boat, Soto on twenty-seven. Bring the prop to idle for a quick check.' : 'Airboat ahead, this is FWC twenty-seven. Idle and maintain your heading.', priority: e.wanted ? 4 : 3, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
     else if (e.type === 'smuggler') this.transmit({ channel: 'CH 72', speaker: 'CAL ROOK · LOST KEY', text: e.hostile ? 'Tower Boat. You know why that bundle is sitting where you can see it.' : e.trusted ? 'Tower Boat, Lost Key. The crew nearby knows your hull. Give them a clean signal.' : 'Somebody lost a parcel in your cut. Somebody else is still watching it.', priority: e.hostile ? 3 : 2, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
     else if (e.type === 'salvage') this.transmit({ channel: 'CH 16', speaker: 'JUNE BELL · SPLIT PINE', text: 'Skiff went down in that weather. Three fuel drums broke loose—pick them up before a root opens one.', priority: 2, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
     else if (e.type === 'netline') this.transmit({ channel: 'CH 16', speaker: 'MARA KEENE · TOWER', text: 'Tower Boat, those floats are holding a monofilament wall. Do not lift it. Mark the ends and call twenty-seven.', priority: 3, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
@@ -224,6 +231,8 @@ export class RadioDirector {
 
   encounterStateCall(e, state) {
     if (e.type === 'patrol' && state === 'pursuit') this.transmit({ channel: 'CH 16', speaker: 'WARDEN SOTO · FWC 27', text: 'Tower airboat, you are failing to stop. Patrol units switch to the back channels.', priority: 4, key: 'patrol:pursuit', cooldown: 50 });
+    else if (e.type === 'race' && state === 'countdown') this.transmit({ channel: 'CH 72', speaker: 'MUD HEN', text: e.stake ? 'Money is down. Hold where you are. We go on the horn.' : 'Open purse. Hold where you are. We go on the horn.', priority: 2, key: 'race:countdown', cooldown: 40 });
+    else if (e.type === 'race' && state === 'running') this.transmit({ channel: 'CH 72', speaker: 'MUD HEN', text: 'Horn. Run it.', priority: 3, key: 'race:running', cooldown: 40 });
     else if (e.type === 'smuggler' && state === 'chase') this.transmit({ channel: 'CH 72', speaker: 'UNKNOWN SKIFF', text: 'You picked up the wrong parcel. Put it in the water and turn away.', priority: 4, key: 'runners:chase', cooldown: 50 });
     else if (e.type === 'distress' && state === 'repair') this.transmit({ channel: 'CH 16', speaker: 'ELI · SKIFF 6', text: 'Hold her steady there. Fuel line is fouled; I need half a minute.', priority: 2, key: 'distress:repair', cooldown: 40 });
     else if (e.type === 'distress' && state === 'aboard') this.transmit({ channel: 'CH 16', speaker: 'ELI · SKIFF 6', text: `I am aboard Tower Boat. We are running for ${e.drop?.name || 'a safe berth'}; the skiff is staying on the flare.`, priority: 3, key: 'distress:aboard', cooldown: 40 });
@@ -284,6 +293,12 @@ export class RadioDirector {
     this.lastLawBand = band;
     if (this.law.pursuit && !this.lastPursuit) this.transmit({ channel: 'FWC TAC', speaker: 'FWC DISPATCH', text: 'Twenty-seven is in pursuit of the tower airboat. Backcountry units hold the river exits.', priority: 4, key: 'law:pursuit', cooldown: 60 });
     this.lastPursuit = this.law.pursuit;
+    const pursuitUnits = e?.type === 'patrol' && e.state === 'pursuit' ? Math.max(1, Number(e.units) || 1) : 0;
+    if (pursuitUnits > this.lastPursuitUnits) {
+      if (pursuitUnits >= 3) this.transmit({ channel: 'FWC TAC', speaker: 'SHALLOW WATER 4', text: 'Twenty-seven, I am on the opposite bank. Closing the gap now.', priority: 4, key: 'law:backup:3', cooldown: 35 });
+      else if (pursuitUnits >= 2) this.transmit({ channel: 'FWC TAC', speaker: 'MARINE 12', text: 'Twenty-seven, Marine Twelve entering the next cut. I have the bow.', priority: 4, key: 'law:backup:2', cooldown: 35 });
+    }
+    this.lastPursuitUnits = pursuitUnits;
 
     if (cargoFresh) this.transmit({ channel: 'CH 72', speaker: 'CAL ROOK · LOST KEY', text: 'Keep that package off sixteen. Too many uniforms have their radios open.', priority: 3, key: 'cargo:hot', cooldown: 90 });
     this.lastCargo = cargo;
@@ -304,6 +319,7 @@ export class RadioDirector {
     if (!this.enabled) {
       this.enabled = true; this.lastWeather = this.environment.key; this.lastRegion = this.regions.current ? this.regions.current.id : null;
       this.lastLawBand = this.law.attention > 0.04 ? Math.ceil(this.law.attention) : 0; this.lastPursuit = this.law.pursuit;
+      const e = this.encounters.active; this.lastPursuitUnits = e?.type === 'patrol' && e.state === 'pursuit' ? Math.max(1, Number(e.units) || 1) : 0;
       this.lastCargo = this.law.hasContraband(); this.lastDisabled = this.condition.needsTow();
     }
     this.clock += dt; this.observe();

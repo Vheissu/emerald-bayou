@@ -102,6 +102,13 @@ export class EngineAudio {
     const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(520, now); o.frequency.exponentialRampToValueAtTime(180, now + 0.09);
     const g2 = ctx.createGain(); g2.gain.setValueAtTime(vol * 0.25, now); g2.gain.exponentialRampToValueAtTime(0.0001, now + 0.1); o.connect(g2); g2.connect(this.sfx); o.start(now); o.stop(now + 0.12);
   }
+  // An ultrasonic animal tag is heard through the boat's receiver as a short electronic double ping. Distance drives
+  // both the volume and the small pitch rise, so the player can search the cut without an arcade waypoint.
+  tagPing(vol = 0.18, closeness = 0) {
+    const near = Math.max(0, Math.min(1, Number(closeness) || 0));
+    this.tone(910 + near * 260, 0.045, vol, 'sine');
+    this.tone(1040 + near * 330, 0.035, vol * 0.72, 'sine', 0.085);
+  }
   // bull gator: a chesty rumble with a rasp on top
   bellow(vol = 0.5) {
     if (!this.ctx || vol < 0.02) return; const ctx = this.ctx, now = ctx.currentTime;

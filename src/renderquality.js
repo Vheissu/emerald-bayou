@@ -1,77 +1,148 @@
-// Full-size post targets dominate GPU memory on dense displays. Keep a high-resolution image while preventing a
-// Retina or 4K window from multiplying every HDR, depth, antialiasing and reflection attachment without a bound.
+// The map and simulation stay identical at every tier. These profiles only budget GPU-heavy screen-space work.
+// Cinematic is the existing presentation; lower tiers are selected from conservative hardware signals and only
+// reached at runtime after sustained missed frame budgets.
 export const MAX_DEVICE_PIXEL_RATIO = 2;
 export const MAX_DRAW_PIXELS = 3_000_000;
 export const FOUR_SAMPLE_MAX_PIXELS = 1_600_000;
 
-export function pixelRatioFor(width, height, devicePixelRatio = 1) {
+export const QUALITY_PROFILES = Object.freeze([
+  Object.freeze({
+    id: 'fallback', label: 'Fallback', maxDrawPixels: 800_000, maxDevicePixelRatio: 1,
+    msaaSamples: 0, shadowMapSize: 1024, reflectionScale: 0.25, reflectionInterval: 3,
+    reflectionMipmaps: false, bloom: false, finalPass: false,
+  }),
+  Object.freeze({
+    id: 'performance', label: 'Performance', maxDrawPixels: 1_250_000, maxDevicePixelRatio: 1.25,
+    msaaSamples: 0, shadowMapSize: 1024, reflectionScale: 0.32, reflectionInterval: 2,
+    reflectionMipmaps: false, bloom: false, finalPass: false,
+  }),
+  Object.freeze({
+    id: 'balanced', label: 'Balanced', maxDrawPixels: 2_000_000, maxDevicePixelRatio: 1.6,
+    msaaSamples: 2, shadowMapSize: 2048, reflectionScale: 0.4, reflectionInterval: 2,
+    reflectionMipmaps: false, bloom: true, finalPass: false,
+  }),
+  Object.freeze({
+    id: 'cinematic', label: 'Cinematic', maxDrawPixels: MAX_DRAW_PIXELS, maxDevicePixelRatio: MAX_DEVICE_PIXEL_RATIO,
+    msaaSamples: 4, shadowMapSize: 4096, reflectionScale: 0.5, reflectionInterval: 1,
+    reflectionMipmaps: true, bloom: true, finalPass: true,
+  }),
+]);
+
+export function qualityProfile(level) {
+  const index = Math.max(0, Math.min(QUALITY_PROFILES.length - 1, Math.round(Number.isFinite(level) ? level : QUALITY_PROFILES.length - 1)));
+  return QUALITY_PROFILES[index];
+}
+
+// Thread count is a poor proxy for a decade-old desktop GPU. These narrow renderer-name matches only cap known
+// low-end families; unknown and modern discrete GPUs retain the existing high-end path.
+export function gpuQualityCeiling(rendererName = '') {
+  const name = String(rendererName || '').toLowerCase();
+  if (!name) return QUALITY_PROFILES.length - 1;
+  if (/swiftshader|llvmpipe|softpipe|software raster|microsoft basic render|vmware/.test(name)) return 0;
+
+  if (/intel.*(?:hd graphics|uhd graphics|iris|iris pro|iris plus)/.test(name)) {
+    const model = name.match(/(?:hd graphics|uhd graphics|iris(?: pro| plus)?(?: graphics)?)\s*(\d{3,4})/);
+    if (model && model[1].length >= 4) return 1; // HD/Iris 4000-6200 generation, common in 2012-2015 machines
+    return 2;
+  }
+  if (/geforce\s+(?:8|9)\d{3}m?\b/.test(name)) return 1;
+  const geforce = name.match(/geforce\s+(gtx|gt)\s*(\d{3,4})/);
+  if (geforce) {
+    const model = Number(geforce[2]);
+    if (geforce[1] === 'gt' || model <= 750) return 1;
+    if (model <= 1050) return 2;
+  }
+  if (/radeon\s+hd\s+\d|firepro\s+[dmvw]\d/.test(name)) return 1;
+  if (/radeon\s+(?:r[579]|pro\s+[45]\d\d)\b/.test(name)) return 2;
+  if (/mali-(?:4|t6|t7)|adreno.*\b[34]\d\d\b/.test(name)) return 1;
+  return QUALITY_PROFILES.length - 1;
+}
+
+export function webglRendererName(gl) {
+  if (!gl) return '';
+  try {
+    const debug = gl.getExtension?.('WEBGL_debug_renderer_info');
+    return String(gl.getParameter(debug?.UNMASKED_RENDERER_WEBGL || gl.RENDERER) || '');
+  } catch (error) { return ''; }
+}
+
+export function initialQualityLevel({ deviceMemory, hardwareConcurrency, maxTextureSize, saveData = false, gpuRenderer = '' } = {}) {
+  let level = QUALITY_PROFILES.length - 1;
+  if (saveData || (Number.isFinite(deviceMemory) && deviceMemory <= 2) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 2) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 2048)) level = 0;
+  else if ((Number.isFinite(deviceMemory) && deviceMemory <= 4) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 4) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 4096)) level = 1;
+  else if ((Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 6) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 8192)) level = 2;
+  return Math.min(level, gpuQualityCeiling(gpuRenderer));
+}
+
+export function pixelRatioFor(width, height, devicePixelRatio = 1, maxDrawPixels = MAX_DRAW_PIXELS, maxDevicePixelRatio = MAX_DEVICE_PIXEL_RATIO) {
   const cssPixels = Math.max(1, width) * Math.max(1, height);
-  const native = Math.min(MAX_DEVICE_PIXEL_RATIO, Math.max(0.1, Number.isFinite(devicePixelRatio) ? devicePixelRatio : 1));
-  const budget = Math.sqrt(MAX_DRAW_PIXELS / cssPixels);
+  const native = Math.min(Math.max(0.1, maxDevicePixelRatio), Math.max(0.1, Number.isFinite(devicePixelRatio) ? devicePixelRatio : 1));
+  const budget = Math.sqrt(Math.max(1, maxDrawPixels) / cssPixels);
   return Math.min(native, budget);
 }
 
-// At high drawing-buffer density, two hardware samples plus the existing FXAA pass retain clean edges. Four samples
-// remain available at lower resolutions, where their attachment cost is modest and each sample is more visible.
-// `cap` lets the adaptive governor stop samples climbing back to four as it shrinks the buffer on a weak GPU.
-export function msaaSamplesFor(width, height, cap = 4) {
-  return Math.min(cap, Math.max(1, width) * Math.max(1, height) > FOUR_SAMPLE_MAX_PIXELS ? 2 : 4);
+export function msaaSamplesFor(width, height, maxSamples = 4) {
+  if (!Number.isFinite(maxSamples) || maxSamples <= 0) return 0;
+  const preferred = Math.max(1, width) * Math.max(1, height) > FOUR_SAMPLE_MAX_PIXELS ? 2 : 4;
+  return Math.min(Math.floor(maxSamples), preferred);
 }
 
-// Frame-time governor for machines that cannot hold the fill-rate budget above. The cost of this game is almost
-// entirely per-pixel, so the levers are drawing-buffer scale, the MSAA sample cap and the sun shadow map. A machine
-// holding 60 fps never leaves rung 0 and renders exactly as before; a struggling one steps down one rung at a time
-// (each ~28% less fill) and only climbs back after a long comfortable stretch, so the size never oscillates.
-// Frames are fed unclamped; anything over IGNORE_MS (tab switch, shader compile, GC pause) is discarded.
-const RUNGS = [
-  { renderScale: 1.0, msaaCap: 4, shadowMapSize: 4096 },
-  { renderScale: 0.85, msaaCap: 2, shadowMapSize: 4096 },
-  { renderScale: 0.72, msaaCap: 2, shadowMapSize: 2048 },
-  { renderScale: 0.6, msaaCap: 2, shadowMapSize: 2048 },
-  { renderScale: 0.5, msaaCap: 2, shadowMapSize: 2048 },
-];
-const STEP_DOWN_MS = 21.5; // sustained slower than ~46 fps: give fill rate back
-const STEP_UP_MS = 15.2;   // sustained faster than ~65 fps: try the next rung up
-const STEP_DOWN_AFTER = 1.6, STEP_UP_AFTER = 11, SETTLE = 2.5, PROBE = 3; // seconds
-const IGNORE_MS = 250;
+export class AdaptiveQualityController {
+  constructor({ initialLevel = QUALITY_PROFILES.length - 1, minLevel = 0, maxLevel = QUALITY_PROFILES.length - 1, sampleSeconds = 2.5 } = {}) {
+    this.minLevel = Math.max(0, Math.min(QUALITY_PROFILES.length - 1, minLevel));
+    this.maxLevel = Math.max(this.minLevel, Math.min(QUALITY_PROFILES.length - 1, maxLevel));
+    this.level = Math.max(this.minLevel, Math.min(this.maxLevel, initialLevel));
+    this.sampleSeconds = Math.max(1, sampleSeconds);
+    this.cooldown = 0; this.headroomWindows = 0; this.lastSample = null;
+    this.resetWindow();
+  }
 
-export class AdaptiveQuality {
-  constructor(onChange) {
-    this.onChange = onChange;
-    this.rung = 0; this.ema = 1000 / 60; this.slowT = 0; this.fastT = 0; this.settleT = 0;
-    this.probe = null; this.lockT = 0;
+  get profile() { return qualityProfile(this.level); }
+
+  resetWindow() { this.elapsed = 0; this.frames = 0; this.slowFrames = 0; this.stallFrames = 0; }
+
+  reset() { this.resetWindow(); this.headroomWindows = 0; }
+
+  configure({ initialLevel = this.level, minLevel = this.minLevel, maxLevel = this.maxLevel } = {}) {
+    const last = QUALITY_PROFILES.length - 1;
+    this.minLevel = Math.max(0, Math.min(last, Math.round(Number.isFinite(minLevel) ? minLevel : 0)));
+    this.maxLevel = Math.max(this.minLevel, Math.min(last, Math.round(Number.isFinite(maxLevel) ? maxLevel : last)));
+    this.level = Math.max(this.minLevel, Math.min(this.maxLevel, Math.round(Number.isFinite(initialLevel) ? initialLevel : this.level)));
+    this.cooldown = 0; this.lastSample = null; this.reset();
+    return this.profile;
   }
-  get renderScale() { return RUNGS[this.rung].renderScale; }
-  get msaaCap() { return RUNGS[this.rung].msaaCap; }
-  get shadowMapSize() { return RUNGS[this.rung].shadowMapSize; }
-  frame(frameMs) {
-    if (!(frameMs > 0) || frameMs > IGNORE_MS) return;
-    const dt = frameMs / 1000;
-    if (this.settleT > 0) { this.settleT -= dt; return; } // let reallocation hitches pass unmeasured
-    this.ema += (frameMs - this.ema) * 0.05;
-    if (this.probe) {
-      // A down-step must actually buy frame time. A machine pinned by a 30 Hz cap, vsync or the CPU
-      // reads slow no matter how few pixels are drawn; shrinking its image helps nobody. Undo and hold.
-      this.probe.t += dt;
-      if (this.probe.t > PROBE) {
-        if (this.ema > this.probe.before * 0.93) { this.lockT = 90; this.change(this.probe.rung); }
-        this.probe = null;
+
+  observe(frameSeconds, active = true) {
+    if (!active || !Number.isFinite(frameSeconds) || frameSeconds <= 0) { this.resetWindow(); return null; }
+    const sampledSeconds = Math.min(frameSeconds, 0.2);
+    this.cooldown = Math.max(0, this.cooldown - sampledSeconds);
+    this.elapsed += sampledSeconds; this.frames++;
+    if (frameSeconds > 1 / 45) this.slowFrames++;
+    if (frameSeconds > 0.2) this.stallFrames++;
+    if (this.elapsed < this.sampleSeconds) return null;
+
+    const averageMs = this.elapsed / Math.max(1, this.frames) * 1000;
+    const slowRatio = this.slowFrames / Math.max(1, this.frames);
+    const stallFrames = this.stallFrames;
+    this.lastSample = { averageMs, slowRatio, stallFrames, frames: this.frames };
+    this.resetWindow();
+
+    let direction = 0;
+    if (this.cooldown <= 0 && this.level > this.minLevel && (averageMs > 23.5 || slowRatio > 0.32 || stallFrames >= 2)) {
+      direction = -1; this.headroomWindows = 0; this.cooldown = 4;
+    } else if (averageMs < 15.5 && slowRatio < 0.04) {
+      this.headroomWindows++;
+      if (this.cooldown <= 0 && this.level < this.maxLevel && this.headroomWindows >= 4) {
+        direction = 1; this.headroomWindows = 0; this.cooldown = 18;
       }
-      return;
-    }
-    if (this.lockT > 0) this.lockT -= dt;
-    if (this.ema > STEP_DOWN_MS) { this.slowT += dt; this.fastT = 0; }
-    else if (this.ema < STEP_UP_MS) { this.fastT += dt; this.slowT = 0; }
-    else { this.slowT = 0; this.fastT = 0; }
-    if (this.slowT > STEP_DOWN_AFTER && this.rung < RUNGS.length - 1 && this.lockT <= 0) {
-      this.probe = { before: this.ema, rung: this.rung, t: 0 };
-      this.change(this.rung + 1);
-    } else if (this.fastT > STEP_UP_AFTER && this.rung > 0) this.change(this.rung - 1);
+    } else this.headroomWindows = 0;
+
+    if (!direction) return null;
+    this.level += direction;
+    return { level: this.level, profile: this.profile, direction, averageMs, slowRatio, stallFrames };
   }
-  change(rung) {
-    this.rung = rung; this.slowT = 0; this.fastT = 0; this.settleT = SETTLE;
-    this.ema = 1000 / 60; // forget the old rung's timings; measure the new one fresh
-    if (this.onChange) this.onChange(this);
+
+  snapshot() {
+    return { level: this.level, profile: this.profile.id, cooldown: this.cooldown, lastSample: this.lastSample };
   }
-  stats() { return { rung: this.rung, frameMsEma: this.ema, probing: !!this.probe, lockT: Math.max(0, this.lockT), ...RUNGS[this.rung] }; }
 }

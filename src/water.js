@@ -6,10 +6,12 @@ const MURK_SIZE = 2400, MURK_PX = 240; // 10 m per texel
 export const WAKE_SIZE = 150; // metres covered by wake sim
 
 export class Water {
-  constructor(renderer, sunDir) {
+  constructor(renderer, sunDir, quality = {}) {
     this.renderer = renderer;
     this.size = new THREE.Vector2();
     renderer.getDrawingBufferSize(this.size);
+    this.reflectionScale = quality.reflectionScale ?? 0.5;
+    this.reflectionMipmaps = quality.reflectionMipmaps !== false;
     this.level = 0;
     this.seaState = 0;
     this.windAngle = 0;
@@ -17,8 +19,8 @@ export class Water {
     this.windSpeed = 0;
 
     // ---- reflection ----
-    this.reflRT = new THREE.WebGLRenderTarget(Math.floor(this.size.x * 0.5), Math.floor(this.size.y * 0.5), {
-      type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
+    this.reflRT = new THREE.WebGLRenderTarget(Math.max(1, Math.floor(this.size.x * this.reflectionScale)), Math.max(1, Math.floor(this.size.y * this.reflectionScale)), {
+      type: THREE.HalfFloatType, generateMipmaps: this.reflectionMipmaps, minFilter: this.reflectionMipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter, magFilter: THREE.LinearFilter,
     });
     this.reflCamera = new THREE.PerspectiveCamera();
     this.textureMatrix = new THREE.Matrix4();
@@ -250,11 +252,27 @@ export class Water {
     this._clip = new THREE.Plane();
     this._lookAt = new THREE.Vector3();
     this._rot = new THREE.Matrix4();
+    this._reflectionPoint = new THREE.Vector3();
+    this._clipVector = new THREE.Vector4();
+  }
+
+  setQuality(quality = {}) {
+    this.reflectionScale = quality.reflectionScale ?? 0.5;
+    this.reflectionMipmaps = quality.reflectionMipmaps !== false;
+    this.reflRT.texture.generateMipmaps = this.reflectionMipmaps;
+    this.reflRT.texture.minFilter = this.reflectionMipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+    this.reflRT.texture.needsUpdate = true;
   }
 
   resize(w, h) {
     this.size.set(w, h);
-    this.reflRT.setSize(Math.floor(w * 0.5), Math.floor(h * 0.5));
+    this.reflRT.setSize(Math.max(1, Math.floor(w * this.reflectionScale)), Math.max(1, Math.floor(h * this.reflectionScale)));
+  }
+
+  memoryStats() {
+    const width = this.reflRT.width, height = this.reflRT.height, pixels = width * height;
+    const colorBytes = pixels * 8 * (this.reflectionMipmaps ? 4 / 3 : 1), depthBytes = pixels * 4;
+    return { width, height, pixels, mipmaps: this.reflectionMipmaps, estimatedAttachmentBytes: Math.round(colorBytes + depthBytes) };
   }
 
   waveHeight(x, z, t) {
@@ -299,7 +317,7 @@ export class Water {
 
   renderReflection(scene, camera) {
     const rc = this.reflCamera;
-    const pos = new THREE.Vector3(0, this.level, 0);
+    const pos = this._reflectionPoint.set(0, this.level, 0);
     const normal = this._normal;
     this._view.subVectors(pos, camera.position);
     if (this._view.dot(normal) > 0) return;
@@ -319,7 +337,7 @@ export class Water {
     // oblique near plane
     this._clip.setFromNormalAndCoplanarPoint(normal, pos);
     this._clip.applyMatrix4(rc.matrixWorldInverse);
-    const clip = new THREE.Vector4(this._clip.normal.x, this._clip.normal.y, this._clip.normal.z, this._clip.constant);
+    const clip = this._clipVector.set(this._clip.normal.x, this._clip.normal.y, this._clip.normal.z, this._clip.constant);
     const proj = rc.projectionMatrix;
     const q = this._q;
     q.x = (Math.sign(clip.x) + proj.elements[8]) / proj.elements[0];

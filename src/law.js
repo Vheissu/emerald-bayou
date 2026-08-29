@@ -1,3 +1,5 @@
+import { wantedLevel } from './pursuit.js';
+
 const clamp = (v, lo = 0, hi = 5) => Math.max(lo, Math.min(hi, v));
 
 export class Law {
@@ -5,8 +7,8 @@ export class Law {
     Object.assign(this, o); // game, phys, environment, audio
     this.stats = this.game.save.law || { citations: 0, escapes: 0, cleanChecks: 0, violations: 0, seizures: 0 };
     this.game.save.law = this.stats;
-    this.attention = 0; this.sinceEvent = 999; this.violationCd = 0; this.pursuit = false;
-    this.hotCargoT = 0; this.lastReason = ''; this.hudT = 0; this.enabled = false;
+    this.attention = clamp(Number(this.stats.attention) || 0); this.sinceEvent = 999; this.violationCd = 0; this.pursuit = false;
+    this.hotCargoT = 0; this.lastReason = typeof this.stats.lastReason === 'string' ? this.stats.lastReason : ''; this.hudT = 0; this.enabled = false;
     this.el = document.getElementById('lawState');
     this.keyHandler = e => { if (import.meta.env.DEV && e.code === 'F4' && !e.repeat && this.enabled) { e.preventDefault(); this.add(3.2, 'reported collision'); } };
     window.addEventListener('keydown', this.keyHandler);
@@ -16,7 +18,7 @@ export class Law {
     const before = this.attention; this.attention = clamp(this.attention + amount); this.sinceEvent = 0; this.lastReason = reason;
     if (amount > 0) this.stats.violations = (this.stats.violations || 0) + 1;
     if (announce && amount > 0 && Math.ceil(this.attention) > Math.ceil(before)) { this.audio.warn(); this.game.toast('FWC attention', reason, 2.4); }
-    this.game.persist(); if (this.onAttention) this.onAttention(this.attention);
+    this.rememberAttention(); this.game.persist(); if (this.onAttention) this.onAttention(this.attention);
   }
 
   violation(amount, reason, announce = false) {
@@ -24,7 +26,9 @@ export class Law {
     this.violationCd = Math.max(2.5, amount * 4); this.add(amount, reason, announce);
   }
 
-  cool(amount) { this.attention = clamp(this.attention - amount); this.sinceEvent = Math.max(this.sinceEvent, 25); }
+  rememberAttention() { this.stats.attention = Math.round(this.attention * 1000) / 1000; this.stats.lastReason = this.lastReason; }
+
+  cool(amount) { this.attention = clamp(this.attention - amount); this.sinceEvent = Math.max(this.sinceEvent, 25); this.rememberAttention(); }
 
   addContraband() {
     this.hotCargoT = Math.max(this.hotCargoT, 190); this.add(1.65, 'unmarked cargo reported in the channel');
@@ -52,7 +56,7 @@ export class Law {
   }
 
   escaped() {
-    this.stats.escapes = (this.stats.escapes || 0) + 1; this.sinceEvent = 0; this.lastReason = 'patrol searching the back channels'; this.game.persist();
+    this.stats.escapes = (this.stats.escapes || 0) + 1; this.sinceEvent = 0; this.lastReason = 'patrol searching the back channels'; this.rememberAttention(); this.game.persist();
     if (this.game.reputation) {
       this.game.reputation.change('fwc', -1, 'patrol-escape', 'FWC marked the hull after the pursuit.', false);
       this.game.reputation.change('runners', 0.6, 'patrol-escape', 'The backchannel heard you lost a patrol in the cuts.', true);
@@ -73,16 +77,17 @@ export class Law {
       const conceal = 1 + (night ? 0.35 : 0) + this.environment.values.storm * 0.85;
       this.attention = Math.max(0, this.attention - dt * 0.018 * conceal);
     }
+    this.rememberAttention();
     this.hudT -= dt; if (this.hudT <= 0) { this.hudT = 0.16; this.render(); }
   }
 
   render() {
     if (!this.el) return;
-    const n = this.attention > 0.04 ? Math.max(1, Math.ceil(this.attention)) : 0;
-    this.el.classList.toggle('on', n > 0 || this.hotCargoT > 0);
+    const n = wantedLevel(this.attention);
+    this.el.classList.toggle('on', n > 0 || this.hotCargoT > 0); this.el.classList.toggle('pursuit', this.pursuit);
     if (!n && !this.hotCargoT) { this.el.innerHTML = ''; return; }
-    let pips = ''; for (let i = 0; i < 5; i++) pips += `<i class="${i < n ? 'lit' : ''}"></i>`;
-    const cargo = this.hotCargoT > 0 ? `<small>unmarked cargo · ${Math.ceil(this.hotCargoT)}s</small>` : this.lastReason ? `<small>${this.lastReason}</small>` : '';
-    this.el.innerHTML = `<span>FWC attention</span><b>${pips}</b>${cargo}`;
+    let stars = ''; for (let i = 0; i < 5; i++) stars += `<i class="${i < n ? 'lit' : ''}">★</i>`;
+    const cargo = this.hotCargoT > 0 ? `<small>unmarked cargo · ${Math.ceil(this.hotCargoT)}s</small>` : this.lastReason ? `<small>${this.pursuit ? 'active pursuit · ' : ''}${this.lastReason}</small>` : '';
+    this.el.innerHTML = `<span>${this.pursuit ? 'Wanted · FWC pursuit' : 'Wanted'}</span><b aria-label="${n} of 5 wanted stars">${stars}</b>${cargo}`;
   }
 }
