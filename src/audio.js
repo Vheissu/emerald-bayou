@@ -180,6 +180,24 @@ export class EngineAudio {
     if (!this.ob) { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 95; const o2 = ctx.createOscillator(); o2.type = 'square'; o2.frequency.value = 190; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 1.5; const g = ctx.createGain(); g.gain.value = 0; o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(this.sfx); o.start(); o2.start(); this.ob = { o, o2, g, lp }; }
     const b = this.ob; b.g.gain.setTargetAtTime(Math.min(0.12, level * 0.12), now, 0.15); b.o.frequency.setTargetAtTime(95 * pitch, now, 0.2); b.o2.frequency.setTargetAtTime(191 * pitch, now, 0.2);
   }
+  // One pooled rotor bed is created only when a rescue aircraft is actually heard. Distance drives its gain;
+  // blade loading nudges the pulse rate during an approach or hover without allocating per-frame audio nodes.
+  helicopter(level = 0, load = 1) {
+    if (!this.ctx || (!this.heli && level <= 0.001)) return; const ctx = this.ctx, now = ctx.currentTime;
+    if (!this.heli) {
+      const beat = ctx.createOscillator(); beat.type = 'sawtooth'; beat.frequency.value = 18.5;
+      const harmonic = ctx.createOscillator(); harmonic.type = 'square'; harmonic.frequency.value = 37;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 260; lp.Q.value = 1.4;
+      const beatGain = ctx.createGain(); beatGain.gain.value = 0; beat.connect(lp); harmonic.connect(lp); lp.connect(beatGain); beatGain.connect(this.sfx);
+      const wash = ctx.createBiquadFilter(); wash.type = 'bandpass'; wash.frequency.value = 210; wash.Q.value = 0.5;
+      const washGain = ctx.createGain(); washGain.gain.value = 0; this.amb.connect(wash); wash.connect(washGain); washGain.connect(this.sfx);
+      beat.start(); harmonic.start(); this.heli = { beat, harmonic, lp, beatGain, wash, washGain };
+    }
+    const h = this.heli, audible = Math.min(1, Math.max(0, level)), pitch = Math.max(0.82, Math.min(1.22, load));
+    h.beatGain.gain.setTargetAtTime(audible * 0.16, now, 0.18); h.washGain.gain.setTargetAtTime(audible * 0.12, now, 0.22);
+    h.beat.frequency.setTargetAtTime(18.5 * pitch, now, 0.16); h.harmonic.frequency.setTargetAtTime(37.2 * pitch, now, 0.16);
+    h.lp.frequency.setTargetAtTime(210 + audible * 180, now, 0.24); h.wash.frequency.setTargetAtTime(170 + audible * 160, now, 0.24);
+  }
   // a diesel pickup idling and pulling on a ramp
   truck(level) {
     if (!this.ctx) return; const ctx = this.ctx, now = ctx.currentTime;

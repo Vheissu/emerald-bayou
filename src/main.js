@@ -241,18 +241,25 @@ async function init() {
 
   // ---- input ----
   const keys = {};
+  let encounterStressRunning = false;
   window.addEventListener('keydown', e => {
     keys[e.code] = true;
     if (import.meta.env.DEV && e.code === 'F9' && e.shiftKey && !e.repeat) {
       e.preventDefault(); story.resetDebug(); if (encounters.active) encounters.finish(false, true); encounters.next = 999; return;
     }
     if (import.meta.env.DEV && e.code === 'F7' && !e.repeat) {
-      e.preventDefault(); const types = ['distress', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats(); let started = 0;
-      for (let i = 0; i < 6000; i++) if (encounters.start(types[i % types.length], true)) started++;
-      if (encounters.active) encounters.finish(false, true);
-      const result = { iterations: 6000, started, before, after: debugSceneGraphStats(), active: encounters.active, renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length } };
-      document.documentElement.dataset.emeraldEncounterStress = JSON.stringify(result);
-      console.info('[emerald-encounter-stress]', JSON.stringify(result));
+      e.preventDefault(); if (encounterStressRunning) return; encounterStressRunning = true;
+      const types = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats();
+      let iteration = 0, started = 0;
+      const rotate = () => {
+        const end = Math.min(6000, iteration + 240);
+        for (; iteration < end; iteration++) if (encounters.start(types[iteration % types.length], true)) started++;
+        if (encounters.active) encounters.finish(false, true);
+        if (iteration < 6000) { requestAnimationFrame(rotate); return; }
+        const result = { iterations: 6000, started, before, after: debugSceneGraphStats(), active: encounters.active, renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length } };
+        document.documentElement.dataset.emeraldEncounterStress = JSON.stringify(result); console.info('[emerald-encounter-stress]', JSON.stringify(result)); encounterStressRunning = false;
+      };
+      requestAnimationFrame(rotate);
     }
     if (import.meta.env.DEV && e.code === 'F8' && !e.repeat) {
       e.preventDefault(); const memory = renderer.info.memory, quality = window.__dbg.renderQuality(); const snapshot = debugResourceSnapshot();

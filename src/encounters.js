@@ -6,6 +6,7 @@ import { gatorMesh, manateeMesh } from './wildlife.js';
 import { mulberry32 } from './noise.js';
 import { fmtDist } from './game.js';
 import { findGroundingSite } from './grounding.js';
+import { makeAirRescueRig, updateAirRescueAircraft, updateAirRescueBeam } from './airrescue.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -13,7 +14,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
 const MANATEE_PROBES = [0, -0.42, 0.42, -0.86, 0.86, -1.32, 1.32];
-const DEBUG_ORDER = ['distress', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'smuggler', 'salvage', 'netline'];
+const DEBUG_ORDER = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'smuggler', 'salvage', 'netline'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
 const SPILL_POOL_SIZE = 3;
 
@@ -239,6 +240,7 @@ export class EncounterDirector {
         else if (this.active.type === 'manatee') { e.preventDefault(); this.debugAdvanceManatee(); }
         else if (this.active.type === 'spotlight') { e.preventDefault(); this.debugAdvanceSpotlight(); }
         else if (this.active.type === 'grounding') { e.preventDefault(); this.debugAdvanceGrounding(); }
+        else if (this.active.type === 'airrescue') { e.preventDefault(); this.debugAdvanceAirRescue(); }
       }
     };
     window.addEventListener('keydown', this.keyHandler);
@@ -249,6 +251,7 @@ export class EncounterDirector {
     this.game.save.encounterMemorySeq = Math.max(0, Number(this.game.save.encounterMemorySeq) || 0);
     this.distressEcho = null;
     this._f = new THREE.Vector2(); this._r = new THREE.Vector2(); this._flow = new THREE.Vector2(); this._personBoat = { x: 0, z: 0, speed: 0 };
+    this.airWashStamp = { x: 0, z: 0, radius: 8.5, height: -0.82, foam: 2.2, foamRadius: 9.5 };
   }
 
   makeRigs() {
@@ -279,8 +282,9 @@ export class EncounterDirector {
     const swimmer = person(rr, { pose: 'sitEdge', hat: false, vest: true }); swimmer.visible = false; this.scene.add(swimmer);
     const manatee = makeEntangledManatee(); this.scene.add(manatee.animal, manatee.buoy, manatee.rope);
     const grounding = makeGroundingRig(rr, this.scene);
+    const airrescue = makeAirRescueRig(rr, this.scene);
 
-    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, grounding, patrol, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire }, manatee, spotlight };
+    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, airrescue, grounding, patrol, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire }, manatee, spotlight };
   }
 
   spot(min = 160, max = 300, sideMax = 170) {
@@ -307,11 +311,12 @@ export class EncounterDirector {
     const heat = this.law ? this.law.attention : 0;
     const runners = this.reputation ? this.reputation.score('runners') : 0, fwc = this.reputation ? this.reputation.score('fwc') : 0;
     const region = this.regions && this.regions.current ? this.regions.current.encounters : {};
-    const weights = { distress: 0.24, grounding: 0.1, fire: 0.1, manatee: 0.1, spotlight: 0.08, patrol: 0.2, salvage: 0.1, smuggler: 0.1, netline: 0.07 };
+    const weights = { distress: 0.24, airrescue: 0.065, grounding: 0.1, fire: 0.1, manatee: 0.1, spotlight: 0.08, patrol: 0.2, salvage: 0.1, smuggler: 0.1, netline: 0.07 };
     weights.patrol *= (region.law ?? 1) * (1 + heat * 1.75) * (1 + Math.max(0, -fwc) * 0.16);
     weights.smuggler *= (region.runners ?? 1) * (night ? 1.9 : 1) * (1 + Math.max(0, -runners) * 0.2);
     weights.netline *= (0.72 + (region.runners ?? 1) * 0.38) * (night ? 1.24 : 1);
     weights.distress *= region.danger ?? 1;
+    weights.airrescue *= (0.76 + (night ? 0.7 : 0) + this.environment.restrictedVisibility * 1.15) * (region.danger ?? 1) * (1 - clamp((this.environment.values.wind || 0) - 15, 0, 12) / 13);
     const falling = clamp((-this.environment.tideRate - 0.025) / 0.24), lowWater = clamp((-this.environment.waterLevel - 0.08) / 0.3);
     weights.grounding *= (falling > 0 ? 0.72 + falling * 2.15 : lowWater * 0.75) * (0.82 + this.environment.tideRange * 0.28) * (region.danger ?? 1);
     weights.fire *= (region.danger ?? 1) * (0.82 + Math.min(1.25, (this.environment.values.wind || 0) * 0.045));
@@ -319,13 +324,13 @@ export class EncounterDirector {
     weights.spotlight *= (region.runners ?? 1) * (night ? 1.9 : 0) * (1 + Math.max(0, -runners) * 0.12) * (1 - clamp((this.environment.values.storm || 0) - 0.34, 0, 0.94));
     weights.salvage *= 0.7 + (region.danger ?? 1) * 0.45;
     if (weather === 'hurricane' || weather === 'tropical' || weather === 'thunderstorm') {
-      weights.distress *= 1.8; weights.grounding *= 0.12; weights.fire *= 1.35; weights.manatee *= 0.08; weights.spotlight *= 0.04; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
+      weights.distress *= 1.8; weights.airrescue *= 0.025; weights.grounding *= 0.12; weights.fire *= 1.35; weights.manatee *= 0.08; weights.spotlight *= 0.04; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
     } else if (weather === 'squall' || weather === 'hail') {
-      weights.distress *= 1.4; weights.grounding *= 0.55; weights.fire *= 1.2; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
+      weights.distress *= 1.4; weights.airrescue *= 0.32; weights.grounding *= 0.55; weights.fire *= 1.2; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
     }
     if (heat >= 3) weights.patrol *= 2.1;
     let roll = Math.random() * Object.values(weights).reduce((a, n) => a + n, 0);
-    for (const type of ['distress', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
+    for (const type of ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
     return 'distress';
   }
 
@@ -333,6 +338,7 @@ export class EncounterDirector {
     if (this.active) this.finish(false, true);
     const at = type === 'grounding' ? this.groundingSpot(nearby) : nearby ? this.spot(42, 62, 38) : this.spot(); if (!at) { this.next = 20; return false; }
     if (type === 'distress') this.startDistress(at);
+    else if (type === 'airrescue') this.startAirRescue(at);
     else if (type === 'grounding') this.startGrounding(at);
     else if (type === 'fire') this.startFire(at);
     else if (type === 'manatee') this.startManatee(at);
@@ -495,6 +501,145 @@ export class EncounterDirector {
     if (e.state === 'waiting') { this.phys.reset(e.approachX, e.approachZ, e.heading); this.phys.y = this.water.waveHeight(e.approachX, e.approachZ, 0); this.attachGroundingTow(e, true); }
     else if (e.state === 'tow') { e.x = e.clearX; e.z = e.clearZ; e.clearance = 1; this.floatGrounding(e, true); }
     else if (e.state === 'secured') e.resolveT = 0;
+    else if (e.state === 'depart') e.departT = 0;
+  }
+
+  airRescueTrackTarget(e) {
+    const track = e.track % 6, along = track % 2 === 0 ? 112 : -112, across = (track - 2.5) * 32;
+    const fx = -Math.sin(e.searchHeading), fz = -Math.cos(e.searchHeading), rx = Math.cos(e.searchHeading), rz = -Math.sin(e.searchHeading);
+    e.flightTargetX = e.centerX + fx * along + rx * across; e.flightTargetZ = e.centerZ + fz * along + rz * across;
+    e.flightTargetY = 43 + Math.min(4.5, (this.environment.values.wind || 0) * 0.18);
+  }
+
+  startAirRescue(at) {
+    const R = this.rigs.airrescue, searchHeading = at.heading + (Math.random() - 0.5) * 0.8;
+    const fx = -Math.sin(searchHeading), fz = -Math.cos(searchHeading), rx = Math.cos(searchHeading), rz = -Math.sin(searchHeading);
+    const centerX = at.x + rx * (Math.random() - 0.5) * 46 + fx * (Math.random() - 0.5) * 22;
+    const centerZ = at.z + rz * (Math.random() - 0.5) * 46 + fz * (Math.random() - 0.5) * 22;
+    R.root.visible = true; R.survivor.visible = true; R.survivorStrobe.visible = true; R.swimmer.visible = false; R.basket.visible = false;
+    R.hoistLine.visible = false; R.trailLine.visible = false; R.beam.visible = false; R.pool.visible = false;
+    const hx = centerX - fx * 150 + rx * -80, hz = centerZ - fz * 150 + rz * -80;
+    this.active = {
+      type: 'airrescue', state: 'search', mode: 'search', x: at.x, z: at.z, centerX, centerZ, searchHeading,
+      hx, hz, hy: 47, hvx: fx * 8, hvz: fz * 8, heading: searchHeading, pitch: -0.035, bank: 0, phase: Math.random() * Math.PI * 2, dt: 0,
+      track: 0, t: 0, known: false, sighted: false, marked: false, hoistT: 0, crowdT: 0, aborts: 0, goT: 0, departT: 0,
+      washCarry: 0, washWarned: false, flightTargetX: centerX, flightTargetZ: centerZ, flightTargetY: 43,
+      strobePhase: Math.random() * Math.PI * 2, beamX: centerX, beamZ: centerZ,
+    };
+    this.airRescueTrackTarget(this.active); this.updateAirRescueSurvivor(this.active, 0, 0);
+    updateAirRescueAircraft(R, this.active, 0);
+  }
+
+  flyAirRescue(e, dt, targetX, targetZ, targetY, maxSpeed) {
+    const dx = targetX - e.hx, dz = targetZ - e.hz, d = Math.hypot(dx, dz) || 1;
+    const desiredSpeed = maxSpeed * clamp(d / 62, e.state === 'hoist' ? 0 : 0.12, 1), response = 1 - Math.exp(-dt * (e.state === 'hoist' ? 2.4 : 0.72));
+    const desiredVx = dx / d * desiredSpeed, desiredVz = dz / d * desiredSpeed, oldHeading = e.heading;
+    e.hvx = lerp(e.hvx, desiredVx, response); e.hvz = lerp(e.hvz, desiredVz, response);
+    e.hx += e.hvx * dt; e.hz += e.hvz * dt; e.hy = lerp(e.hy, targetY, 1 - Math.exp(-dt * (e.state === 'hoist' ? 1.25 : 0.64)));
+    if (Math.hypot(e.hvx, e.hvz) > 0.18) {
+      const desiredHeading = Math.atan2(-e.hvx, -e.hvz), dh = Math.atan2(Math.sin(desiredHeading - e.heading), Math.cos(desiredHeading - e.heading));
+      e.heading += clamp(dh, -dt * 0.85, dt * 0.85);
+    }
+    const turn = Math.atan2(Math.sin(e.heading - oldHeading), Math.cos(e.heading - oldHeading)) / Math.max(dt, 1e-3);
+    e.bank = lerp(e.bank, clamp(-turn * 0.26, -0.3, 0.3), 1 - Math.exp(-dt * 2.8));
+    e.pitch = lerp(e.pitch, e.state === 'hoist' ? 0 : clamp(-Math.hypot(e.hvx, e.hvz) * 0.005, -0.11, -0.015), 1 - Math.exp(-dt * 2.2));
+    e.dt = dt; e.mode = e.state; updateAirRescueAircraft(this.rigs.airrescue, e, e.t);
+  }
+
+  updateAirRescueSurvivor(e, dt, t) {
+    const R = this.rigs.airrescue, lifted = e.state === 'hoist' && e.hoistT >= 6;
+    if (!lifted && e.state !== 'depart') {
+      if (dt > 0 && this.currents) { const flow = this.currents.flowAt(e.x, e.z, this._flow); e.x += flow.x * dt * 0.52; e.z += flow.y * dt * 0.52; }
+      const y = this.water.waveHeight(e.x, e.z, t) - 0.08;
+      R.survivor.position.set(e.x, y, e.z); R.survivor.rotation.set(0, e.searchHeading + Math.sin(t * 0.38 + e.phase) * 0.3, Math.sin(t * 0.92 + e.phase) * 0.08, 'YXZ');
+      R.survivor.visible = true; R.survivorStrobe.position.set(e.x, y + 1.18, e.z); R.survivorStrobe.visible = true;
+      const pulse = Math.sin(t * 5.4 + e.strobePhase) > 0.72 ? 1 : 0.08;
+      R.survivorLight.intensity = pulse * 92; R.survivorBulb.scale.setScalar(0.7 + pulse * 0.75);
+      const boat = this._personBoat; boat.x = this.phys.pos.x; boat.z = this.phys.pos.y; boat.speed = this.phys.speed; animatePerson(R.survivor, t, dt, boat);
+    } else if (e.state === 'depart') {
+      R.survivor.visible = false; R.survivorStrobe.visible = false; R.survivorLight.intensity = 0;
+    }
+  }
+
+  sightAirRescueSurvivor(e, source = 'boat') {
+    if (e.sighted) return;
+    e.sighted = true; this.audio.checkpoint();
+    this.game.toast(source === 'aircraft' ? 'Strobe in the search beam' : 'Person in the water', source === 'aircraft' ? 'Rescue 6507 has a possible contact. Close at idle and verify the position.' : 'PFD and strobe sighted. Close at idle and transmit an exact fix.', 3.5);
+  }
+
+  markAirRescue(e, force = false) {
+    if (e.state !== 'search' || !e.sighted) return;
+    const d = Math.hypot(e.x - this.phys.pos.x, e.z - this.phys.pos.y); if (!force && (d > 24 || this.phys.speed * MPH > 5.5)) return;
+    e.state = 'approach'; e.marked = true; e.flightTargetX = e.x; e.flightTargetZ = e.z; e.flightTargetY = 29; e.crowdT = 0;
+    this.clearPrompt(); this.audio.checkpoint(); this.game.toast('Exact fix transmitted', 'Rescue 6507 is inbound. Hold fifty yards clear of the hover.', 3.7);
+  }
+
+  beginAirRescueHoist(e) {
+    const R = this.rigs.airrescue; e.state = 'hoist'; e.hoistT = 0; e.crowdT = 0; e.washWarned = false;
+    e.hvx *= 0.2; e.hvz *= 0.2; R.basket.visible = true; R.swimmer.visible = true; R.hoistLine.visible = true; R.trailLine.visible = true;
+    this.audio.checkpoint(); this.game.toast('Rescue swimmer going down', 'Stay outside the rotor wash. Do not secure the orange trail line.', 3.8);
+  }
+
+  hideAirRescueHoist() {
+    const R = this.rigs.airrescue; R.basket.visible = false; R.swimmer.visible = false; R.hoistLine.visible = false; R.trailLine.visible = false;
+  }
+
+  abortAirRescueHoist(e) {
+    const fx = -Math.sin(e.searchHeading), fz = -Math.cos(e.searchHeading), rx = Math.cos(e.searchHeading), rz = -Math.sin(e.searchHeading);
+    e.state = 'goaround'; e.aborts++; e.goT = 0; e.crowdT = 0; e.hoistT = 0;
+    e.flightTargetX = e.x - fx * 85 + rx * (e.aborts % 2 ? 62 : -62); e.flightTargetZ = e.z - fz * 85 + rz * (e.aborts % 2 ? 62 : -62); e.flightTargetY = 48;
+    this.hideAirRescueHoist(); this.rigs.airrescue.survivor.visible = true; this.rigs.airrescue.survivorStrobe.visible = true;
+    this.audio.warn(); this.game.toast('Hoist waved off', 'Your boat entered the hover. Clear the wash and let the aircraft reset.', 3.8);
+  }
+
+  updateAirRescueHoist(e, dt, t) {
+    const R = this.rigs.airrescue, waterY = this.water.waveHeight(e.x, e.z, t), playerD = Math.hypot(e.x - this.phys.pos.x, e.z - this.phys.pos.y);
+    e.hoistT += dt * (playerD >= 34 ? 1 : 0.22);
+    const lower = e.hoistT < 3.8 ? smooth(0, 3.8, e.hoistT) : e.hoistT < 6 ? 1 : 1 - smooth(6, 11.2, e.hoistT);
+    const rx = Math.cos(e.heading), rz = -Math.sin(e.heading), topX = e.hx + rx * 1.22, topY = e.hy - 0.25, topZ = e.hz + rz * 1.22;
+    const basketX = lerp(topX, e.x, lower), basketY = lerp(topY - 0.45, waterY + 0.48, lower), basketZ = lerp(topZ, e.z, lower);
+    R.basket.position.set(basketX, basketY, basketZ); R.basket.rotation.y = -e.heading + Math.sin(t * 0.72) * 0.08;
+    R.swimmer.position.set(basketX + 0.48, basketY - 0.24, basketZ); R.swimmer.rotation.set(0, e.heading, 0);
+    const carrying = e.hoistT >= 6;
+    if (carrying) { R.survivor.position.set(basketX - 0.12, basketY - 0.3, basketZ); R.survivor.rotation.set(0, e.heading + Math.PI, 0); R.survivorStrobe.visible = false; R.survivorLight.intensity = 0; }
+    const cable = R.hoistLine.geometry.attributes.position.array;
+    for (let i = 0; i < 24; i++) {
+      const k = i / 23, q = i * 3; cable[q] = lerp(topX, basketX, k) + this.environment.windDir.x * Math.sin(k * Math.PI) * 0.28; cable[q + 1] = lerp(topY, basketY + 0.44, k); cable[q + 2] = lerp(topZ, basketZ, k) + this.environment.windDir.z * Math.sin(k * Math.PI) * 0.28;
+    }
+    R.hoistLine.geometry.attributes.position.needsUpdate = true;
+    const trail = R.trailLine.geometry.attributes.position.array, trailX = basketX + this.environment.windDir.x * 11, trailZ = basketZ + this.environment.windDir.z * 11;
+    for (let i = 0; i < 18; i++) {
+      const k = i / 17, q = i * 3; trail[q] = lerp(basketX, trailX, k); trail[q + 1] = lerp(basketY, waterY + 0.12, k) - Math.sin(k * Math.PI) * 0.5; trail[q + 2] = lerp(basketZ, trailZ, k);
+    }
+    R.trailLine.geometry.attributes.position.needsUpdate = true;
+    animatePerson(R.swimmer, t, dt, null); if (carrying) animatePerson(R.survivor, t, dt, null);
+    if (e.hoistT >= 11.2) {
+      this.hideAirRescueHoist(); R.survivor.visible = false; R.survivorStrobe.visible = false; e.state = 'depart'; e.departT = 9;
+      const fx = -Math.sin(e.heading), fz = -Math.cos(e.heading); e.flightTargetX = e.hx + fx * 520; e.flightTargetZ = e.hz + fz * 520; e.flightTargetY = 72;
+      this.audio.checkpoint(); this.game.toast('Survivor aboard Rescue 6507', 'Basket is in and the aircraft is climbing out.', 3.7);
+    }
+  }
+
+  applyAirRescueWash(e, dt) {
+    if (!['approach', 'hoist'].includes(e.state) || e.hy > 38) return;
+    const p = this.phys, dx = p.pos.x - e.hx, dz = p.pos.y - e.hz, d = Math.hypot(dx, dz) || 1, strength = clamp(1 - d / 48) * clamp((38 - e.hy) / 16);
+    if (strength <= 0) return;
+    p.vel.x += dx / d * strength * 3.1 * dt + this.environment.windDir.x * strength * 0.7 * dt;
+    p.vel.y += dz / d * strength * 3.1 * dt + this.environment.windDir.z * strength * 0.7 * dt;
+    this.game.shake = Math.max(this.game.shake, strength * 0.22);
+    e.washCarry += dt * strength * 28;
+    const count = Math.min(4, Math.floor(e.washCarry)); e.washCarry -= count;
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2, r = 4 + Math.random() * 13, speed = 2 + Math.random() * 4;
+      this.spray.emit(e.hx + Math.cos(a) * r, this.water.level + 0.08, e.hz + Math.sin(a) * r, Math.cos(a) * speed, 1.2 + Math.random() * 2.4, Math.sin(a) * speed, 0.012 + Math.random() * 0.025, 0.35 + Math.random() * 0.35, 0.55);
+    }
+  }
+
+  debugAdvanceAirRescue() {
+    const e = this.active; if (!e || e.type !== 'airrescue') return;
+    if (e.state === 'search') { this.sightAirRescueSurvivor(e, 'boat'); this.markAirRescue(e, true); }
+    else if (e.state === 'approach' || e.state === 'goaround') { e.hx = e.x; e.hz = e.z; e.hy = 27; this.beginAirRescueHoist(e); }
+    else if (e.state === 'hoist') e.hoistT = 11.15;
     else if (e.state === 'depart') e.departT = 0;
   }
 
@@ -959,7 +1104,7 @@ export class EncounterDirector {
     else if (e.type === 'salvage') target = e.pieces.find(q => !q.resolved) || e;
     else if (e.type === 'fire' && e.aboard && (e.fireOut || e.burned) && e.drop) target = e.drop;
     const dx = target.x - p.pos.x, dz = target.z - p.pos.y, d = Math.hypot(dx, dz) || 1;
-    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'manatee' ? (e.state === 'cutting' ? 5.5 : 19) : e.type === 'spotlight' ? 38 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
+    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'airrescue' ? 20 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'manatee' ? (e.state === 'cutting' ? 5.5 : 19) : e.type === 'spotlight' ? 38 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
     const x = target.x - dx / d * gap, z = target.z - dz / d * gap;
     p.reset(x, z, p.heading); p.y = this.water.waveHeight(x, z, 0);
   }
@@ -1049,10 +1194,13 @@ export class EncounterDirector {
     this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
     this.rigs.fire.boat.visible = false; this.rigs.fire.operator.visible = true; this.rigs.fire.swimmer.visible = false; animateEngineFire(this.rigs.fire.fire, 0, 0, 0);
     this.rigs.grounding.boat.visible = false; this.rigs.grounding.operator.visible = true; this.rigs.grounding.rope.visible = false; this.rigs.grounding.lamp.light.intensity = 0; this.rigs.grounding.agent.active = false;
+    this.rigs.airrescue.root.visible = false; this.rigs.airrescue.survivor.visible = false; this.rigs.airrescue.swimmer.visible = false; this.rigs.airrescue.survivorStrobe.visible = false; this.rigs.airrescue.survivorLight.intensity = 0;
+    this.rigs.airrescue.basket.visible = false; this.rigs.airrescue.hoistLine.visible = false; this.rigs.airrescue.trailLine.visible = false; this.rigs.airrescue.beam.visible = false; this.rigs.airrescue.pool.visible = false; this.rigs.airrescue.searchlight.intensity = 0; this.rigs.airrescue.poolUniforms.uOpacity.value = 0;
     this.rigs.manatee.animal.visible = false; this.rigs.manatee.buoy.visible = false; this.rigs.manatee.rope.visible = false; this.rigs.manatee.rope.material.opacity = 0.86;
     this.rigs.spotlight.gunner.visible = false; this.rigs.spotlight.gator.visible = false; this.rigs.spotlight.eyes.visible = false; this.rigs.spotlight.light.intensity = 0; this.rigs.spotlight.pool.visible = false; this.rigs.spotlight.uniforms.uOpacity.value = 0;
     if (e.type === 'fire' && e.aboard) this.phys.loaded = 0;
     if (e.type === 'grounding') this.phys.towDrag = 0;
+    if (e.type === 'airrescue') this.audio.helicopter(0);
     if (this.law) this.law.setPursuit(false);
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
     this.active = null; this.next = success ? 100 + Math.random() * 110 : silent ? 60 : 75 + Math.random() * 90;
@@ -1124,6 +1272,64 @@ export class EncounterDirector {
         }
       }
     }
+  }
+
+  updateAirRescue(e, dt, t) {
+    const R = this.rigs.airrescue, p = this.phys, night = this.environment.hour < 5.7 || this.environment.hour > 19.8;
+    const playerD = Math.hypot(e.x - p.pos.x, e.z - p.pos.y), aircraftD = Math.hypot(e.hx - p.pos.x, e.hz - p.pos.y);
+    const beamStrength = clamp(0.28 + (night ? 0.56 : 0) + this.environment.restrictedVisibility * 0.48);
+    this.updateAirRescueSurvivor(e, dt, t);
+    if (!e.known && Math.min(playerD, Math.hypot(e.centerX - p.pos.x, e.centerZ - p.pos.y), aircraftD) < 315) {
+      this.known(e, 'Coast Guard air search', 'Rescue 6507 is working parallel tracks for one person in the water.');
+    }
+
+    if (e.state === 'search') {
+      this.flyAirRescue(e, dt, e.flightTargetX, e.flightTargetZ, e.flightTargetY, 24);
+      if (Math.hypot(e.flightTargetX - e.hx, e.flightTargetZ - e.hz) < 11) { e.track = (e.track + 1) % 6; this.airRescueTrackTarget(e); }
+      const fx = -Math.sin(e.heading), fz = -Math.cos(e.heading), rx = Math.cos(e.heading), rz = -Math.sin(e.heading), sweep = Math.sin(t * 0.74 + e.phase) * 28;
+      e.beamX = e.hx + fx * 30 + rx * sweep; e.beamZ = e.hz + fz * 30 + rz * sweep;
+      const beamY = this.water.waveHeight(e.beamX, e.beamZ, t);
+      updateAirRescueBeam(R, e.hx + rx * 0.52, e.hy - 0.55, e.hz + rz * 0.52, e.beamX, beamY, e.beamZ, beamStrength);
+      if (!e.sighted && Math.hypot(e.beamX - e.x, e.beamZ - e.z) < 15) this.sightAirRescueSurvivor(e, 'aircraft');
+      if (!e.sighted && playerD < (night && !this.environment.spotOn ? 48 : 68)) this.sightAirRescueSurvivor(e, 'boat');
+      if (e.known) this.point(e.sighted ? e.x : e.centerX, e.sighted ? e.z : e.centerZ, e.sighted ? 'survivor strobe' : 'air search sector', e.sighted ? '#d8f2ff' : '#79a8c7');
+      if (e.sighted && playerD < 24 && p.speed * MPH < 5.5 && this.canInteract()) {
+        this.setPrompt('transmit an exact position to Rescue 6507'); if (this.interact) this.markAirRescue(e);
+      }
+    } else if (e.state === 'approach') {
+      this.point(e.x, e.z, 'survivor strobe', '#d8f2ff'); this.flyAirRescue(e, dt, e.x, e.z, 27, 18);
+      updateAirRescueBeam(R, e.hx, e.hy - 0.55, e.hz, e.x, this.water.waveHeight(e.x, e.z, t), e.z, beamStrength);
+      if (playerD < 48) this.setPrompt('clear the helicopter hover <i>· hold fifty yards off</i>', 'HOLD');
+      if (Math.hypot(e.hx - e.x, e.hz - e.z) < 4.8 && Math.abs(e.hy - 27) < 2.2) this.beginAirRescueHoist(e);
+    } else if (e.state === 'goaround') {
+      e.goT += dt; this.point(e.x, e.z, 'survivor strobe', '#d8f2ff'); this.flyAirRescue(e, dt, e.flightTargetX, e.flightTargetZ, e.flightTargetY, 23);
+      updateAirRescueBeam(R, e.hx, e.hy - 0.55, e.hz, e.x, this.water.waveHeight(e.x, e.z, t), e.z, beamStrength * 0.72);
+      if (e.goT > 7.5 && Math.hypot(e.flightTargetX - e.hx, e.flightTargetZ - e.hz) < 24) { e.state = 'approach'; e.flightTargetX = e.x; e.flightTargetZ = e.z; e.flightTargetY = 27; }
+    } else if (e.state === 'hoist') {
+      this.point(e.x, e.z, 'hoist in progress', '#d8f2ff'); this.flyAirRescue(e, dt, e.x, e.z, 26.5, 4.2);
+      updateAirRescueBeam(R, e.hx, e.hy - 0.55, e.hz, e.x, this.water.waveHeight(e.x, e.z, t), e.z, beamStrength * 0.92);
+      this.setPrompt('hold outside the rotor wash <i>· keep the orange trail line free</i>', 'HOLD');
+      if (playerD < 31) {
+        e.crowdT += dt;
+        if (!e.washWarned) { e.washWarned = true; this.audio.warn(); this.game.toast('Inside the hoist zone', 'Clear the hover now or the aircraft will wave off.', 3.2); }
+      } else { e.crowdT = Math.max(0, e.crowdT - dt * 1.7); if (playerD > 40) e.washWarned = false; }
+      if (e.crowdT > 1.35) { this.abortAirRescueHoist(e); return; }
+      this.updateAirRescueHoist(e, dt, t);
+    } else if (e.state === 'depart') {
+      updateAirRescueBeam(R, e.hx, e.hy - 0.55, e.hz, e.hx, this.water.level, e.hz, 0);
+      this.flyAirRescue(e, dt, e.flightTargetX, e.flightTargetZ, e.flightTargetY, 36); e.departT -= dt;
+      if (e.departT <= 0) {
+        const clean = e.aborts === 0, amount = clean ? 260 : 170;
+        this.game.save.airRescueFixes = (this.game.save.airRescueFixes || 0) + 1; this.game.save.airRescueWaveOffs = (this.game.save.airRescueWaveOffs || 0) + e.aborts;
+        if (this.reputation) this.reputation.change('fwc', clean ? 1.1 : 0.45, clean ? 'air-rescue-clean-fix' : 'air-rescue-delayed-fix', clean ? 'Your exact position report gave the helicopter a clean, unobstructed hoist.' : 'Your position report found the survivor, but the aircraft had to reset around your boat.', true);
+        if (this.law) this.law.cool(clean ? 0.4 : 0.18);
+        this.complete(clean ? 'Clean air rescue' : 'Survivor recovered after a wave-off', clean ? 'One exact fix, one clean hover, survivor aboard.' : `${e.aborts} ${e.aborts === 1 ? 'wave-off' : 'wave-offs'} before the basket came up.`, amount, clean ? 0.75 : 0.3, clean ? 'You held outside the wash while Rescue 6507 hoisted a survivor.' : 'You found a survivor and cleared the final helicopter approach.', clean ? 'airrescue-clean' : 'airrescue-delayed');
+        return;
+      }
+    }
+
+    this.applyAirRescueWash(e, dt);
+    const audible = clamp(1 - Math.max(0, aircraftD - 32) / 440); this.audio.helicopter(audible, e.state === 'hoist' ? 1.1 : 0.98 + clamp(Math.hypot(e.hvx, e.hvz) / 90));
   }
 
   updateGrounding(e, dt, t) {
@@ -1640,6 +1846,7 @@ export class EncounterDirector {
 
   update(dt, t, enabled = true) {
     this.enabled = enabled; this.obs.length = 0;
+    this.audio.helicopter(0);
     this.updateSpills(this.game.paused ? 0 : dt);
     if (!enabled) { if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
     if (this.game.state) { if (this.active) this.finish(false, true); if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
@@ -1648,6 +1855,7 @@ export class EncounterDirector {
     if (!this.active) { this.next -= dt; if (this.next <= 0) this.start(); this.interact = false; this.alternate = false; return; }
     const e = this.active; e.t += dt; this.clearPrompt();
     if (e.type === 'distress') this.updateDistress(e, dt, t);
+    else if (e.type === 'airrescue') this.updateAirRescue(e, dt, t);
     else if (e.type === 'grounding') this.updateGrounding(e, dt, t);
     else if (e.type === 'fire') this.updateFire(e, dt, t);
     else if (e.type === 'manatee') this.updateManatee(e, dt, t);
@@ -1668,6 +1876,10 @@ export class EncounterDirector {
       const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), sp = Math.min(1, A.speed / 11);
       out.push({ x: A.x - fx * 1.8, z: A.z - fz * 1.8, radius: 1.1, height: 0.5 * sp, foam: 1.6 * sp, foamRadius: 1 });
       out.push({ x: A.x + fx * 1.8, z: A.z + fz * 1.8, radius: 1, height: -0.65 * sp, foam: 0.1 * sp, foamRadius: 0.7 });
+    }
+    const e = this.active;
+    if (e?.type === 'airrescue' && ['approach', 'hoist'].includes(e.state) && e.hy < 38 && Math.hypot(e.hx - this.phys.pos.x, e.hz - this.phys.pos.y) < 110) {
+      const strength = clamp((38 - e.hy) / 16), stamp = this.airWashStamp; stamp.x = e.hx; stamp.z = e.hz; stamp.height = -0.72 * strength; stamp.foam = 2.4 * strength; stamp.radius = 7.5 + strength * 3; stamp.foamRadius = 8.5 + strength * 4; out.push(stamp);
     }
   }
 }
