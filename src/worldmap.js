@@ -48,7 +48,13 @@ export class WorldMap {
   }
   memoryStats() {
     const width = this.canvas.width, height = this.canvas.height, pixels = width * height;
-    return { open: this.open, width, height, pixels, pixelRatio: this.dpr, maxPixels: MAX_DRAW_PIXELS, estimatedBackingBytes: pixels * 4 };
+    let cachedTiles = 0, tilePixels = 0;
+    for (const tile of this.tiles.values()) if (tile.canvas) { cachedTiles++; tilePixels += tile.canvas.width * tile.canvas.height; }
+    return {
+      open: this.open, width, height, pixels, pixelRatio: this.dpr, maxPixels: MAX_DRAW_PIXELS,
+      cachedTiles, pendingTiles: this.tiles.size - cachedTiles, tilePixels,
+      canvasBackingBytes: pixels * 4, tileBackingBytes: tilePixels * 4, estimatedBackingBytes: (pixels + tilePixels) * 4,
+    };
   }
   tile(i, j) {
     const key = `${i},${j}`;

@@ -13,6 +13,7 @@ export class Minimap {
     this.canvas = document.getElementById('minimapCanvas');
     this.ctx = this.canvas.getContext('2d');
     this.tiles = new Map(); this.inFlight = 0;
+    this.tileEvictions = 0;
     this.speedEl = document.getElementById('speedVal');
     this.scale = 0.62; // canvas px per metre (drifts down with speed)
     this.pulse = 0;
@@ -31,11 +32,16 @@ export class Minimap {
       if (this.tiles.size > TILE_LIMIT) { // drop the stalest completed tiles and release their canvas backing stores
         const list = [...this.tiles.entries()].filter(([, v]) => v.canvas).sort((a, b) => a[1].used - b[1].used);
         for (let k = 0; k < Math.min(TILE_TRIM, list.length); k++) {
-          const [oldKey, old] = list[k]; old.canvas.width = 0; old.canvas.height = 0; this.tiles.delete(oldKey);
+          const [oldKey, old] = list[k]; old.canvas.width = 0; old.canvas.height = 0; this.tiles.delete(oldKey); this.tileEvictions++;
         }
       }
     });
     return null;
+  }
+  memoryStats() {
+    let completed = 0, pixels = 0;
+    for (const tile of this.tiles.values()) if (tile.canvas) { completed++; pixels += tile.canvas.width * tile.canvas.height; }
+    return { tiles: this.tiles.size, completed, pending: this.tiles.size - completed, inFlight: this.inFlight, evictions: this.tileEvictions, pixels, estimatedBackingBytes: pixels * 4 };
   }
   update(boat, camYaw, markers = []) {
     const c = this.ctx, W = this.canvas.width, H = this.canvas.height;

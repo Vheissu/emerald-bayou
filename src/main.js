@@ -110,7 +110,7 @@ async function init() {
   // ---- vegetation ----
   const veg = new Vegetation(terrain, exclusions);
   // the Meshy grass clumps become instanced kinds before the first chunk is grown; the hero tree gets the wind
-  await preload(['grass_a', 'grass_b', 'grass_c', 'grass_d', 'tree_c']);
+  await preload(['grass_a', 'grass_d', 'tree_c']);
   for (const name of ['grass_a', 'grass_d']) { const r = await loadGeo(name); if (r) veg.addSolid(r.geo, r.mat, r.height); } // b and c stay at ~5.5k tris a clump (separate blades will not collapse), too heavy to instance
   loadModel('tree_c').then(root => { const f = modelBox('tree_c'); if (root && f) root.traverse(o => { if (o.isMesh) veg.windMat(o.material, f.box.min.y, f.box.max.y, f.scale, 0.28); }); });
 
@@ -231,6 +231,8 @@ async function init() {
   const debugResourceSnapshot = import.meta.env.DEV ? () => ({
     renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length },
     graph: debugSceneGraphStats(),
+    terrain: terrain.memoryStats(),
+    minimap: minimap.memoryStats(),
     wildlife: {
       waders: debugTreeResources(waders.list.map(w => w.mesh)),
       manatees: debugTreeResources(manatees.list.map(m => m.mesh)),
@@ -272,7 +274,7 @@ async function init() {
     if (import.meta.env.DEV && e.code === 'F8' && !e.repeat) {
       e.preventDefault(); const memory = renderer.info.memory, quality = window.__dbg.renderQuality(); const snapshot = debugResourceSnapshot();
       document.documentElement.dataset.emeraldResource = JSON.stringify(snapshot);
-      console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: snapshot.graph, wildlife: snapshot.wildlife, chart: snapshot.chart, fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
+      console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: snapshot.graph, terrain: snapshot.terrain, minimap: snapshot.minimap, wildlife: snapshot.wildlife, chart: snapshot.chart, fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
     }
     if (e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
   });

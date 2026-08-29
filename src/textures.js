@@ -280,14 +280,18 @@ export function sandGround() {
   return srgbTex(c, true);
 }
 
+let sharedNoiseTexture = null;
+
 export function noiseTex() {
+  if (sharedNoiseTexture) return sharedNoiseTexture;
   const size = 256;
   const n1 = tileableNoise(size, 5, 4, 4, 0.5), n2 = tileableNoise(size, 6, 4, 6, 0.5), n3 = tileableNoise(size, 8, 5, 3, 0.55), n4 = tileableNoise(size, 9, 2, 8, 0.5);
   const data = new Uint8Array(size * size * 4);
   for (let i = 0; i < size * size; i++) { data[i * 4] = n1[i] * 255; data[i * 4 + 1] = n2[i] * 255; data[i * 4 + 2] = n3[i] * 255; data[i * 4 + 3] = n4[i] * 255; }
   const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true; t.needsUpdate = true;
-  return t;
+  sharedNoiseTexture = t;
+  return sharedNoiseTexture;
 }
 
 export function bark() {
