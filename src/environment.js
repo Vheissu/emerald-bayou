@@ -3,6 +3,11 @@ import { lunarAgeAt, lunarIllumination, lunarPhaseAt, lunarPhaseName, lunarTideR
 import { updateAttributePrefix } from './cache.js';
 import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
 import { applyAirboatWind } from './vesselwind.js';
+import {
+  insertNearestSettlement, MAX_SETTLEMENT_LIGHTS, MAX_SETTLEMENT_OUTAGES, normalizeSettlementOutages,
+  resetSettlementCandidates, serializeSettlementOutages, settlementGridStress, settlementLightLevel,
+  settlementPowerRoll, settlementPowerStep, settlementPowerTarget, settlementStrikeOutageMinutes,
+} from './settlementpower.js';
 
 const FT = 3.28084;
 const MPS_TO_MPH = 2.23694;
@@ -272,6 +277,8 @@ export class Environment {
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
     this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
+    this.settlementOutages = normalizeSettlementOutages(saved.powerOutages, this.minutes);
+    this.settlementPowerFailures = Math.max(0, Math.trunc(Number(saved.powerFailures) || 0));
     this.windLoad = { ax: 0, az: 0, yaw: 0, heel: 0, apparentSpeed: 0, crosswind: 0 };
     this.makeLightning(); this.makeBoatLights(); this.makeSettlementLights();
     this.el = document.getElementById('worldState'); this.alertEl = document.getElementById('weatherAlert'); this.alertT = 0; this.hudT = 0;
@@ -300,12 +307,15 @@ export class Environment {
 
   makeSettlementLights() {
     this.settlementLights = [];
-    const bulbGeo = new THREE.SphereGeometry(0.09, 8, 6);
-    for (let i = 0; i < 5; i++) {
-      const group = new THREE.Group(); const mat = new THREE.MeshBasicMaterial({ color: 0xffbd73, toneMapped: false });
-      const bulb = new THREE.Mesh(bulbGeo, mat); const light = new THREE.PointLight(0xffa95f, 0, 42, 2); group.add(bulb, light); group.visible = false;
-      this.scene.add(group); this.settlementLights.push({ group, light });
+    this.settlementBulbGeometry = new THREE.SphereGeometry(0.09, 8, 6);
+    this.settlementBulbMaterial = new THREE.MeshBasicMaterial({ color: 0xffbd73, toneMapped: false });
+    for (let i = 0; i < MAX_SETTLEMENT_LIGHTS; i++) {
+      const group = new THREE.Group(), bulb = new THREE.Mesh(this.settlementBulbGeometry, this.settlementBulbMaterial);
+      const light = new THREE.PointLight(0xffa95f, 0, 42, 2); group.add(bulb, light); group.visible = false;
+      this.scene.add(group); this.settlementLights.push({ group, bulb, light, key: '', day: 0, roll: 1, phase: i * 1.37, power: 1, target: 1 });
     }
+    this.settlementCandidates = Array.from({ length: MAX_SETTLEMENT_LIGHTS }, () => ({ key: '', x: 0, y: 0, z: 0, distanceSq: Infinity }));
+    this.settlementPowerStats = { pool: MAX_SETTLEMENT_LIGHTS, active: 0, powered: 0, brownouts: 0, dark: 0, outages: this.settlementOutages?.size || 0, strikeFailures: this.settlementPowerFailures || 0, stress: 0 };
     this.settlementT = 0;
   }
 
@@ -361,6 +371,8 @@ export class Environment {
       remaining: this.remaining,
       duration: this.weatherDuration,
       windAngle: this.windAngle,
+      powerOutages: serializeSettlementOutages(this.settlementOutages, this.minutes),
+      powerFailures: Math.max(0, Math.trunc(Number(this.settlementPowerFailures) || 0)),
       savedAt: Date.now(),
     };
     if (write) this.game.persist();
@@ -467,6 +479,7 @@ export class Environment {
     }
     this.bolt.geometry.attributes.position.needsUpdate = true; this.bolt.material.opacity = 1; this.bolt.visible = true; this.boltT = 0.14;
     this.flash = 1; this.thunderT = dist / 343; this.thunderX = x; this.thunderZ = z; this.lightningT = lerp(7, 28, Math.random()) / Math.max(0.35, this.values.lightning);
+    this.registerSettlementPowerStrike(x, z);
     if (this.onLightning) this.onLightning({ x, z, y: y0, distance: dist, water: ground < this.waterLevel + 0.12 });
   }
 
@@ -474,22 +487,82 @@ export class Environment {
     this.audio?.thunder?.(strength, this.thunderX, this.thunderZ);
   }
 
-  updateSettlementLights(dt, night) {
-    this.settlementT -= dt; if (this.settlementT > 0) return; this.settlementT = 0.6;
-    const bx = this.phys.pos.x, bz = this.phys.pos.y, cands = [];
+  refreshSettlementLights(night, stress) {
+    const candidates = resetSettlementCandidates(this.settlementCandidates), bx = this.phys.pos.x, bz = this.phys.pos.y;
+    for (const [key, expiry] of this.settlementOutages) if (expiry <= this.minutes) this.settlementOutages.delete(key);
     if (this.world) {
-      for (const l of this.world.liveSites.values()) {
-        const s = l.site; if (s.kind !== 'house' && s.kind !== 'boathouse') continue;
-        cands.push({ x: s.x, z: s.z, y: s.kind === 'house' ? s.h + 2.7 : 2.5, d: Math.hypot(s.x - bx, s.z - bz) });
+      for (const live of this.world.liveSites.values()) {
+        const site = live.site; if (site.kind !== 'house' && site.kind !== 'boathouse') continue;
+        site.powerKey ||= `site:${site.key}`;
+        const dx = site.x - bx, dz = site.z - bz;
+        insertNearestSettlement(candidates, site.powerKey, site.x, site.kind === 'house' ? site.h + 2.7 : 2.5, site.z, dx * dx + dz * dz);
       }
-      for (const key of this.world.liveCamps.keys()) { const c = this.world.campCells.get(key); if (c) cands.push({ x: c.x, z: c.z, y: c.h + 2.1, d: Math.hypot(c.x - bx, c.z - bz) }); }
+      for (const group of this.world.liveCamps.values()) {
+        const camp = group.userData.site; if (!camp) continue; camp.powerKey ||= `camp:${camp.key}`;
+        const dx = camp.x - bx, dz = camp.z - bz;
+        insertNearestSettlement(candidates, camp.powerKey, camp.x, camp.h + 2.1, camp.z, dx * dx + dz * dz);
+      }
     }
-    cands.sort((a, b) => a.d - b.d);
     for (let i = 0; i < this.settlementLights.length; i++) {
-      const l = this.settlementLights[i], c = cands[i];
-      l.group.visible = !!c && night > 0.05;
-      if (c) { l.group.position.set(c.x, c.y, c.z); l.light.intensity = night * 85; }
+      const light = this.settlementLights[i], candidate = candidates[i], assigned = Boolean(candidate.key);
+      light.group.visible = assigned && night > 0.05;
+      if (!assigned) { light.key = ''; light.light.intensity = 0; light.bulb.visible = false; continue; }
+      light.group.position.set(candidate.x, candidate.y, candidate.z);
+      if (light.key !== candidate.key || light.day !== this.day) {
+        light.key = candidate.key; light.day = this.day; light.roll = settlementPowerRoll(candidate.key, this.day); light.phase = light.roll * Math.PI * 2;
+        light.target = settlementPowerTarget(light.roll, stress, (this.settlementOutages.get(light.key) || 0) > this.minutes); light.power = light.target;
+      }
     }
+  }
+
+  updateSettlementLights(dt, realTime, night) {
+    const stress = settlementGridStress(this.key, this.values, this.values.wind * this.gust);
+    this.settlementT -= dt;
+    if (this.settlementT <= 0) { this.settlementT = 0.6; this.refreshSettlementLights(night, stress); }
+    let active = 0, powered = 0, brownouts = 0, dark = 0;
+    for (const light of this.settlementLights) {
+      if (!light.key) continue;
+      if (light.day !== this.day) { light.day = this.day; light.roll = settlementPowerRoll(light.key, this.day); light.phase = light.roll * Math.PI * 2; }
+      light.target = settlementPowerTarget(light.roll, stress, (this.settlementOutages.get(light.key) || 0) > this.minutes);
+      light.power = settlementPowerStep(light.power, light.target, dt);
+      const level = settlementLightLevel(light.power, stress, realTime, light.phase);
+      light.light.intensity = light.group.visible ? night * 85 * level : 0;
+      light.bulb.visible = light.group.visible && level > 0.018; light.bulb.scale.setScalar(0.7 + level * 0.3);
+      if (light.group.visible) active++;
+      if (light.target <= 0.02) dark++; else if (light.target < 0.9) brownouts++; else powered++;
+    }
+    const stats = this.settlementPowerStats; stats.active = active; stats.powered = powered; stats.brownouts = brownouts; stats.dark = dark;
+    stats.outages = this.settlementOutages.size; stats.strikeFailures = this.settlementPowerFailures; stats.stress = stress;
+  }
+
+  registerSettlementOutage(source, prefix, strikeX, strikeZ) {
+    if (!source) return false;
+    const duration = settlementStrikeOutageMinutes(Math.hypot(source.x - strikeX, source.z - strikeZ), this.values.lightning, Math.random());
+    if (!duration) return false;
+    source.powerKey ||= `${prefix}:${source.key}`;
+    const expiry = this.minutes + duration, current = this.settlementOutages.get(source.powerKey) || 0;
+    this.settlementOutages.delete(source.powerKey); this.settlementOutages.set(source.powerKey, Math.max(current, expiry));
+    return true;
+  }
+
+  registerSettlementPowerStrike(x, z) {
+    if (!this.world || !this.settlementOutages) return 0;
+    let failures = 0;
+    for (const live of this.world.liveSites.values()) {
+      const site = live.site; if ((site.kind === 'house' || site.kind === 'boathouse') && this.registerSettlementOutage(site, 'site', x, z)) failures++;
+    }
+    for (const group of this.world.liveCamps.values()) if (this.registerSettlementOutage(group.userData.site, 'camp', x, z)) failures++;
+    while (this.settlementOutages.size > MAX_SETTLEMENT_OUTAGES) {
+      let oldestKey = '', oldestExpiry = Infinity;
+      for (const [key, expiry] of this.settlementOutages) if (expiry < oldestExpiry) { oldestKey = key; oldestExpiry = expiry; }
+      if (!oldestKey) break; this.settlementOutages.delete(oldestKey);
+    }
+    if (failures) { this.settlementPowerFailures += failures; this.persistState(true); }
+    return failures;
+  }
+
+  settlementPowerSnapshot() {
+    return { ...this.settlementPowerStats, savedOutages: this.settlementOutages.size, maxOutages: MAX_SETTLEMENT_OUTAGES, bulbGeometries: 1, bulbMaterials: 1 };
   }
 
   applyPhysics(dt) {
@@ -599,7 +672,7 @@ export class Environment {
       this.port.visible = visible.port; this.starboard.visible = visible.starboard; this.stern.visible = visible.stern;
     }
     this.cockpitLight.intensity = night * 15; this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) : 0;
-    this.updateSettlementLights(dt, night);
+    this.updateSettlementLights(dt, realTime, night);
 
     if (this.alertT > 0) { this.alertT -= dt; if (this.alertT <= 0 && this.alertEl) this.alertEl.classList.remove('on'); }
     if (step) { this.persistT -= step; if (this.persistT <= 0) { this.persistT = 10; this.persistState(true); } }
@@ -614,7 +687,7 @@ export class Environment {
     const tide = this.tideLabel();
     const lunarRange = this.tideRange > 0.94 ? ' · spring tide' : this.tideRange < 0.76 ? ' · neap tide' : '';
     const pressure = this.key === 'hurricane' ? ` · ${this.hurricane.pressureHpa} hPa` : '';
-    const surge = V.surge > 0.14 ? ` · surge +${(V.surge * FT).toFixed(1)} ft` : '';
+    const surge = this.values.surge > 0.14 ? ` · surge +${(this.values.surge * FT).toFixed(1)} ft` : '';
     const current = this.currentField ? ` · ${this.currentField.hud()}` : '';
     this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${this.weatherLabel()}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${pressure}${surge}${current}</div>`;
   }

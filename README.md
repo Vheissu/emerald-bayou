@@ -114,6 +114,8 @@ Calm banks now carry fireflies after sunset, with the thickest displays in cypre
 
 The timing and wet-bank placement draw on [University of Florida field notes](https://entnemdept.ufl.edu/lloyd/firefly/ffcomp1-1.pdf). The mangrove bias follows the documented habitat of the [Florida intertidal firefly](https://xerces.org/press/first-conservation-status-assessments-published-for-north-american-fireflies), and the weather and light response follows [National Park Service viewing guidance](https://home.nps.gov/cong/fireflies.htm).
 
+Power at the camps is no longer perfect. Squalls make weak circuits sag. Thunderstorms and tropical weather can black out individual houses, and a close lightning strike can leave one address dark after the rain moves on. Each place keeps the same vulnerability for the day, and restored power comes back slowly instead of snapping on. The effect still uses five pooled point lights. Those lights now share one bulb geometry and material, and nearest-site selection reuses five fixed records instead of rebuilding and sorting a candidate list every 0.6 seconds.
+
 People are jointed figures driven by a pose target system rather than baked animation, so a man on a dock will track you as you go past, drink his beer, check his rod, cast, and reel in a fish. Boat ramps run a 150 second cycle where a truck backs down the slab, floats a boat off the trailer, motors out and comes back to winch it on.
 
 <img src="docs/screenshots/02-mission.jpg" alt="A story job in progress" width="100%">
@@ -172,6 +174,7 @@ __dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fi
 __dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspection
 __dbg.nocturnal.resourceStats()           // point count, draw count and geometry bytes
 __dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
+__dbg.environment.settlementPowerSnapshot() // five-light pool, live grid stress and saved strike outages
 __dbg.encounters.pursuitSnapshot()        // surface units, shared visual and pooled aviation state
 __dbg.hazards.resourceStats()             // debris pool, shared resources and wake-stamp budget
 __dbg.audio.spatialStats()                 // listener direction and spatial-node allocation totals

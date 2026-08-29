@@ -86,6 +86,16 @@ test('weather persistence stores the full passage duration alongside remaining t
   assert.equal(game.save.environment.duration, 196);
 });
 
+test('the world HUD reads storm surge from retained environment values', () => {
+  const environment = Object.create(Environment.prototype), el = {};
+  Object.assign(environment, {
+    el, hour: 3.5, localWindAngle: 0, tideRange: 1, key: 'hurricane', hurricane: { pressureHpa: 978 },
+    values: { wind: 30, surge: 0.72 }, gust: 1, currentField: null, tideLabel: () => 'Rising +2.4 ft', weatherLabel: () => 'Hurricane eyewall',
+  });
+  environment.renderHud();
+  assert.match(el.innerHTML, /surge \+2\.4 ft/); assert.match(el.innerHTML, /978 hPa/);
+});
+
 test('marine radio explains that eye calm is temporary and backside wind reverses', () => {
   const radio = Object.create(RadioDirector.prototype), calls = [];
   radio.transmit = message => { calls.push(message); return true; };
