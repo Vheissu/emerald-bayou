@@ -243,8 +243,11 @@ async function init() {
   const keys = {};
   window.addEventListener('keydown', e => {
     keys[e.code] = true;
+    if (import.meta.env.DEV && e.code === 'F9' && e.shiftKey && !e.repeat) {
+      e.preventDefault(); story.resetDebug(); if (encounters.active) encounters.finish(false, true); encounters.next = 999; return;
+    }
     if (import.meta.env.DEV && e.code === 'F7' && !e.repeat) {
-      e.preventDefault(); const types = ['distress', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats(); let started = 0;
+      e.preventDefault(); const types = ['distress', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats(); let started = 0;
       for (let i = 0; i < 6000; i++) if (encounters.start(types[i % types.length], true)) started++;
       if (encounters.active) encounters.finish(false, true);
       const result = { iterations: 6000, started, before, after: debugSceneGraphStats(), active: encounters.active, renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length } };

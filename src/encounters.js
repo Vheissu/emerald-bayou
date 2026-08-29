@@ -5,6 +5,7 @@ import { crabFloat, fuelDrum, wreck } from './markers.js';
 import { gatorMesh, manateeMesh } from './wildlife.js';
 import { mulberry32 } from './noise.js';
 import { fmtDist } from './game.js';
+import { findGroundingSite } from './grounding.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -12,7 +13,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
 const MANATEE_PROBES = [0, -0.42, 0.42, -0.86, 0.86, -1.32, 1.32];
-const DEBUG_ORDER = ['distress', 'fire', 'manatee', 'spotlight', 'patrol', 'smuggler', 'salvage', 'netline'];
+const DEBUG_ORDER = ['distress', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'smuggler', 'salvage', 'netline'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
 const SPILL_POOL_SIZE = 3;
 
@@ -156,6 +157,23 @@ function makeEntangledManatee() {
   return { animal, buoy, rope };
 }
 
+function makeGroundingRig(rr, scene) {
+  const boat = buildSkiff({ crew: false }); boat.name = 'grounded working skiff'; boat.visible = false;
+  recolor(boat, 0x7a6749);
+  const operator = person(rr, { pose: 'stand', hat: true, vest: true });
+  operator.name = 'grounded skiff operator'; operator.position.set(-0.12, 0.5, -0.52); operator.rotation.y = Math.PI; boat.add(operator);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 3.7, 6), new THREE.MeshStandardMaterial({ color: 0x8a7657, roughness: 1 }));
+  pole.name = 'shallow-water push pole'; pole.rotation.z = Math.PI / 2; pole.rotation.y = -0.2; pole.position.set(0, 0.58, -0.15); pole.castShadow = true; boat.add(pole);
+  const lamp = signalLight(boat, 0xffa52f, 0.58, 1.23, -0.54);
+  scene.add(boat);
+
+  const ropeGeometry = new THREE.BufferGeometry();
+  ropeGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(18 * 3), 3));
+  const ropeMaterial = new THREE.LineBasicMaterial({ color: 0xd2b174, transparent: true, opacity: 0.9, depthWrite: false });
+  const rope = new THREE.Line(ropeGeometry, ropeMaterial); rope.name = 'grounded skiff tow line'; rope.frustumCulled = false; rope.visible = false; scene.add(rope);
+  return { boat, operator, pole, lamp, rope, agent: boatAgent(boat) };
+}
+
 function makeSpotlightRig(rr, boat, scene) {
   const gunner = person(rr, { pose: 'stand', hat: true, gun: true });
   gunner.name = 'unlicensed alligator gunner'; gunner.position.set(-0.44, 0.48, -0.52); gunner.rotation.y = Math.PI; gunner.visible = false; boat.add(gunner);
@@ -199,22 +217,28 @@ export class EncounterDirector {
       e.hitCd = 2.2; e.burn = Math.min(e.limit, e.burn + into * 0.9); this.game.shake = Math.max(this.game.shake, Math.min(0.34, into * 0.035));
       this.game.toast('Contact with the burning skiff', 'The fuel tank shifted. Back off and come alongside at idle.', 2.8);
     } };
+    this.groundingObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat', onHit: (into) => {
+      const e = this.active; if (!e || e.type !== 'grounding' || e.hitCd > 0 || into < 2.2) return;
+      e.hitCd = 2.8; e.scour += into * 0.18; this.game.shake = Math.max(this.game.shake, Math.min(0.28, into * 0.03));
+      this.game.toast('Contact with the grounded skiff', 'Back into the deep water and pass the line at idle.', 2.8);
+    } };
     this.manateeObs = { x: 0, z: 0, r: 2.15, tag: 'entangled manatee', onHit: into => this.hitEntangledManatee(into) };
     this.manateeLineObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.16, tag: 'crab trap line', onHit: into => this.hitManateeLine(into) };
     this.phys.addObs('encounters', this.obs);
-    this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.smuggler.agent, this.rigs.distress.echoAgent];
+    this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.smuggler.agent, this.rigs.distress.echoAgent, this.rigs.grounding.agent];
     this.salvagePieces = this.rigs.salvage.drums.map((mesh, index) => ({ mesh, index, x: 0, z: 0, vx: 0, vz: 0, found: false, ruptured: false, resolved: false, hitCd: 0, sinkT: 0, ph: index * 2.3 }));
     this.drumObs = this.salvagePieces.map((q, index) => ({ x: 0, z: 0, r: 0.52, tag: 'fuel drum', onHit: (into, nx, nz) => this.hitDrum(index, into, nx, nz) }));
     this.spills = this.makeSpills();
     this.keyHandler = e => {
       if (e.code === 'KeyE' && !e.repeat) this.interact = true;
       if (e.code === 'KeyF' && !e.repeat) this.alternate = true;
-      if (import.meta.env.DEV && e.code === 'F9' && !e.repeat && this.enabled && !this.game.state) { e.preventDefault(); this.start(DEBUG_ORDER[this.debugIndex++ % DEBUG_ORDER.length], true); }
+      if (import.meta.env.DEV && e.code === 'F9' && !e.shiftKey && !e.repeat && this.enabled && !this.game.state) { e.preventDefault(); this.start(DEBUG_ORDER[this.debugIndex++ % DEBUG_ORDER.length], true); }
       if (import.meta.env.DEV && e.code === 'F10' && !e.repeat && this.enabled && this.active) { e.preventDefault(); this.debugApproach(); }
       if (import.meta.env.DEV && e.code === 'F11' && !e.repeat && this.enabled && this.active) {
         if (this.active.type === 'fire' && !this.active.fireOut && !this.active.burned) { e.preventDefault(); this.active.burn = this.active.limit; }
         else if (this.active.type === 'manatee') { e.preventDefault(); this.debugAdvanceManatee(); }
         else if (this.active.type === 'spotlight') { e.preventDefault(); this.debugAdvanceSpotlight(); }
+        else if (this.active.type === 'grounding') { e.preventDefault(); this.debugAdvanceGrounding(); }
       }
     };
     window.addEventListener('keydown', this.keyHandler);
@@ -254,8 +278,9 @@ export class EncounterDirector {
     const fire = makeEngineFire(); fire.position.set(0.34, 0.52, 1.5); fireBoat.add(fire);
     const swimmer = person(rr, { pose: 'sitEdge', hat: false, vest: true }); swimmer.visible = false; this.scene.add(swimmer);
     const manatee = makeEntangledManatee(); this.scene.add(manatee.animal, manatee.buoy, manatee.rope);
+    const grounding = makeGroundingRig(rr, this.scene);
 
-    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, patrol, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire }, manatee, spotlight };
+    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, grounding, patrol, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire }, manatee, spotlight };
   }
 
   spot(min = 160, max = 300, sideMax = 170) {
@@ -270,35 +295,45 @@ export class EncounterDirector {
     return null;
   }
 
+  groundingSpot(nearby = false) {
+    return findGroundingSite({
+      terrain: this.terrain, isBlocked: (x, z) => Boolean(this.world?.blockedAt(x, z)), waterLevel: this.environment.waterLevel,
+      deepSpot: (min, max, side) => this.spot(min, max, side), nearby,
+    });
+  }
+
   pickType() {
     const weather = this.environment.key, night = this.environment.hour < 5.5 || this.environment.hour > 20.5;
     const heat = this.law ? this.law.attention : 0;
     const runners = this.reputation ? this.reputation.score('runners') : 0, fwc = this.reputation ? this.reputation.score('fwc') : 0;
     const region = this.regions && this.regions.current ? this.regions.current.encounters : {};
-    const weights = { distress: 0.25, fire: 0.1, manatee: 0.1, spotlight: 0.08, patrol: 0.2, salvage: 0.1, smuggler: 0.1, netline: 0.07 };
+    const weights = { distress: 0.24, grounding: 0.1, fire: 0.1, manatee: 0.1, spotlight: 0.08, patrol: 0.2, salvage: 0.1, smuggler: 0.1, netline: 0.07 };
     weights.patrol *= (region.law ?? 1) * (1 + heat * 1.75) * (1 + Math.max(0, -fwc) * 0.16);
     weights.smuggler *= (region.runners ?? 1) * (night ? 1.9 : 1) * (1 + Math.max(0, -runners) * 0.2);
     weights.netline *= (0.72 + (region.runners ?? 1) * 0.38) * (night ? 1.24 : 1);
     weights.distress *= region.danger ?? 1;
+    const falling = clamp((-this.environment.tideRate - 0.025) / 0.24), lowWater = clamp((-this.environment.waterLevel - 0.08) / 0.3);
+    weights.grounding *= (falling > 0 ? 0.72 + falling * 2.15 : lowWater * 0.75) * (0.82 + this.environment.tideRange * 0.28) * (region.danger ?? 1);
     weights.fire *= (region.danger ?? 1) * (0.82 + Math.min(1.25, (this.environment.values.wind || 0) * 0.045));
     weights.manatee *= (night ? 0.42 : 1) * (1 - clamp((this.environment.values.storm || 0) - 0.45, 0, 0.86));
     weights.spotlight *= (region.runners ?? 1) * (night ? 1.9 : 0) * (1 + Math.max(0, -runners) * 0.12) * (1 - clamp((this.environment.values.storm || 0) - 0.34, 0, 0.94));
     weights.salvage *= 0.7 + (region.danger ?? 1) * 0.45;
     if (weather === 'hurricane' || weather === 'tropical' || weather === 'thunderstorm') {
-      weights.distress *= 1.8; weights.fire *= 1.35; weights.manatee *= 0.08; weights.spotlight *= 0.04; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
+      weights.distress *= 1.8; weights.grounding *= 0.12; weights.fire *= 1.35; weights.manatee *= 0.08; weights.spotlight *= 0.04; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
     } else if (weather === 'squall' || weather === 'hail') {
-      weights.distress *= 1.4; weights.fire *= 1.2; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
+      weights.distress *= 1.4; weights.grounding *= 0.55; weights.fire *= 1.2; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
     }
     if (heat >= 3) weights.patrol *= 2.1;
     let roll = Math.random() * Object.values(weights).reduce((a, n) => a + n, 0);
-    for (const type of ['distress', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
+    for (const type of ['distress', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
     return 'distress';
   }
 
   start(type = this.pickType(), nearby = false) {
     if (this.active) this.finish(false, true);
-    const at = nearby ? this.spot(42, 62, 38) : this.spot(); if (!at) { this.next = 20; return false; }
+    const at = type === 'grounding' ? this.groundingSpot(nearby) : nearby ? this.spot(42, 62, 38) : this.spot(); if (!at) { this.next = 20; return false; }
     if (type === 'distress') this.startDistress(at);
+    else if (type === 'grounding') this.startGrounding(at);
     else if (type === 'fire') this.startFire(at);
     else if (type === 'manatee') this.startManatee(at);
     else if (type === 'spotlight') this.startSpotlight(at);
@@ -361,6 +396,106 @@ export class EncounterDirector {
     const R = this.rigs.distress; e.state = 'aboard'; e.drop = this.distressDrop(e.x, e.z); e.boardedAt = e.t;
     R.survivor.visible = false; R.passenger.visible = true; this.clearPrompt(); this.audio.checkpoint();
     this.game.toast('Operator aboard', `Run him to ${e.drop.name}. Keep the front bench dry.`, 3.2);
+  }
+
+  startGrounding(at) {
+    const R = this.rigs.grounding, h = at.ground ?? this.terrain.heightAt(at.x, at.z);
+    R.agent.active = false; R.boat.visible = true; R.operator.visible = true; R.rope.visible = false; R.lamp.group.visible = true;
+    R.boat.userData.motor.rotation.x = 0.58; R.boat.userData.motor.userData.prop.rotation.z = 0;
+    wave(R.operator);
+    const fx = -Math.sin(at.heading), fz = -Math.cos(at.heading), rx = -Math.cos(at.heading), rz = Math.sin(at.heading);
+    const bow = this.terrain.heightAt(at.x + fx * 2, at.z + fz * 2), stern = this.terrain.heightAt(at.x - fx * 2, at.z - fz * 2);
+    const right = this.terrain.heightAt(at.x + rx * 0.75, at.z + rz * 0.75), left = this.terrain.heightAt(at.x - rx * 0.75, at.z - rz * 0.75);
+    this.active = {
+      type: 'grounding', x: at.x, z: at.z, startX: at.x, startZ: at.z, heading: at.heading,
+      clearX: at.clearX, clearZ: at.clearZ, approachX: at.approachX, approachZ: at.approachZ,
+      state: 'waiting', t: 0, known: false, hitCd: 0, vx: 0, vz: 0, ropeLength: 9, strain: 0, scour: 0, lineParts: 0,
+      pitch: clamp(Math.atan2(bow - stern, 4), -0.14, 0.14), roll: clamp(Math.atan2(right - left, 1.5), -0.18, 0.18),
+      clearance: this.environment.waterLevel - h, falling: this.environment.tideRate < 0,
+      recognized: Boolean(this.reputation && this.reputation.score('locals') >= 3),
+    };
+    this.updateGroundingTransform(this.active, 0, 0);
+  }
+
+  updateGroundingTransform(e, dt, t) {
+    const R = this.rigs.grounding, waveY = this.water.waveHeight(e.x, e.z, t), ground = this.terrain.heightAt(e.x, e.z);
+    e.clearance = this.environment.waterLevel - ground;
+    const grounded = clamp((0.52 - e.clearance) / 0.44), follow = dt > 0 ? 1 - Math.exp(-dt * 3.2) : 1;
+    e.pitch = lerp(e.pitch, e.pitch * grounded, follow * (1 - grounded)); e.roll = lerp(e.roll, e.roll * grounded, follow * (1 - grounded));
+    R.boat.position.set(e.x, Math.max(waveY - 0.05, ground + 0.43), e.z);
+    R.boat.rotation.set(e.pitch * grounded + Math.sin(t * 0.61 + e.t) * 0.012 * (1 - grounded), e.heading, e.roll * grounded + Math.sin(t * 0.77) * 0.016 * (1 - grounded), 'YXZ');
+    R.boat.userData.motor.rotation.x = lerp(R.boat.userData.motor.rotation.x, e.state === 'depart' ? 0 : 0.58, follow);
+    const night = this.environment.hour < 5.5 || this.environment.hour > 20.5, pulse = 0.5 + 0.5 * Math.sin(t * 4.6);
+    R.lamp.light.intensity = night || this.environment.restrictedVisibility > 0.25 ? 8 + pulse * 24 : 0; R.lamp.bulb.scale.setScalar(0.75 + pulse * 0.3);
+  }
+
+  attachGroundingTow(e, force = false) {
+    if (e.state !== 'waiting') return;
+    const p = this.phys, pf = p.forward(this._f), sfx = -Math.sin(e.heading), sfz = -Math.cos(e.heading);
+    const px = p.pos.x - pf.x * 2.6, pz = p.pos.y - pf.y * 2.6, sx = e.x - sfx * 1.85, sz = e.z - sfz * 1.85;
+    const d = Math.hypot(px - sx, pz - sz); if (!force && d > 15) return;
+    e.state = 'tow'; e.ropeLength = clamp(d + 0.45, 5.5, 15); e.strain = 0; this.rigs.grounding.rope.visible = true;
+    this.game.wpTarget = { x: e.clearX, z: e.clearZ, label: 'deep water', color: '#7db8d8', encounter: true };
+    this.clearPrompt(); this.audio.checkpoint(); this.game.toast('Stern line fast', 'Motor stays trimmed. Ease her toward blue water; F drops the line.', 3.4);
+  }
+
+  dropGroundingTow(e, parted = false) {
+    if (e.state !== 'tow') return;
+    e.state = 'waiting'; e.strain = 0; e.lineParts += parted ? 1 : 0; this.rigs.grounding.rope.visible = false; this.phys.towDrag = 0;
+    if (this.game.wpTarget?.encounter) this.game.wpTarget = null;
+    if (parted) { this.audio.warn(); this.game.shake = Math.max(this.game.shake, 0.18); }
+    this.game.toast(parted ? 'Tow line parted' : 'Tow line dropped', parted ? 'Too much shock load. Come back at idle and reset it.' : 'The skiff is still pinned on the bank.', 3);
+  }
+
+  waitForGroundingFlood(e) {
+    if (e.state !== 'waiting') return;
+    e.state = 'secured'; e.resolveT = 5.5; this.clearPrompt();
+    if (this.reputation) this.reputation.change('fwc', 0.45, 'grounding-held-for-tide', 'You kept a grounded skiff from powering across a shallow bank and relayed its position.', true);
+    this.audio.checkpoint(); this.game.toast('Position and hull relayed', 'Outboard stays trimmed. The operator will hold aboard for the flood tide.', 3.5);
+  }
+
+  floatGrounding(e, assisted = true) {
+    if (!['waiting', 'tow'].includes(e.state)) return;
+    const R = this.rigs.grounding, dx = e.clearX - e.x, dz = e.clearZ - e.z, d = Math.hypot(dx, dz) || 1;
+    e.state = 'depart'; e.departT = 7.5; e.assisted = assisted; e.cleanTow = e.scour < 1.8; R.rope.visible = false; this.phys.towDrag = 0;
+    if (this.game.wpTarget?.encounter) this.game.wpTarget = null;
+    const heading = Math.atan2(-dx, -dz), A = R.agent;
+    Object.assign(A, { x: e.x, z: e.z, heading, speed: 0.25, want: 5.2, turn: 0, decisionT: 0, targetX: e.x + dx / d * 320, targetZ: e.z + dz / d * 320, active: true });
+    R.boat.userData.motor.rotation.x = 0.18; this.audio.checkpoint();
+    this.game.toast(assisted ? 'Skiff floating clear' : 'Flood tide lifted the skiff', assisted ? 'Line is off. Let the outboard open a safe gap.' : 'The operator waited it out with the motor trimmed.', 3.2);
+  }
+
+  updateGroundingRope(e, dt, t) {
+    const R = this.rigs.grounding, p = this.phys, pf = p.forward(this._f), sfx = -Math.sin(e.heading), sfz = -Math.cos(e.heading);
+    const px = p.pos.x - pf.x * 2.6, pz = p.pos.y - pf.y * 2.6, sx = e.x - sfx * 1.85, sz = e.z - sfz * 1.85;
+    const dx = px - sx, dz = pz - sz, d = Math.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d, tension = Math.max(0, d - e.ropeLength);
+    const grounded = clamp((0.52 - e.clearance) / 0.44), force = tension * lerp(1.55, 0.78, grounded);
+    if (tension > 0) {
+      e.vx += nx * force * dt; e.vz += nz * force * dt;
+      p.vel.x -= nx * tension * 0.13 * dt; p.vel.y -= nz * tension * 0.13 * dt;
+    }
+    e.strain = tension > 4.2 ? e.strain + (tension - 4.2) * 0.34 * dt : Math.max(0, e.strain - dt * 0.8);
+    p.towDrag = Math.max(p.towDrag, 0.035 + grounded * 0.025);
+    const skiffSpeed = Math.hypot(e.vx, e.vz);
+    if (grounded > 0.2 && skiffSpeed > 0.55) {
+      e.scour += (skiffSpeed - 0.55) * grounded * dt * 0.42;
+      if (e.scour > 1.05 && !e.scourWarned) { e.scourWarned = true; this.game.toast('Mud boiling under the skiff', 'Ease off. A hard pull will carve the bank and part the line.', 3.1); }
+    }
+    const arr = R.rope.geometry.attributes.position.array;
+    for (let i = 0; i < 18; i++) {
+      const k = i / 17, x = px + (sx - px) * k, z = pz + (sz - pz) * k;
+      arr[i * 3] = x; arr[i * 3 + 1] = this.water.waveHeight(x, z, t) + 0.2 - Math.sin(k * Math.PI) * Math.max(0.08, 0.3 - tension * 0.035); arr[i * 3 + 2] = z;
+    }
+    R.rope.geometry.attributes.position.needsUpdate = true; R.rope.material.opacity = lerp(0.76, 1, clamp(tension / 5)); R.rope.visible = true;
+    if (d > e.ropeLength + 9 || e.strain > 1.35) this.dropGroundingTow(e, true);
+  }
+
+  debugAdvanceGrounding() {
+    const e = this.active; if (!e || e.type !== 'grounding') return;
+    if (e.state === 'waiting') { this.phys.reset(e.approachX, e.approachZ, e.heading); this.phys.y = this.water.waveHeight(e.approachX, e.approachZ, 0); this.attachGroundingTow(e, true); }
+    else if (e.state === 'tow') { e.x = e.clearX; e.z = e.clearZ; e.clearance = 1; this.floatGrounding(e, true); }
+    else if (e.state === 'secured') e.resolveT = 0;
+    else if (e.state === 'depart') e.departT = 0;
   }
 
   startFire(at) {
@@ -817,6 +952,7 @@ export class EncounterDirector {
   debugApproach() {
     const e = this.active, p = this.phys; if (!e) return;
     let target = e;
+    if (e.type === 'grounding') target = { x: e.approachX, z: e.approachZ };
     if (e.type === 'patrol') target = this.rigs.patrol.agent;
     else if (e.type === 'spotlight') target = this.rigs.smuggler.agent;
     else if (e.type === 'smuggler' && e.state === 'chase') target = this.rigs.smuggler.agent;
@@ -912,9 +1048,11 @@ export class EncounterDirector {
     this.rigs.salvage.wreck.visible = false; for (const d of this.rigs.salvage.drums) d.visible = false;
     this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
     this.rigs.fire.boat.visible = false; this.rigs.fire.operator.visible = true; this.rigs.fire.swimmer.visible = false; animateEngineFire(this.rigs.fire.fire, 0, 0, 0);
+    this.rigs.grounding.boat.visible = false; this.rigs.grounding.operator.visible = true; this.rigs.grounding.rope.visible = false; this.rigs.grounding.lamp.light.intensity = 0; this.rigs.grounding.agent.active = false;
     this.rigs.manatee.animal.visible = false; this.rigs.manatee.buoy.visible = false; this.rigs.manatee.rope.visible = false; this.rigs.manatee.rope.material.opacity = 0.86;
     this.rigs.spotlight.gunner.visible = false; this.rigs.spotlight.gator.visible = false; this.rigs.spotlight.eyes.visible = false; this.rigs.spotlight.light.intensity = 0; this.rigs.spotlight.pool.visible = false; this.rigs.spotlight.uniforms.uOpacity.value = 0;
     if (e.type === 'fire' && e.aboard) this.phys.loaded = 0;
+    if (e.type === 'grounding') this.phys.towDrag = 0;
     if (this.law) this.law.setPursuit(false);
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
     this.active = null; this.next = success ? 100 + Math.random() * 110 : silent ? 60 : 75 + Math.random() * 90;
@@ -985,6 +1123,63 @@ export class EncounterDirector {
           this.complete('Safe berth reached', `${q.name} took him in. His skiff can wait for daylight.`, 275, 1.25, 'You carried a stranded operator to a safe berth.', 'distress-berth', q.name);
         }
       }
+    }
+  }
+
+  updateGrounding(e, dt, t) {
+    const R = this.rigs.grounding, p = this.phys; e.hitCd = Math.max(0, e.hitCd - dt);
+    if (e.state === 'depart') {
+      const A = R.agent; this.updateAgent(A, dt, t, A.targetX, A.targetZ, 5.2); e.x = A.x; e.z = A.z; e.heading = A.heading;
+      R.boat.userData.motor.rotation.x = lerp(R.boat.userData.motor.rotation.x, 0, 1 - Math.exp(-dt * 3.4));
+      { const boat = this._personBoat; boat.x = p.pos.x; boat.z = p.pos.y; boat.speed = p.speed; animatePerson(R.operator, t, dt, boat); }
+      this.addBoatObstacle(A, 'departing skiff', 1); e.departT -= dt;
+      if (e.departT <= 0) {
+        if (!e.assisted) {
+          if (e.known) this.complete('Flood tide lifted the skiff', 'The operator waited with the outboard trimmed and left without cutting the bank.', 0, 0, '', 'grounding-flood');
+          else this.finish(false, true);
+        } else if (e.cleanTow) {
+          if (this.reputation) this.reputation.change('fwc', 0.3, 'grounding-clean-tow', 'A grounded skiff was pulled into deep water without a visible prop scar.', false);
+          this.complete('Skiff recovered clean', 'Steady line, trimmed motor, no mud trench behind the hull.', 230, 0.85, 'You floated a working skiff off a falling-tide bank without chewing up the bottom.', 'grounding-towed');
+        } else {
+          if (this.reputation) this.reputation.change('fwc', -0.55, 'grounding-bottom-scar', 'FWC logged a fresh bottom scar behind a skiff pulled off the bank.', true);
+          if (this.law) this.law.add(0.35, 'shallow-bank damage during a tow', false);
+          this.complete('Skiff dragged clear', 'The hull is floating, but the hard pull left a fresh trench in the bank.', 140, 0.35, 'You got a working skiff loose with a rough tow.', 'grounding-scarred');
+        }
+      }
+      return;
+    }
+
+    this.updateGroundingTransform(e, dt, t);
+    { const boat = this._personBoat; boat.x = p.pos.x; boat.z = p.pos.y; boat.speed = p.speed; animatePerson(R.operator, t, dt, boat); }
+    const d = Math.hypot(e.x - p.pos.x, e.z - p.pos.y), fx = -Math.sin(e.heading), fz = -Math.cos(e.heading);
+    if (R.operator.userData.waveT <= 0 && d < 150 && e.state === 'waiting') wave(R.operator);
+    if (d < 145) this.known(e, 'Skiff hard aground', e.falling ? 'Outboard is trimmed, but the ebb is still taking water off the bank.' : 'Outboard is trimmed. The operator is waiting on more water.');
+    if (e.known && e.state !== 'tow') this.point(e.x, e.z, 'grounded skiff', '#f0a24d');
+    if (d < 72) {
+      const o = this.groundingObs; o.ax = e.x + fx * 2; o.az = e.z + fz * 2; o.bx = e.x - fx * 2; o.bz = e.z - fz * 2; this.obs.push(o);
+    }
+
+    if (e.state === 'waiting') {
+      e.vx *= Math.exp(-dt * 3.5); e.vz *= Math.exp(-dt * 3.5);
+      if (e.clearance > 0.58) { this.floatGrounding(e, false); return; }
+      if (d < 14.5 && p.speed * MPH < 4.8 && this.canInteract()) {
+        this.setPrompt('set a stern line for deep water <i>· F relay the position and wait for high tide</i>');
+        if (this.interact) this.attachGroundingTow(e);
+        else if (this.alternate) this.waitForGroundingFlood(e);
+      }
+    } else if (e.state === 'tow') {
+      this.point(e.clearX, e.clearZ, 'deep water', '#7db8d8'); this.updateGroundingRope(e, dt, t);
+      const grounded = clamp((0.52 - e.clearance) / 0.44), flow = this.currents ? this.currents.flowAt(e.x, e.z, this._flow) : null;
+      e.vx *= Math.exp(-dt * (0.72 + grounded * 2.8)); e.vz *= Math.exp(-dt * (0.72 + grounded * 2.8));
+      const nx = e.x + (e.vx + (flow ? flow.x * (1 - grounded) * 0.34 : 0)) * dt, nz = e.z + (e.vz + (flow ? flow.y * (1 - grounded) * 0.34 : 0)) * dt;
+      if (!this.world?.blockedAt(nx, nz) && this.environment.waterLevel - this.terrain.heightAt(nx, nz) > 0.025) { e.x = nx; e.z = nz; }
+      else { e.vx *= -0.16; e.vz *= -0.16; }
+      e.clearance = this.environment.waterLevel - this.terrain.heightAt(e.x, e.z);
+      if (e.state === 'tow' && (Math.hypot(e.x - e.clearX, e.z - e.clearZ) < 9 || e.clearance > 0.61)) { this.floatGrounding(e, true); return; }
+      if (e.state === 'tow') this.setPrompt(`drop the tow line <i>· ${e.strain > 0.7 ? 'shock load high, ease off' : e.scour > 0.8 ? 'bottom dragging, keep it slow' : 'steady tension toward blue water'}</i>`, 'F');
+    } else if (e.state === 'secured') {
+      e.resolveT -= dt;
+      if (e.resolveT <= 0) this.complete('Grounding response logged', 'The operator is staying with the skiff for higher water. No prop scar, no abandoned hull.', 70, 0.3, 'You stopped a grounded operator from powering across a shallow bank.', 'grounding-wait');
     }
   }
 
@@ -1453,6 +1648,7 @@ export class EncounterDirector {
     if (!this.active) { this.next -= dt; if (this.next <= 0) this.start(); this.interact = false; this.alternate = false; return; }
     const e = this.active; e.t += dt; this.clearPrompt();
     if (e.type === 'distress') this.updateDistress(e, dt, t);
+    else if (e.type === 'grounding') this.updateGrounding(e, dt, t);
     else if (e.type === 'fire') this.updateFire(e, dt, t);
     else if (e.type === 'manatee') this.updateManatee(e, dt, t);
     else if (e.type === 'spotlight') this.updateSpotlight(e, dt, t);
