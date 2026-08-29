@@ -40,6 +40,7 @@ import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel,
 import { startupPlan, startupTerrainReady } from './startup.js';
 import { FieldDiscoveryDirector } from './discoveries.js';
 import { NavigationAids } from './navigationaids.js';
+import { DolphinPod } from './dolphins.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -234,6 +235,8 @@ async function init() {
   const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
   game.discoveries = discoveries;
   const navigationAids = new NavigationAids({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition });
+  const dolphins = new DolphinPod({ scene, terrain, world, water, phys, game, audio, environment, regions, plume, spray, law, reputation, radio, encounters, incidents, story, aftermath });
+  game.dolphins = dolphins;
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
     const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
     const addMaterial = material => {
@@ -264,6 +267,7 @@ async function init() {
       waders: debugTreeResources(waders.list.map(w => w.mesh)),
       manatees: debugTreeResources(manatees.list.map(m => m.mesh)),
       gators: debugTreeResources(gators.list.map(g => g.mesh)),
+      dolphins: dolphins.resourceStats(),
     },
     stormRecovery: { sites: aftermath.sites.length, rigs: aftermath.rigs.size, disposed: { ...aftermath.disposedResources } },
     livingWorld: {
@@ -288,7 +292,7 @@ async function init() {
       },
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
@@ -574,6 +578,7 @@ async function init() {
     hazards.update(dtRaw, time, started && !game.paused);
     aftermath.update(dtRaw, time, started && !game.paused);
     ecology.update(dtRaw, time, started && !game.paused);
+    dolphins.update(dtRaw, time, started && !game.paused);
     incidents.update(dtRaw, time, started && !game.paused && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
     discoveries.update(dtRaw, time, started && !game.paused);
     navigationAids.update(dtRaw, time, started && !game.paused);
@@ -618,7 +623,7 @@ async function init() {
       pt = hullPt(0, 2.6); addPlayerStamp(pt, 1.5, 0.9 * spF + 0.3 * thr, 0.9 * spF + 2.2 * thr * (0.3 + spF), 1.25);
       pt = hullPt(0, 4.3); addPlayerStamp(pt, 2, 0, 1.3 * thr * (0.3 + spF), 1.7);
       pt = hullPt(0, 6.5); addPlayerStamp(pt, 2.4, 0, 0.5 * thr * spF, 2.2);
-      skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); encounters.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); hazards.stamps(stamps);
+      skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); dolphins.stamps(stamps); encounters.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); hazards.stamps(stamps);
       wakeCenter.set(phys.pos.x + fwd2.x * -25, phys.pos.y + fwd2.y * -25);
       water.simulate(wakeCenter, stamps, dt, currentFlow);
     }

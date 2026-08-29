@@ -51,7 +51,7 @@ export class Game {
     this.renderHud();
   }
   load() {
-    const fill = (s) => { s.rec = s.rec || {}; s.bounties = s.bounties || {}; s.camps = s.camps || []; s.seen = s.seen || []; s.traps = s.traps || []; s.runs = s.runs || 0; return s; };
+    const fill = (s) => { s.rec = s.rec || {}; s.bounties = s.bounties || {}; s.camps = s.camps || []; s.seen = s.seen || []; s.traps = s.traps || []; s.nature = s.nature || {}; s.runs = s.runs || 0; return s; };
     try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); if (s && s.best) return fill(s); } catch (e) { /* ignore */ }
     // migrate the pass-3 save if there is one
     try { const s = JSON.parse(localStorage.getItem('emeraldBayou.save.v1')); if (s && s.best) return fill({ cash: s.cash || 0, best: s.best, done: s.done || [] }); } catch (e) { /* ignore */ }
@@ -289,6 +289,7 @@ export class Game {
       ['Top speed', r.speed ? `${Math.round(r.speed)} mph` : '—'], ['Longest air', r.air ? `${r.air.toFixed(2)} s` : '—'], ['Highest air', r.peak ? `${r.peak.toFixed(1)} m` : '—'],
       ['Biggest spin', r.spin ? `${r.spin}°` : '—'], ['Longest drift', r.drift ? `${r.drift.toFixed(1)} s` : '—'], ['Best chain', r.bank ? `${Math.round(r.bank).toLocaleString()} pts` : '—'],
       ['Longest run', r.run ? `${r.run.toFixed(1)} mi` : '—'], ['Camps found', `${this.save.camps.length}`], ['Traps recovered', `${this.save.traps.length}`],
+      ['Dolphin passes', `${Math.max(0, Number(this.save.nature?.dolphinPasses) || 0)}`],
     ];
     const bl = this.bounties.today().map(b => `<div class="b ${b.done ? 'done' : ''}"><span class="chk">${b.done ? '✓' : ''}</span><span class="bt">${b.text}${b.count > 1 && !b.done ? ` <i>${b.progress} / ${b.count}</i>` : ''}</span><span class="pay">${fmtCash(b.pay)}</span></div>`).join('');
     const encounterCount = Object.values(this.save.encounters || {}).reduce((n, v) => n + (Number(v) || 0), 0);
@@ -744,6 +745,7 @@ const BOUNTY_POOL = [
   { id: 'idlepass', text: 'Idle past an angler', kind: 'idlepass', target: 1, pay: 120 },
   { id: 'charged', text: 'Get charged by the bull and live', kind: 'charged', target: 1, pay: 200 },
   { id: 'baitwatch', text: 'Hold off a feeding school for six seconds', kind: 'baitwatch', target: 1, pay: 140 },
+  { id: 'dolphinpass', text: 'Keep a steady course when dolphins join the bow', kind: 'dolphinpass', target: 1, pay: 200 },
 ];
 class Bounties {
   constructor(G) {
