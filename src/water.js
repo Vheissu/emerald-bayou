@@ -16,6 +16,7 @@ export class Water {
     this.seaState = 0;
     this.windAngle = 0;
     this.rain = 0;
+    this.hail = 0;
     this.windSpeed = 0;
 
     // ---- reflection ----
@@ -85,6 +86,7 @@ export class Water {
       wakeOrigin: { value: this.wakeOrigin }, wakeSize: { value: WAKE_SIZE }, wakeTexel: { value: 1 / this.wakeResolution },
       rippleStrength: { value: 0.16 }, wakeStrength: { value: 6.0 }, dbg: { value: 0 },
       seaState: { value: 0 }, weatherWind: { value: new THREE.Vector2(1, 0) },
+      rainAmount: { value: 0 }, hailAmount: { value: 0 }, precipitationRipples: { value: Math.max(0, Math.min(1, quality.precipitationRipples ?? 1)) },
       bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) },
       tShadow: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, shadowTexel: { value: 1 / 4096 }, shadowOn: { value: 0 },
       sunIntensity: { value: 1.5 },
@@ -111,13 +113,36 @@ export class Water {
         uniform vec2 resolution; uniform float near, far, uTime;
         uniform vec3 sunDir, sunColor, absorb, scatterColor; uniform float scatterK;
         uniform vec2 wakeOrigin; uniform float wakeSize, wakeTexel, rippleStrength, wakeStrength; uniform int dbg;
-        uniform float seaState; uniform vec2 weatherWind;
+        uniform float seaState; uniform vec2 weatherWind; uniform float rainAmount, hailAmount, precipitationRipples;
         uniform float bioluminescence; uniform vec3 bioColor;
         uniform sampler2DShadow tShadow; uniform mat4 shadowMatrix; uniform float shadowTexel, shadowOn, sunIntensity;
         uniform sampler2D tMurk; uniform vec2 murkOrigin; uniform float murkSize;
         varying vec3 vWorld; varying vec4 vRefl;
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
         float ign(vec2 p) { return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y)); }
+        vec2 hash22(vec2 p) {
+          vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.xx + p3.yz) * p3.zy);
+        }
+        // One short-lived expanding ring per deterministic cell. Keeping each centre and radius inside its cell avoids
+        // clipped seams without sampling neighbouring cells, textures or another surface simulation.
+        vec3 precipitationRing(vec2 world, float now, float cellSize, float rate, float seed, float coverage, float maxRadius) {
+          vec2 cell = floor(world / cellSize);
+          vec2 local = fract(world / cellSize) - 0.5;
+          vec2 rnd = hash22(cell + vec2(seed, seed * 1.91));
+          vec2 delta = local - (rnd - 0.5) * 0.26;
+          float radialDistance = length(delta);
+          float age = fract(now * rate + rnd.x * 0.67 + rnd.y);
+          float ringRadius = mix(0.018, maxRadius, age);
+          float width = mix(0.028, 0.016, age);
+          float ringDelta = radialDistance - ringRadius;
+          float band = 1.0 - smoothstep(0.0, width, abs(ringDelta));
+          float lifetime = smoothstep(0.0, 0.04, age) * (1.0 - smoothstep(0.78, 1.0, age));
+          float cellMask = smoothstep(1.0 - coverage - 0.06, 1.0 - coverage + 0.06, rnd.y);
+          float slope = band * clamp(ringDelta / max(width, 0.001), -1.0, 1.0) * lifetime * cellMask;
+          return vec3(delta / max(radialDistance, 0.002) * slope, band * lifetime * cellMask);
+        }
         // sun shadow on the water surface (trees, tower, the boat itself)
         float sunShadow(vec3 wp) {
           if (shadowOn < 0.5) return 1.0;
@@ -150,6 +175,28 @@ export class Water {
           // distance falloff of fine ripples so far water stays mirror-smooth
           float distFade = 1.0 / (1.0 + dist * 0.012);
           nt *= rippleStrength * distFade * (1.0 - murk * 0.6 + lake * 0.5);
+          // Real precipitation changes the nearby surface, not just the air above it. The uniform quality gate is zero
+          // on old-hardware tiers; a distance gate also keeps the procedural work off the far-water fragments.
+          float impactFade = 1.0 - smoothstep(48.0, 118.0, dist);
+          float precipitationCrown = 0.0;
+          float rainSurface = precipitationRipples * smoothstep(0.08, 0.72, rainAmount);
+          float hailSurface = precipitationRipples * smoothstep(0.22, 0.82, hailAmount);
+          if (precipitationRipples > 0.001 && impactFade > 0.001) {
+            if (rainSurface > 0.001) {
+              vec3 rainRing = precipitationRing(w, t, 0.72, 1.55, 7.3, 0.15 + rainAmount * 0.38, 0.16);
+              nt += rainRing.xy * rainSurface * impactFade * 0.052;
+              precipitationCrown += rainRing.z * rainSurface * 0.008;
+              if (precipitationRipples > 0.8) {
+                vec3 fineRing = precipitationRing(w, t, 0.46, 2.15, 17.9, 0.10 + rainAmount * 0.25, 0.13);
+                nt += fineRing.xy * rainSurface * impactFade * 0.026;
+              }
+            }
+            if (hailSurface > 0.001) {
+              vec3 hailRing = precipitationRing(w, t, 0.82, 0.92, 31.7, 0.16 + hailAmount * 0.12, 0.16);
+              nt += hailRing.xy * hailSurface * impactFade * 0.11;
+              precipitationCrown += hailRing.z * hailSurface * 0.12;
+            }
+          }
           // wake
           vec2 wuv = (w - wakeOrigin) / wakeSize + 0.5;
           float foam = 0.0; vec2 wg = vec2(0.0); float wh = 0.0;
@@ -227,6 +274,7 @@ export class Water {
           float capNoise = texture2D(tFoam, w * 0.045 - weatherWind * t * 0.035).r * 0.7 + texture2D(tFoam, w * 0.13 + weatherWind * t * 0.06).r * 0.3;
           float windCaps = smoothstep(0.74, 0.96, capNoise + length(nt) * 0.65) * smoothstep(0.45, 1.15, seaState) * clamp((seaState - 0.38) * 0.42, 0.0, 0.72);
           fm += windCaps * (0.35 + 0.65 * fn2);
+          fm += precipitationCrown * impactFade * (1.0 - dw * 0.78);
           fm = clamp(fm, 0.0, 1.0);
           vec3 foamCol = vec3(0.92, 0.95, 0.93) * (0.75 + 0.25 * max(dot(vec3(0.0, 1.0, 0.0), sunDir), 0.0)) * (0.5 + 0.5 * shadow);
           float bioWake = smoothstep(0.012, 0.42, fmRaw * (0.7 + fn + fn2 * 0.45) + abs(wh) * 2.4);
@@ -269,6 +317,7 @@ export class Water {
     const wakeResolution = Math.max(128, Math.round(quality.wakeResolution ?? 512));
     this.wakeMaxStamps = Math.max(1, Math.min(MAX_WAKE_STAMPS, Math.round(quality.wakeMaxStamps ?? MAX_WAKE_STAMPS)));
     this.simMat.uniforms.stampCount.value = this.wakeMaxStamps;
+    this.uniforms.precipitationRipples.value = Math.max(0, Math.min(1, quality.precipitationRipples ?? 1));
     if (wakeResolution !== this.wakeResolution) {
       this.wakeResolution = wakeResolution;
       this.wakeCell = WAKE_SIZE / wakeResolution;
@@ -293,6 +342,7 @@ export class Water {
     return {
       width, height, pixels, mipmaps: this.reflectionMipmaps, reflectionAttachmentBytes,
       wakeResolution: this.wakeResolution, wakeMaxStamps: this.wakeMaxStamps, wakeAttachmentBytes,
+      precipitationRipples: this.uniforms.precipitationRipples.value,
       estimatedAttachmentBytes: reflectionAttachmentBytes + wakeAttachmentBytes,
     };
   }
@@ -309,9 +359,10 @@ export class Water {
     return this.level + ambient + swell + chop;
   }
 
-  setConditions({ level = this.level, seaState = this.seaState, windAngle = this.windAngle, rain = this.rain, wind = this.windSpeed } = {}) {
-    this.level = level; this.seaState = seaState; this.windAngle = windAngle; this.rain = rain; this.windSpeed = wind;
+  setConditions({ level = this.level, seaState = this.seaState, windAngle = this.windAngle, rain = this.rain, hail = this.hail, wind = this.windSpeed } = {}) {
+    this.level = level; this.seaState = seaState; this.windAngle = windAngle; this.rain = rain; this.hail = hail; this.windSpeed = wind;
     this.uniforms.seaState.value = seaState; this.uniforms.weatherWind.value.set(Math.cos(windAngle), Math.sin(windAngle));
+    this.uniforms.rainAmount.value = rain; this.uniforms.hailAmount.value = hail;
   }
 
   // stamp list: [{x,z,radius,height,foam}]
