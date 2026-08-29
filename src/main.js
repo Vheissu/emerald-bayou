@@ -183,11 +183,13 @@ async function init() {
   gators.onSplash = (x, z, sc) => { for (let i = 0; i < 14; i++) plume.emit(x + jitter() * 1.2, 0.1, z + jitter() * 1.2, jitter() * 2, 0.8 + Math.random() * 1.8, jitter() * 2, 0.2 + Math.random() * 0.25, 1.0, 0.6 + Math.random() * 0.4, 0.3); for (let i = 0; i < 40; i++) spray.emit(x + jitter() * 1.2, 0.05, z + jitter() * 1.2, jitter() * 3, 1 + Math.random() * 2.5, jitter() * 3, 0.015 + Math.random() * 0.03, 0.4 + Math.random() * 0.4, 0.6); audio.splash(0.5 * sc); };
   waders.onFlush = (w, d) => { game.bounties.event('flush', 1); if (Math.random() < 0.5) audio.squawk(0.25 * Math.max(0, 1 - d / 40)); };
   const environment = new Environment({ scene, fxScene, camera, terrain, world, water, sky, sun, hemi, pipeline, wind, boat: boat.group, audio, game, phys, sunDir: SUN_DIR });
+  life.traffic.environment = environment;
   const currents = new CurrentField({ fxScene, terrain, water, environment, phys, game });
   environment.currentField = currents; life.currents = currents; life.fx.currents = currents; world.currents = currents; world.fx.currents = currents; skiff.currents = currents;
   const reputation = new Reputation({ game, environment, audio }); game.reputation = reputation;
   const regions = new RegionDirector({ game, phys }); game.regions = regions;
   const law = new Law({ game, phys, environment, audio }); game.law = law;
+  life.traffic.reputation = reputation; life.traffic.law = law;
   const encounters = new EncounterDirector({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, plume, spray, law, reputation });
   law.onAttention = () => { if (!game.state) encounters.next = Math.min(encounters.next, 12); };
   const condition = new BoatCondition({ game, phys, water, environment, audio, startX, startZ }); game.condition = condition;
@@ -387,7 +389,8 @@ async function init() {
     gators.update(dt, time, phys.pos.x, phys.pos.y, phys.speed);
     waders.update(dt, time, phys.pos.x, phys.pos.y, phys.speed);
     world.update(dt, time, phys.pos.x, phys.pos.y);
-    if (!game.paused) life.update(dt, time);
+    // Do not start resident shifts or write their first-seen state while the title card is still open.
+    if (started && !game.paused) life.update(dt, time);
     {
       const ambientBoat = Math.max(life.obLevel, world.obLevel); let outboardLevel = ambientBoat, outboardPitch = life.obPitch;
       if (incidents.obLevel > outboardLevel) { outboardLevel = incidents.obLevel; outboardPitch = incidents.obPitch; }

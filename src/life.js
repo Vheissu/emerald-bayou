@@ -231,6 +231,31 @@ export class Debris {
 const YELLS = ['Watch it!', 'Hey! Learn to drive that thing!', 'You blind, son?', 'Easy! Easy!', 'That is a new hull, dammit!'];
 const ANGLER_SLOW = ['Any luck?', 'Nothin\' but gar, all morning', 'They were biting at first light', 'Got a nice bream. Go on, quiet now'];
 const ANGLER_WAKE = ['Slow down! You are rocking my boat!', 'Idle speed, you fool!', 'There goes my whole morning', 'I got a line out here!'];
+const STEER_PROBES = [-0.7, -0.35, 0, 0.35, 0.7];
+const TRAFFIC_PROFILES = [
+  { id: 'net-nine', callsign: 'NET BOAT 9', operator: 'EDDIE MORA', job: 'mullet netter', duty: [4.5, 14], threshold: 0.22, cruise: 0.72, work: [18, 34, 0.72], maxStorm: 0.58, channel: 'CH 16', faction: 'locals', color: '#78a6bd' },
+  { id: 'marsh-ice', callsign: 'MARSH ICE', operator: 'ROSA MENDEZ', job: 'fish buyer', duty: [5.25, 16.2], threshold: 0.38, cruise: 0.82, work: [10, 22, 0.42], maxStorm: 0.66, channel: 'CH 68', faction: 'locals', color: '#8eb895' },
+  { id: 'bay-star', callsign: 'BAY STAR', operator: 'GABE NOLAN', job: 'guide boat', duty: [8, 18.5], threshold: 0.66, cruise: 0.72, work: [8, 16, 0.2], maxStorm: 0.4, channel: 'CH 16', faction: 'locals', color: '#d7c98d' },
+  { id: 'bird-crew', callsign: 'BIRD CREW', operator: 'IMANI WELLS', job: 'rookery survey', duty: [6.25, 19.25], threshold: 0.5, cruise: 0.64, work: [24, 44, 0.68], maxStorm: 0.5, channel: 'CH 68', faction: 'fwc', color: '#a8c8bf' },
+  { id: 'fwc-27', callsign: 'FWC 27', operator: 'WARDEN SOTO', job: 'backcountry patrol', duty: [5.5, 23], threshold: 0.16, cruise: 0.84, work: [5, 10, 0.08], maxStorm: 0.94, channel: 'FWC TAC', faction: 'fwc', color: '#5aa7ff', essential: true },
+  { id: 'back-line', callsign: 'BACK LINE', operator: 'RAFE MERCER', job: 'night courier', duty: [18.5, 5.2], threshold: 0.07, cruise: 0.94, work: [5, 12, 0.12], maxStorm: 0.72, channel: 'CH 72', faction: 'runners', color: '#cf7e43' },
+  { id: 'glades-field', callsign: 'GLADES FIELD 3', operator: 'TESS WARD + MALIK JONES', job: 'water survey', duty: [6.5, 18], threshold: 0.72, cruise: 0.9, work: [30, 52, 0.75], maxStorm: 0.28, channel: 'CH 68', faction: 'fwc', color: '#dbc98f' },
+];
+const GEAR_BOX = new THREE.BoxGeometry(0.52, 0.32, 0.42);
+const GEAR_LINE = new THREE.CylinderGeometry(0.009, 0.009, 1.5, 4);
+const GEAR_FLOAT = new THREE.SphereGeometry(0.075, 7, 5);
+const GEAR_ROD = new THREE.CylinderGeometry(0.018, 0.018, 1, 6);
+const GEAR_LAMP = new THREE.CylinderGeometry(0.08, 0.105, 0.16, 8);
+const NAV_LIGHT = new THREE.SphereGeometry(0.04, 7, 5);
+const GEAR_MATS = {
+  white: new THREE.MeshStandardMaterial({ color: 0xd9ddd4, roughness: 0.72 }),
+  dark: new THREE.MeshStandardMaterial({ color: 0x292d29, roughness: 0.9 }),
+  orange: new THREE.MeshStandardMaterial({ color: 0xe06b2f, roughness: 0.7 }),
+  line: new THREE.MeshBasicMaterial({ color: 0xd8d1bd }),
+  red: new THREE.MeshBasicMaterial({ color: 0xff3028, toneMapped: false }), green: new THREE.MeshBasicMaterial({ color: 0x35ff86, toneMapped: false }),
+  blue: new THREE.MeshBasicMaterial({ color: 0x2d82ff, toneMapped: false }), warm: new THREE.MeshBasicMaterial({ color: 0xffe7b3, toneMapped: false }),
+};
+const shiftOn = (hour, duty) => duty[0] < duty[1] ? hour >= duty[0] && hour < duty[1] : hour >= duty[0] || hour < duty[1];
 function recolor(group, from, to) { group.traverse(o => { if (o.isMesh && o.material && o.material.color && o.material.color.getHex() === from) { o.material = o.material.clone(); o.material.color.setHex(to); } }); }
 function fisherman(rr) {
   const g = new THREE.Group();
@@ -251,21 +276,93 @@ export class Traffic {
     this.T = terrain; this.scene = scene; this.phys = phys; this.fx = fx; // { plume, spray, audio, waveFn, stamps, game }
     this.rand = mulberry32(4242);
     this.boats = [];
+    const saved = fx.game.save.traffic;
+    this.state = saved && saved.version === 1 ? saved : { version: 1, operators: {} };
+    this.state.operators ||= {}; fx.game.save.traffic = this.state;
     const john = (hull) => { const m = buildSkiff({ crew: true }); if (hull) recolor(m, 0x6f7570, hull); return { kind: 'john', mesh: m, max: 6.5 + this.rand() * 2.5 }; };
     const air = (hull) => { const b = buildAirboat(); recolor(b.group, 0xd8dcda, hull); loadDriver(b.group).catch(() => {}); return { kind: 'air', mesh: b.group, prop: b.prop, blur: b.blur, rudders: b.rudders, max: 10.5 + this.rand() * 2.5 }; };
     const cruiser = () => { const m = spawn('boat_dreams'); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0.45, 0.95, 0.3); d.rotation.y = Math.PI; m.add(d); const pas = person(rr, { pose: 'sit', hat: false, vest: true }); pas.position.set(-0.45, 0.95, 0.3); pas.rotation.y = Math.PI; m.add(pas); pair(d, pas); return { kind: 'cruiser', mesh: m, max: 8.5 + rr() * 2, people: [d, pas] }; };
     const skiff = () => { const m = spawn('beau_boat'); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0, 0.32, 0.7); d.rotation.y = Math.PI; m.add(d); return { kind: 'skiff', mesh: m, max: 5 + rr() * 1.5, people: [d] }; };
     const paddlers = () => ({ kind: 'canoe', mesh: canoe(this.rand), max: 1.3 + this.rand() * 0.4 });
-    for (const b of [john(0), john(0x4c6b4a), cruiser(), skiff(), air(0xc94a2b), air(0x2f6e9e), paddlers()]) {
-      Object.assign(b, { x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
+    const hulls = [john(0), john(0x4c6b4a), cruiser(), skiff(), air(0x315e50), air(0x4b3527), paddlers()];
+    for (let i = 0; i < hulls.length; i++) {
+      const b = hulls[i], profile = TRAFFIC_PROFILES[i];
+      const record = this.state.operators[profile.id] ||= { shifts: 0, passes: 0, collisions: 0, lastMet: '', lastShift: '' };
+      Object.assign(b, { profile, record, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
+      this.addWorkingDetails(b);
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
-      b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => { b.shx += -nx * into * 0.5; b.shz += -nz * into * 0.5; b.speed *= 0.5; if (b.yellT <= 0 && into > 2.5) { b.yellT = 8; fx.game.boatHit(b, into); } } };
+      b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
+        b.shx += -nx * into * 0.5; b.shz += -nz * into * 0.5; b.speed *= 0.5;
+        if (b.yellT <= 0 && into > 2.5) { b.yellT = 8; b.record.collisions++; fx.game.boatHit(b, into); fx.game.persist(); }
+      } };
     }
     this.obs = []; phys.addObs('traffic', this.obs);
     this.activity = 1; this.anglerActivity = 1;
     // anchored anglers
     this.anglerCells = new Map(); this.liveAnglers = new Map(); this.checkT = 0;
-    this.idlePasses = 0; this._flow = new THREE.Vector2();
+    this.idlePasses = 0; this._flow = new THREE.Vector2(); this._pf = new THREE.Vector2();
+  }
+  addWorkingDetails(b) {
+    const deck = b.kind === 'air' ? 0.55 : b.kind === 'canoe' ? 0.3 : b.kind === 'cruiser' ? 0.85 : 0.42;
+    const beam = b.kind === 'canoe' ? 0.35 : b.kind === 'air' ? 0.85 : 0.65;
+    const cargo = new THREE.Group(); cargo.name = `work-gear:${b.profile.id}`;
+    const boxes = b.profile.id === 'marsh-ice' ? 3 : ['net-nine', 'bird-crew', 'back-line', 'glades-field'].includes(b.profile.id) ? 1 : 0;
+    for (let i = 0; i < boxes; i++) {
+      const mat = b.profile.id === 'back-line' ? GEAR_MATS.dark : GEAR_MATS.white;
+      const box = new THREE.Mesh(GEAR_BOX, mat); box.position.set((i - (boxes - 1) / 2) * 0.48, deck, b.kind === 'canoe' ? 0 : -0.55); box.castShadow = true; cargo.add(box);
+    }
+    if (b.profile.id === 'net-nine') {
+      for (let i = 0; i < 4; i++) { const marker = new THREE.Mesh(GEAR_FLOAT, i % 2 ? GEAR_MATS.white : GEAR_MATS.orange); marker.position.set(-0.55 + i * 0.36, deck + 0.18, -1.05); cargo.add(marker); }
+    } else if (b.profile.id === 'bird-crew' || b.profile.id === 'glades-field') {
+      const sampler = new THREE.Mesh(GEAR_ROD, GEAR_MATS.orange); sampler.position.set(-beam * 0.55, deck + 0.45, -0.45); cargo.add(sampler);
+      const cap = new THREE.Mesh(GEAR_FLOAT, GEAR_MATS.white); cap.scale.setScalar(0.72); cap.position.set(-beam * 0.55, deck + 0.97, -0.45); cargo.add(cap);
+    } else if (b.profile.id === 'fwc-27') {
+      const aerial = new THREE.Mesh(GEAR_ROD, GEAR_MATS.dark); aerial.scale.y = 1.25; aerial.position.set(-0.38, deck + 0.78, 0.42); cargo.add(aerial);
+      const lamp = new THREE.Mesh(GEAR_LAMP, GEAR_MATS.warm); lamp.rotation.x = Math.PI / 2; lamp.position.set(0.35, deck + 0.78, -0.38); cargo.add(lamp);
+    }
+    b.mesh.add(cargo); b.cargo = cargo;
+    const work = new THREE.Group(); work.name = `working:${b.profile.id}`;
+    const line = new THREE.Mesh(GEAR_LINE, GEAR_MATS.line); line.position.set(beam + 0.14, deck - 0.68, -0.25); line.rotation.z = -0.08;
+    const flt = new THREE.Mesh(GEAR_FLOAT, GEAR_MATS.orange); flt.position.set(beam + 0.18, deck - 1.42, -0.25); work.add(line, flt); work.visible = false;
+    b.mesh.add(work); b.workRig = work;
+    const nav = new THREE.Group(); nav.name = `nav-lights:${b.profile.id}`;
+    const port = new THREE.Mesh(NAV_LIGHT, GEAR_MATS.red), starboard = new THREE.Mesh(NAV_LIGHT, GEAR_MATS.green), stern = new THREE.Mesh(NAV_LIGHT, GEAR_MATS.warm);
+    port.position.set(-beam, deck + 0.42, -0.1); starboard.position.set(beam, deck + 0.42, -0.1); stern.position.set(0, deck + 0.34, 1.35); nav.add(port, starboard, stern);
+    const deckLight = new THREE.PointLight(0xffe0ad, 0, 11, 2); deckLight.position.set(0, deck + 0.72, 0.15); nav.add(deckLight); nav.visible = false;
+    b.mesh.add(nav); b.navLights = nav;
+    b.deckLight = deckLight;
+    if (b.profile.id === 'fwc-27') {
+      const beacon = new THREE.Group(); const blue = new THREE.Mesh(NAV_LIGHT, GEAR_MATS.blue), red = new THREE.Mesh(NAV_LIGHT, GEAR_MATS.red);
+      blue.scale.setScalar(1.45); red.scale.setScalar(1.45); blue.position.x = -0.1; red.position.x = 0.1;
+      const blueLight = new THREE.PointLight(0x2d82ff, 0, 18, 2), redLight = new THREE.PointLight(0xff3028, 0, 18, 2);
+      blueLight.position.x = -0.1; redLight.position.x = 0.1; beacon.add(blue, red, blueLight, redLight); beacon.position.set(0, deck + 1.35, 0.35); beacon.visible = false; b.mesh.add(beacon);
+      b.beacon = beacon; b.beaconBulbs = { blue, red, blueLight, redLight };
+    }
+  }
+  shiftKey(b) {
+    if (!this.environment) return '0';
+    const d = this.environment.day - (b.profile.duty[0] > b.profile.duty[1] && this.environment.hour < b.profile.duty[1] ? 1 : 0);
+    return `${d}:${b.profile.id}`;
+  }
+  onDuty(b) { return !this.environment || shiftOn(this.environment.hour, b.profile.duty); }
+  shouldOperate(b) {
+    if (!this.onDuty(b)) return false;
+    const storm = this.environment?.values.storm || 0;
+    if (storm > b.profile.maxStorm) return false;
+    return b.profile.essential ? this.activity > 0.08 : this.activity >= b.profile.threshold;
+  }
+  beginLeg(b, first = false) {
+    b.state = 'transit'; b.workT = 0; b.leg = (first ? 220 : 280) + this.rand() * (first ? 260 : 520); b.routeBias = (this.rand() - 0.5) * (b.profile.id === 'back-line' ? 0.72 : 0.46);
+    if (b.workRig) b.workRig.visible = false;
+  }
+  beginWork(b) {
+    const [lo, hi] = b.profile.work; b.state = 'work'; b.workT = lo + this.rand() * (hi - lo); b.routeBias = 0;
+    if (b.workRig) b.workRig.visible = !['bay-star', 'fwc-27', 'back-line'].includes(b.profile.id);
+  }
+  retire(b, delay = 28) {
+    b.active = false; b.retiring = false; b.state = 'off'; b.mesh.visible = false; b.x = b.z = 1e9; b.speed = 0; b.spawnT = delay + this.rand() * delay;
+    if (b.workRig) b.workRig.visible = false; if (b.navLights) b.navLights.visible = false; if (b.deckLight) b.deckLight.intensity = 0;
+    if (b.beacon) b.beacon.visible = false; if (b.beaconBulbs) b.beaconBulbs.blueLight.intensity = b.beaconBulbs.redLight.intensity = 0;
   }
   // a deep channel spot 350-650 m from the boat, and a heading along the channel
   spawnSpot(b) {
@@ -277,9 +374,52 @@ export class Traffic {
       let best = null, bd = 0;
       for (let i = 0; i < 12; i++) { const h = i / 12 * 6.283; const d = -hf.compute(x - Math.sin(h) * 40, z - Math.cos(h) * 40) - hf.compute(x - Math.sin(h) * 80, z - Math.cos(h) * 80); if (d > bd) { bd = d; best = h; } }
       if (best === null || bd < 3) continue;
-      b.x = x; b.z = z; b.heading = best; b.speed = b.max * 0.6; b.mesh.visible = true; b.ground = 0; return true;
+      b.x = x; b.z = z; b.heading = best; b.speed = b.max * 0.45; b.mesh.visible = true; b.ground = 0; b.active = true; b.retiring = false; this.beginLeg(b, true);
+      const key = this.shiftKey(b);
+      if (b.record.lastShift !== key) { b.record.lastShift = key; b.record.shifts++; this.fx.game.persist(); }
+      return true;
     }
     return false;
+  }
+  identify(b, d, playerSpeed) {
+    b.greetT = Math.max(0, b.greetT);
+    if (d >= 27 || playerSpeed >= 4.2 || b.greetT > 0) return;
+    const key = this.shiftKey(b); if (b.record.lastMet === key) return;
+    b.record.lastMet = key; b.record.passes++; b.greetT = 24; this.fx.game.persist();
+    const state = b.state === 'work' ? `working · ${b.profile.job}` : b.retiring ? 'heading in' : b.profile.job;
+    this.fx.game.toast(`${b.profile.callsign} · ${b.profile.operator}`, state, 2.8);
+  }
+  updateWorkingDetails(b, t) {
+    const h = this.environment?.hour ?? 12, storm = this.environment?.values.storm || 0;
+    const night = h < 6.1 || h > 19.2; if (b.navLights) b.navLights.visible = b.active && (night || storm > 0.42);
+    if (b.deckLight) b.deckLight.intensity = b.navLights.visible ? (night ? 28 : 12) : 0;
+    if (b.workRig?.visible) b.workRig.rotation.z = Math.sin(t * 0.8 + b.heading) * 0.05;
+    if (b.beacon) {
+      const called = (this.law?.attention || 0) > 0.55 || storm > 0.65;
+      b.beacon.visible = b.active && called;
+      const blueOn = Math.floor(t * 5.5) % 2 === 0, B = b.beaconBulbs;
+      B.blue.visible = blueOn; B.red.visible = !blueOn; B.blueLight.intensity = blueOn ? 95 : 2; B.redLight.intensity = blueOn ? 2 : 95;
+    }
+  }
+  radioPool() {
+    const bx = this.phys.pos.x, bz = this.phys.pos.y;
+    const nearby = this.boats.filter(b => b.active && Math.hypot(b.x - bx, b.z - bz) < 900);
+    const calls = [];
+    for (const b of nearby) {
+      const P = b.profile, working = b.state === 'work'; let text = '';
+      if (P.id === 'net-nine') text = working ? 'Net is in the water on the outside bank. Pass my stern and keep your wash off it.' : 'Net Nine is moving to the next set. I will hold the narrow bend.';
+      else if (P.id === 'marsh-ice') text = 'Cold boxes aboard and running back toward the camps. I am taking the next blind turn slow.';
+      else if (P.id === 'bay-star') text = 'Guide boat has two passengers aboard. We will idle through the rookery water.';
+      else if (P.id === 'bird-crew') text = working ? 'Bird Crew is stopped on a sample station. Give us fifty yards and no wake.' : 'Bird Crew moving between the white stakes. Survey gear is still out.';
+      else if (P.id === 'fwc-27') text = (this.law?.attention || 0) > 1 ? 'Twenty-seven is working an active call. Keep sixteen clear.' : 'Patrol twenty-seven is checking camp approaches and navigation lights.';
+      else if (P.id === 'back-line') { if ((this.reputation?.score('runners') || 0) < 1) continue; text = 'Back Line is moving. Keep names and landmarks off this channel.'; }
+      else if (P.id === 'glades-field') text = working ? 'Field Three is taking a water sample. Paddle crew is stationary in the west half of the cut.' : 'Field Three is under paddle and clear of the marked channel.';
+      if (text) calls.push([P.channel, `${P.callsign} · ${P.operator}`, text]);
+    }
+    return calls;
+  }
+  snapshot() {
+    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), active: b.active, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions }));
   }
   // ---- anglers ----
   anglerAt(ci, cj) {
@@ -310,29 +450,47 @@ export class Traffic {
     return g;
   }
   update(dt, t, fish) {
-    const P = this.phys, bx = P.pos.x, bz = P.pos.y, hf = this.T.hf, waveFn = this.fx.waveFn;
-    const pf = P.forward();
+    const P = this.phys, bx = P.pos.x, bz = P.pos.y, waveFn = this.fx.waveFn;
+    const pf = P.forward(this._pf);
     this.obs.length = 0; let ob = 0, obp = 1;
-    const activeBoats = Math.round(this.boats.length * this.activity);
-    for (let bi = 0; bi < this.boats.length; bi++) {
-      const b = this.boats[bi];
-      if (bi >= activeBoats) { b.mesh.visible = false; b.x = b.z = 1e9; continue; }
-      const d = Math.hypot(b.x - bx, b.z - bz);
-      if (d > 950 || b.ground > 3) { if (!this.spawnSpot(b)) { b.mesh.visible = false; b.x = 1e9; continue; } }
+    for (const b of this.boats) {
+      b.yellT = Math.max(0, b.yellT - dt); b.hornT = Math.max(0, b.hornT - dt); b.greetT = Math.max(0, b.greetT - dt); b.wakeT = Math.max(0, b.wakeT - dt);
+      const operate = this.shouldOperate(b);
+      if (!b.active) {
+        b.mesh.visible = false;
+        if (!operate) { b.spawnT = Math.max(2, b.spawnT); continue; }
+        b.spawnT -= dt; if (b.spawnT > 0) continue;
+        if (!this.spawnSpot(b)) { b.spawnT = 5 + this.rand() * 8; continue; }
+      }
+      let d = Math.hypot(b.x - bx, b.z - bz);
+      if (d > 980 || b.ground > 3) { this.retire(b, b.ground > 3 ? 18 : 25); continue; }
+      if (!operate) b.retiring = true;
+      if (b.retiring && d > 720) { this.retire(b, 20); continue; }
       b.mesh.visible = true;
+      if (b.retiring && b.state === 'work') this.beginLeg(b);
+      else if (b.state === 'work') { b.workT -= dt; if (b.workT <= 0) this.beginLeg(b); }
+      else { b.leg -= b.speed * dt; if (b.leg <= 0) { if (this.rand() < b.profile.work[2]) this.beginWork(b); else this.beginLeg(b); } }
       // steer: probe five headings 24 m out and prefer deep water straight ahead; back off from the player and each other
       let best = 0, bs = -1e9;
-      for (const da of [-0.7, -0.35, 0, 0.35, 0.7]) {
+      for (const da of STEER_PROBES) {
         const h = b.heading + da; const px = b.x - Math.sin(h) * 24, pz = b.z - Math.cos(h) * 24; const px2 = b.x - Math.sin(h) * 48, pz2 = b.z - Math.cos(h) * 48;
-        let sc = Math.min(4, -this.T.heightAt(px, pz)) + Math.min(4, -this.T.heightAt(px2, pz2)) * 0.6 - Math.abs(da) * 0.9;
+        let sc = Math.min(4, -this.T.heightAt(px, pz)) + Math.min(4, -this.T.heightAt(px2, pz2)) * 0.6 - Math.abs(da - (b.state === 'work' ? 0 : b.routeBias)) * 0.72;
         const dp = Math.hypot(px - bx, pz - bz); if (dp < 22) sc -= (22 - dp) * 0.5;
-        for (const o of this.boats) if (o !== b && o.x < 1e8) { const dd = Math.hypot(px - o.x, pz - o.z); if (dd < 18) sc -= (18 - dd) * 0.4; }
+        // Prefer probes that increase separation so an off-duty boat visibly runs out of the local channel.
+        if (b.retiring) sc += (dp - d) * 0.16;
+        for (const o of this.boats) if (o !== b && o.active) { const dd = Math.hypot(px - o.x, pz - o.z); if (dd < 18) sc -= (18 - dd) * 0.4; }
         if (sc > bs) { bs = sc; best = da; }
       }
-      const fx = -Math.sin(b.heading), fz = -Math.cos(b.heading);
-      let want = b.max * (bs < 1.5 ? 0.45 : 1); if (d < 30 && (fx * (bx - b.x) + fz * (bz - b.z)) > 0) want *= 0.5; // slow for the player ahead
+      const fx0 = -Math.sin(b.heading), fz0 = -Math.cos(b.heading);
+      let cruise = b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise;
+      let want = cruise * (bs < 1.5 ? 0.45 : 1); if (d < 30 && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5; // slow for the player ahead
+      if (b.kind === 'canoe' && d < 28 && P.speed > 4) {
+        want *= 0.12; const cross = pf.x * (b.z - bz) - pf.y * (b.x - bx); b.routeBias = cross > 0 ? -0.65 : 0.65;
+        if (b.wakeT <= 0) { b.wakeT = 12; this.fx.game.toast('“Easy on the wake.”', `${b.profile.callsign} · water survey under paddle`, 2.4); }
+      }
       b.turn += (best * 2.2 - b.turn) * (1 - Math.exp(-dt * 3)); b.heading += b.turn * dt;
       b.speed += (want - b.speed) * (1 - Math.exp(-dt * 0.7));
+      const fx = -Math.sin(b.heading), fz = -Math.cos(b.heading);
       const flow = this.fx.currents ? this.fx.currents.flowAt(b.x, b.z, this._flow) : null;
       b.x += (fx * b.speed + (flow ? flow.x : 0)) * dt + b.shx * dt;
       b.z += (fz * b.speed + (flow ? flow.y : 0)) * dt + b.shz * dt;
@@ -345,11 +503,11 @@ export class Traffic {
       else if (b.kind === 'john') b.mesh.userData.motor.rotation.y = -b.turn * 0.3;
       else if (b.kind === 'canoe') paddleAnim(b.mesh, t, Math.min(1, b.speed / b.max));
       if (b.people && d < 90) for (const pp of b.people) animatePerson(pp, t, dt, null, null);
+      this.updateWorkingDetails(b, t); this.identify(b, d, P.speed);
       // the closest running motor is what you hear
       if (b.kind !== 'air' && b.kind !== 'canoe' && d < 130) { const l = (0.3 + 0.7 * b.speed / b.max) * (1 - d / 130); if (l > ob) { ob = l; obp = b.kind === 'cruiser' ? 0.8 : b.kind === 'skiff' ? 1.25 : 1; } }
-      b.yellT = Math.max(0, b.yellT - dt); b.hornT = Math.max(0, b.hornT - dt);
       // horn at a boat coming straight at them
-      if (b.kind !== 'canoe' && d < 50 && b.hornT <= 0 && P.speed > 6) { const cx = (b.x - bx) / d, cz = (b.z - bz) / d; if (pf.x * cx + pf.y * cz > 0.9) { b.hornT = 12; this.fx.audio.horn(0.35 * (1 - d / 60)); } }
+      if (b.kind !== 'canoe' && d < 50 && b.hornT <= 0 && P.speed > 6) { const dd = d || 1, cx = (b.x - bx) / dd, cz = (b.z - bz) / dd; if (pf.x * cx + pf.y * cz > 0.9) { b.hornT = 12; this.fx.audio.horn(0.35 * (1 - d / 60)); } }
       if (d < 70) { b.obs.ax = b.x + fx * 2.2; b.obs.az = b.z + fz * 2.2; b.obs.bx = b.x - fx * 2.2; b.obs.bz = b.z - fz * 2.2; this.obs.push(b.obs); }
       // wake and spray
       if (b.kind === 'canoe') { if (d < 60 && b.speed > 0.5) this.fx.stamps.push({ x: b.x, z: b.z, radius: 0.8, height: 0.08, foam: 0.15, foamRadius: 0.5 }); }

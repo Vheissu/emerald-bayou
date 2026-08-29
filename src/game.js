@@ -300,9 +300,11 @@ export class Game {
   // another driver's boat took a hit from ours
   boatHit(b, into) {
     const lines = ['Watch it!', 'Hey! Learn to drive that thing!', 'You blind, son?', 'Easy! Easy!', 'That is a new hull, dammit!'];
-    this.toast(`“${lines[Math.floor(Math.random() * lines.length)]}”`, into > 6 ? 'You put a dent in his boat' : 'Bumped another boat', 2);
+    const P = b.profile, name = P ? `${P.callsign} · ${P.operator}` : 'another boat';
+    this.toast(`“${lines[Math.floor(Math.random() * lines.length)]}”`, into > 6 ? `${name} · hard collision` : `${name} · hull contact`, 2.4);
     this.tricks.bust('BOAT');
-    if (this.law && into > 3.5) this.law.violation(0.35 + Math.min(0.7, into * 0.06), 'boat collision reported');
+    if (this.law && into > 3.5) this.law.violation((P?.id === 'fwc-27' ? 0.8 : 0.35) + Math.min(0.7, into * 0.06), P?.id === 'fwc-27' ? 'collision with FWC patrol' : `${P?.callsign || 'boat'} collision reported`);
+    if (P && this.reputation && into > 3.5) this.reputation.change(P.faction, -Math.min(0.45, 0.12 + into * 0.025), 'working-boat-collision', `${P.callsign} logged the collision against the tower airboat.`, false);
   }
   anglerSay(a, line, angry = false) {
     this.toast(`“${line}”`, angry ? 'You rocked his boat. Idle past anglers.' : 'The angler in the johnboat', 2.4);
@@ -430,7 +432,7 @@ export class Game {
     }
     if (this.gators) { this.gators.calm = !!this.state; for (const g of this.gators.list) if (g.surfaced && g.big) M.push({ x: g.pos.x, z: g.pos.z, kind: 'gator' }); }
     if (this.life) {
-      for (const b of this.life.traffic.boats) if (b.x < 1e8) M.push({ x: b.x, z: b.z, kind: 'boat', heading: b.heading, color: b.kind === 'canoe' ? 'rgba(225,205,150,0.95)' : b.kind === 'air' ? 'rgba(240,235,220,0.95)' : 'rgba(125,175,235,0.95)' });
+      for (const b of this.life.traffic.boats) if (b.active) M.push({ x: b.x, z: b.z, kind: 'boat', heading: b.heading, color: b.profile?.color || (b.kind === 'canoe' ? 'rgba(225,205,150,0.95)' : b.kind === 'air' ? 'rgba(240,235,220,0.95)' : 'rgba(125,175,235,0.95)') });
       for (const { a } of this.life.traffic.liveAnglers.values()) M.push({ x: a.x, z: a.z, kind: 'angler' });
     }
   }
