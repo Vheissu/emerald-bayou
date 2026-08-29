@@ -12,6 +12,7 @@ test('cinematic hardware keeps the complete shader and model warm-up', () => {
   assert.equal(plan.compileDelayMs, 250);
   assert.equal(plan.deferOptionalModels, false);
   assert.equal(plan.modelConcurrency, 4);
+  assert.equal(plan.modelPressureMaxWaitMs, 0);
   assert.equal(plan.solidGrass, 'blocking');
   assert.deepEqual(plan.disabledModels, []);
 });
@@ -29,6 +30,7 @@ test('older-hardware profiles do not block on optional models or the full shader
     assert.ok(plan.modelReleaseDelayMs >= 700);
     assert.ok(plan.modelBatchDelayMs >= 0);
     assert.ok(plan.modelIdleTimeoutMs >= 900);
+    assert.ok(plan.modelPressureMaxWaitMs >= 4000);
   }
   const fallback = startupPlan('fallback'), performance = startupPlan('performance'), balanced = startupPlan('balanced');
   assert.ok(fallback.modelReleaseDelayMs > performance.modelReleaseDelayMs);
@@ -39,6 +41,7 @@ test('older-hardware profiles do not block on optional models or the full shader
   assert.deepEqual(performance.disabledModels, fallback.disabledModels);
   assert.deepEqual(balanced.disabledModels, []);
   assert.deepEqual([fallback.solidGrass, performance.solidGrass, balanced.solidGrass], ['off', 'off', 'deferred']);
+  assert.deepEqual([fallback.modelPressureMaxWaitMs, performance.modelPressureMaxWaitMs, balanced.modelPressureMaxWaitMs], [12000, 8000, 4000]);
 });
 
 test('older-hardware profiles allocate smaller bounded weather and spray pools', () => {

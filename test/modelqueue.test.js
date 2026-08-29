@@ -1,10 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { configureModelLoading, loadModel, modelLoadingStats, orderDeferredModelNames } from '../src/models.js';
+import { configureModelLoading, loadModel, modelFrameBackoffMs, modelLoadingStats, modelPressureStep, orderDeferredModelNames, reportModelFramePressure } from '../src/models.js';
 
 test('orders small visible hull upgrades ahead of the heavyweight tree replacement', () => {
   const requested = ['tree_c', 'realistic_alligator', 'fish_a', 'boat_dreams', 'driver', 'beau_boat', 'turtle_boat', 'sandbox_boat'];
   assert.deepEqual(orderDeferredModelNames(requested), ['boat_dreams', 'driver', 'beau_boat', 'sandbox_boat', 'fish_a', 'turtle_boat', 'realistic_alligator', 'tree_c']);
+});
+
+test('backs deferred model work away from bad frames without starving the queue', () => {
+  assert.equal(modelFrameBackoffMs(1 / 60), 0);
+  assert.equal(modelFrameBackoffMs(1 / 30), 0);
+  assert.equal(modelFrameBackoffMs(0.04), 450);
+  assert.equal(modelFrameBackoffMs(0.08), 1200);
+  assert.equal(modelFrameBackoffMs(0.16), 2200);
+  assert.equal(modelFrameBackoffMs(0.25), 3200);
+  assert.deepEqual(modelPressureStep(1000, 1800, 900, 8000), { waitMs: 250, forced: false });
+  assert.deepEqual(modelPressureStep(9100, 10000, 1000, 8000), { waitMs: 0, forced: true });
+  assert.deepEqual(modelPressureStep(10000, 10000, 1000, 8000), { waitMs: 0, forced: false });
 });
 
 test('deduplicates optional model requests without fetching before release', () => {
@@ -12,7 +24,10 @@ test('deduplicates optional model requests without fetching before release', () 
   const first = loadModel('queued-test-model');
   const second = loadModel('queued-test-model');
   assert.equal(first, second);
-  assert.deepEqual(modelLoadingStats(), { cached: 1, ready: 0, queued: 1, skipped: 0, concurrency: 1, deferred: true });
+  assert.deepEqual(modelLoadingStats(), { cached: 1, ready: 0, queued: 1, skipped: 0, concurrency: 1, deferred: true, pressure: { paused: false, remainingMs: 0, maxWaitMs: 8000, forcedBatches: 0 } });
+  assert.equal(reportModelFramePressure(0.12, true), 2200);
+  const pressure = modelLoadingStats().pressure;
+  assert.equal(pressure.paused, true); assert.ok(pressure.remainingMs > 2000 && pressure.remainingMs <= 2200);
 });
 
 test('skips disabled heavyweight models without queueing or fetching them', async () => {

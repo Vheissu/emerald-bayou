@@ -13,7 +13,8 @@ const DEFERRED_PRIORITY = Object.freeze({
   grass_a: 4, grass_d: 4,
   tree_c: 10,
 });
-let deferOptionalModels = false, modelConcurrency = 2, modelBatchDelayMs = 0, modelIdleTimeoutMs = 900, drainingDeferred = false, drainPromise = null, requestOrder = 0;
+let deferOptionalModels = false, modelConcurrency = 2, modelBatchDelayMs = 0, modelIdleTimeoutMs = 900, modelPressureMaxWaitMs = 8000, drainingDeferred = false, drainPromise = null, requestOrder = 0;
+let modelPressureStartedAt = 0, modelPressureUntil = 0, pressureForcedBatches = 0;
 let disabledModels = new Set();
 const skippedModels = new Set();
 const modelRoot = `${import.meta.env?.BASE_URL || '/'}models/`;
@@ -39,12 +40,40 @@ function fit(name, root) {
 export function modelBox(name) { const r = cacheDone.get(name); return r ? fit(name, r) : null; }
 const cacheDone = new Map();
 
-export function configureModelLoading({ deferOptional = false, concurrency = 2, batchDelayMs = 0, idleTimeoutMs = 900, disabled = [] } = {}) {
+export function configureModelLoading({ deferOptional = false, concurrency = 2, batchDelayMs = 0, idleTimeoutMs = 900, pressureMaxWaitMs = 8000, disabled = [] } = {}) {
   deferOptionalModels = Boolean(deferOptional);
   modelConcurrency = Math.max(1, Math.min(4, Math.round(Number(concurrency) || 1)));
   modelBatchDelayMs = Math.max(0, Math.min(5000, Math.round(Number(batchDelayMs) || 0)));
   modelIdleTimeoutMs = Math.max(250, Math.min(5000, Math.round(Number(idleTimeoutMs) || 900)));
+  const maxWait = Number(pressureMaxWaitMs); modelPressureMaxWaitMs = Number.isFinite(maxWait) ? Math.max(0, Math.min(30000, Math.round(maxWait))) : 8000;
+  modelPressureStartedAt = 0; modelPressureUntil = 0; pressureForcedBatches = 0;
   disabledModels = new Set(Array.isArray(disabled) ? disabled : []);
+}
+
+// Optional GLBs replace procedural stand-ins. A bad gameplay frame therefore buys the renderer some quiet time before
+// the next fetch/decode batch; sustained low-end pressure still admits a batch periodically instead of starving detail.
+export function modelFrameBackoffMs(frameSeconds) {
+  const seconds = Number(frameSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 1 / 30) return 0;
+  if (seconds <= 0.05) return 450;
+  if (seconds <= 0.1) return 1200;
+  if (seconds <= 0.2) return 2200;
+  return 3200;
+}
+
+export function modelPressureStep(now, pauseUntil, pauseStartedAt, maxWaitMs) {
+  const remaining = Math.max(0, Number(pauseUntil) - Number(now));
+  if (!Number.isFinite(remaining) || remaining <= 0) return { waitMs: 0, forced: false };
+  const elapsed = Number(now) - Number(pauseStartedAt), limit = Math.max(0, Number(maxWaitMs) || 0);
+  if (limit > 0 && Number.isFinite(elapsed) && elapsed >= limit) return { waitMs: 0, forced: true };
+  return { waitMs: Math.min(250, Math.ceil(remaining)), forced: false };
+}
+
+export function reportModelFramePressure(frameSeconds, active = true) {
+  if (!active || !deferOptionalModels || !deferredByName.size) return 0;
+  const backoff = modelFrameBackoffMs(frameSeconds); if (!backoff) return 0;
+  const now = performance.now(); if (modelPressureUntil <= now) modelPressureStartedAt = now;
+  modelPressureUntil = Math.max(modelPressureUntil, now + backoff); return backoff;
 }
 
 const deferredPriority = name => DEFERRED_PRIORITY[name] ?? 5;
@@ -90,6 +119,17 @@ function visibleTurn() {
 
 const delayTurn = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+async function modelHeadroomTurn() {
+  while (true) {
+    const step = modelPressureStep(performance.now(), modelPressureUntil, modelPressureStartedAt, modelPressureMaxWaitMs);
+    if (!step.waitMs) {
+      if (step.forced) pressureForcedBatches++;
+      modelPressureStartedAt = 0; modelPressureUntil = 0; return;
+    }
+    await delayTurn(step.waitMs);
+  }
+}
+
 function compactDeferredQueue() {
   let write = 0;
   for (const job of deferredQueue) if (!job.started) deferredQueue[write++] = job;
@@ -107,6 +147,7 @@ async function drainDeferredModels() {
       if (batchIndex && modelBatchDelayMs) await delayTurn(modelBatchDelayMs);
       await visibleTurn();
       await idleTurn();
+      await modelHeadroomTurn();
       compactDeferredQueue(); if (!deferredQueue.length) break;
       const batch = [];
       while (batch.length < modelConcurrency && deferredQueue.length) batch.push(deferredQueue.shift());
@@ -125,7 +166,11 @@ export function releaseDeferredModels() {
 }
 
 export function modelLoadingStats() {
-  return { cached: cache.size, ready: cacheDone.size, queued: deferredByName.size, skipped: skippedModels.size, concurrency: modelConcurrency, deferred: deferOptionalModels };
+  const remaining = Math.max(0, Math.ceil(modelPressureUntil - performance.now()));
+  return {
+    cached: cache.size, ready: cacheDone.size, queued: deferredByName.size, skipped: skippedModels.size, concurrency: modelConcurrency, deferred: deferOptionalModels,
+    pressure: { paused: remaining > 0, remainingMs: remaining, maxWaitMs: modelPressureMaxWaitMs, forcedBatches: pressureForcedBatches },
+  };
 }
 
 export function loadModel(name, { immediate = false } = {}) {

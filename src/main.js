@@ -21,7 +21,7 @@ import { WorldMap } from './worldmap.js';
 import { Life } from './life.js';
 import { pickSite, buildSite } from './sites.js';
 import { person, canoe } from './folk.js';
-import { configureModelLoading, loadGeo, loadModel, modelBox, modelLoadingStats, preload, releaseDeferredModels, spawn } from './models.js';
+import { configureModelLoading, loadGeo, loadModel, modelBox, modelLoadingStats, preload, releaseDeferredModels, reportModelFramePressure, spawn } from './models.js';
 import { Environment } from './environment.js';
 import { EncounterDirector } from './encounters.js';
 import { BoatCondition } from './condition.js';
@@ -81,6 +81,7 @@ async function init() {
     concurrency: startup.modelConcurrency,
     batchDelayMs: startup.modelBatchDelayMs,
     idleTimeoutMs: startup.modelIdleTimeoutMs,
+    pressureMaxWaitMs: startup.modelPressureMaxWaitMs,
     disabled: startup.disabledModels,
   });
   // ---- sky & lighting ----
@@ -502,6 +503,7 @@ async function init() {
     clock.update();
     const frameDelta = clock.getDelta();
     const dtRaw = Math.min(frameDelta, 0.05);
+    reportModelFramePressure(frameDelta, started && !game.paused && !document.hidden);
     const qualityChange = qualityController.observe(frameDelta, started && !game.paused && !document.hidden);
     if (qualityChange) {
       applyRenderQuality(qualityChange.profile);
