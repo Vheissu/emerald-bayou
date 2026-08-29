@@ -20,6 +20,18 @@ const PREFETCH = 1.35; // children are built this far ahead of the ring reaching
 const SIZE = (l) => ROOT / (1 << (LEVELS - 1 - l));
 const L0 = SIZE(0);
 
+export function compareTerrainBuildPriority(a, b) {
+  const ap = Number.isFinite(a?.prio) ? a.prio : Infinity, bp = Number.isFinite(b?.prio) ? b.prio : Infinity;
+  if (ap !== bp) return ap < bp ? -1 : 1;
+  const al = Number.isFinite(a?.level) ? a.level : Infinity, bl = Number.isFinite(b?.level) ? b.level : Infinity;
+  if (al !== bl) return al < bl ? -1 : 1;
+  return 0;
+}
+
+export function shouldPreemptTerrainBuild(active, next, paused = null) {
+  return !paused && Boolean(active && next) && next.level <= 1 && compareTerrainBuildPriority(next, active) < 0;
+}
+
 class WorkerPool {
   constructor(seed) {
     const n = Math.min(4, Math.max(1, (navigator.hardwareConcurrency || 4) - 2));
@@ -45,7 +57,7 @@ class Chunk {
     this.level = level; this.i = i; this.j = j; this.size = SIZE(level); this.segs = SEGS_BY_LEVEL[level]; this.x0 = i * this.size; this.z0 = j * this.size;
     this.key = `${level}:${i}:${j}`;
     this.h = null; this.nrm = null; this.bio = null; this.mesh = null; this.veg = null; this.colliders = [];
-    this.requested = false; this.ready = false; this.used = 0; this.prio = 0; this.build = null;
+    this.requested = false; this.groundReady = false; this.ready = false; this.used = 0; this.prio = 0; this.build = null;
   }
   sample(x, z, arr = this.h) {
     const n = this.segs, step = this.size / n;
@@ -69,7 +81,7 @@ export class Terrain {
     this.chunks = new Map();
     this.group = new THREE.Group(); this.group.name = 'terrain';
     this.hooks = { ready: null, done: null, dispose: null };
-    this.queue = []; this.finalize = []; this.building = null;
+    this.queue = []; this.finalize = []; this.building = null; this.pausedBuilding = null;
     this.streamT = 0; this.camPos = new THREE.Vector2();
     this.visible = new Set(); this.nextVisible = new Set();
     this.streamNodes = []; this.streamNodeCount = 0;
@@ -241,7 +253,7 @@ export class Terrain {
         if (cx0 >= WORLD_HALF || cz0 >= WORLD_HALF || cx0 + cs <= -WORLD_HALF || cz0 + cs <= -WORLD_HALF) continue;
         const cc = this.ensure(level - 1, i * 2 + a, j * 2 + b); cc.used = now; if (!cc.ready) this.request(cc, this.boxDist(cx0, cz0, cs) + size);
       }
-      node.c = c; node.leaf = true; node.ready = c.ready;
+      node.c = c; node.leaf = true; node.ready = c.groundReady;
       return node;
     }
     let ready = true;
@@ -257,13 +269,13 @@ export class Terrain {
   // so a chunk arriving at the edge of the world never changes what is drawn under the boat.
   select(node, now, vis) {
     if (!node) return;
-    if (node.leaf) { if (node.c.ready) vis.add(node.c); return; }
+    if (node.leaf) { if (node.c.groundReady) vis.add(node.c); return; }
     if (node.ready) { for (const k of node.kids) this.select(k, now, vis); return; }
     // only a quad made entirely of leaves may fall back to its coarse chunk: it lies wholly at ring distance. A quad
     // with finer subtrees inside it (the boat is near) never does - a building leaf there is a brief hole instead
     if (node.kids.every(k => k.leaf) && node.kids.some(k => !k.ready)) {
       const c = this.ensure(node.level, node.i, node.j); c.used = now;
-      if (c.ready) { vis.add(c); this.touch(node, now); return; }
+      if (c.groundReady) { vis.add(c); this.touch(node, now); return; }
       this.request(c, node.d);
     }
     for (const k of node.kids) this.select(k, now, vis);
@@ -292,9 +304,10 @@ export class Terrain {
     this.chunks.delete(c.key);
     const qi = this.queue.indexOf(c); if (qi >= 0) this.queue.splice(qi, 1);
     const fi = this.finalize.indexOf(c); if (fi >= 0) this.finalize.splice(fi, 1);
+    if (this.pausedBuilding === c) this.pausedBuilding = null;
     if (c.mesh) { this.group.remove(c.mesh); c.mesh.geometry.dispose(); }
     if (this.hooks.dispose) this.hooks.dispose(c);
-    c.h = null; c.nrm = null; c.bio = null; c.mesh = null; c.veg = null; c.disposed = true;
+    c.h = null; c.nrm = null; c.bio = null; c.mesh = null; c.veg = null; c.build = null; c.groundReady = false; c.ready = false; c.disposed = true;
   }
   pump() {
     while (this.queue.length && this.pool.inFlight < this.pool.capacity) {
@@ -313,17 +326,29 @@ export class Terrain {
     const now = performance.now();
     if (now - this.streamT > 200) { this.streamT = now; this.stream(now); }
     this.pump();
+    // A returned coarse grid can need hundreds of vegetation generator steps. Give every chunk a renderable ground
+    // mesh first, and let a nearer or finer result preempt that foliage work on the next frame. The same vegetation,
+    // colliders and final ready state are still built; only the single finalizer's order changes.
+    this.finalize.sort(compareTerrainBuildPriority);
+    if (shouldPreemptTerrainBuild(this.building, this.finalize[0], this.pausedBuilding)) {
+      this.pausedBuilding = this.building; this.building = null;
+    }
     // finalize grids into meshes + vegetation, within a per-frame time budget
     const budget = now + 4;
     while (performance.now() < budget) {
       if (!this.building) {
-        this.finalize.sort((a, b) => a.prio - b.prio);
-        const c = this.finalize.shift(); if (!c) break;
-        c.mesh = new THREE.Mesh(this.makeGeometry(c), this.material);
-        c.mesh.receiveShadow = true; c.mesh.castShadow = false; c.mesh.visible = false; c.mesh.name = 'terrain';
-        this.group.add(c.mesh);
+        let c = null;
+        if (this.pausedBuilding && (!this.finalize.length || compareTerrainBuildPriority(this.pausedBuilding, this.finalize[0]) <= 0)) {
+          c = this.pausedBuilding; this.pausedBuilding = null;
+        } else c = this.finalize.shift();
+        if (!c) break;
+        if (!c.mesh) {
+          c.mesh = new THREE.Mesh(this.makeGeometry(c), this.material);
+          c.mesh.receiveShadow = true; c.mesh.castShadow = false; c.mesh.visible = false; c.mesh.name = 'terrain';
+          this.group.add(c.mesh); c.groundReady = true;
+          c.build = this.hooks.ready ? this.hooks.ready(c) : null;
+        }
         this.building = c;
-        c.build = this.hooks.ready ? this.hooks.ready(c) : null;
         if (!c.build) { this.finish(c); continue; }
       }
       const c = this.building;
@@ -332,7 +357,7 @@ export class Terrain {
     }
     this.stats.chunks = this.chunks.size; this.stats.visible = this.visible.size; this.stats.inFlight = this.pool.inFlight;
   }
-  settled() { return this.queue.length === 0 && this.finalize.length === 0 && !this.building && this.pool.inFlight === 0 && this.visible.size > 0; }
+  settled() { return this.queue.length === 0 && this.finalize.length === 0 && !this.building && !this.pausedBuilding && this.pool.inFlight === 0 && this.visible.size > 0; }
   visibleAt(x, z) {
     for (const c of this.visible) if (c.mesh?.visible && x >= c.x0 && z >= c.z0 && x <= c.x0 + c.size && z <= c.z0 + c.size) return true;
     return false;
@@ -353,11 +378,11 @@ export class Terrain {
       terrainGrid += grid; terrainGeometry += geometry; vegetation += veg; vegetationInstances += instances; vegetationMeshes += meshes; colliders += c.colliders.length;
       l.terrainGrid += grid; l.terrainGeometry += geometry; l.vegetation += veg; l.vegetationInstances += instances; l.vegetationMeshes += meshes; l.colliders += c.colliders.length;
     }
-    return { chunks: this.chunks.size, visible: this.visible.size, terrainGrid, terrainGeometry, vegetation, vegetationInstances, vegetationMeshes, colliders, streamNodes: { active: this.streamNodeCount, capacity: this.streamNodes.length }, levels };
+    return { chunks: this.chunks.size, visible: this.visible.size, terrainGrid, terrainGeometry, vegetation, vegetationInstances, vegetationMeshes, colliders, finalization: { queued: this.finalize.length, building: this.building?.key || '', paused: this.pausedBuilding?.key || '' }, streamNodes: { active: this.streamNodeCount, capacity: this.streamNodes.length }, levels };
   }
   finish(c) {
     this.building = null; c.build = null; c.ready = true;
-    if (c.veg) { c.veg.visible = false; this.group.add(c.veg); }
+    if (c.veg) { c.veg.visible = this.visible.has(c); this.group.add(c.veg); }
     if (this.hooks.done) this.hooks.done(c);
     // Normals and biome weights have done their job once geometry and foliage are baked. Only level 0 keeps heights,
     // because boat physics samples that ring; all higher levels render from their GPU buffers from here on.
