@@ -94,6 +94,7 @@ export class Game {
       || Object.values(s.encounters || {}).some(value => Number(value) > 0)
       || Number(incidents.heard) || (s.reputation?.deeds || []).length
       || (s.discoveries?.found || []).length
+      || (s.navigationAids?.reports || []).length
       || (story.stage && story.stage !== 'dormant') || travelled
     );
   }
@@ -301,6 +302,7 @@ export class Game {
     const fieldNoteCount = fieldNotes.filter(entry => entry.found).length;
     const fieldNoteRows = fieldNotes.length ? fieldNotes.map(entry => `<div class="deed ${entry.found ? 'found' : ''}"><b>${entry.found ? esc(entry.short) : 'Unlogged'}</b>${esc(entry.found ? `${entry.place} · day ${entry.record?.day || '—'}` : entry.hint)}</div>`).join('') : '<div class="deed">No field observations logged.</div>';
     records.push(['Field notes', `${fieldNoteCount} / ${fieldNotes.length || 3}`]);
+    records.push(['Aid reports', `${Math.max(0, Number(this.save.navigationAids?.stats?.reports) || 0)}`]);
     const wanted = Math.max(0, Math.min(5, Math.ceil(Number(this.law?.attention) || 0)));
     const deeds = (this.reputation?.deeds || []).slice(-6).reverse();
     const deedRows = deeds.length ? deeds.map(deed => `<div class="deed"><b>${esc(deed.faction)} ${deed.delta > 0 ? '+' : ''}${Number(deed.delta).toFixed(1)}</b>${esc(deed.text)}</div>`).join('') : '<div class="deed">Nobody has made up their mind about this hull yet.</div>';
@@ -387,6 +389,7 @@ export class Game {
     if (e.code === 'Escape') { this.openMenu('system'); return; }
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.story?.capturesInput(e.code)) return;
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.aftermath?.capturesInput(e.code)) return;
+    if (e.code === 'KeyE' && this.navigationAids?.capturesInput(e.code)) return;
     if (e.code === 'KeyE' && !this.state && !this.paused) { if (this.dockJob) { if (this.unlocked(this.dockJob.i)) this.start(this.dockJob.i); else this.toast('Locked', `Finish ${this.missions[this.dockJob.i - 1].title} first`, 2); return; } if (this.dockCamp) { this.startRun(this.dockCamp); return; } if (this.atBoard) { this.openMenu(); return; } }
     if (e.code === 'KeyR' && this.state && (this.state.m.countdown || this.state.m.restartOnR)) { this.start(this.missions.indexOf(this.state.m)); }
   }

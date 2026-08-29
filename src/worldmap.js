@@ -154,6 +154,14 @@ export class WorldMap {
       c.font = font(10, 800); c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#0b1512'; c.fillText('!', x, y + dpr);
       if (this.scale > 0.045 || recoveryMarks.length < 3) label(x, y, recovery.label.toUpperCase(), recovery.color, 11, 24 * dpr);
     }
+    // Reported aids remain on the working chart until the maintenance crew puts the light back on station.
+    const navigationMarks = this.G.navigationAids?.markers?.() || [];
+    for (const navigationMark of navigationMarks) {
+      const [x, y] = toS(navigationMark.x, navigationMark.z); if (x < -50 || y < -50 || x > W + 50 || y > H + 50) continue;
+      c.save(); c.translate(x, y); c.strokeStyle = navigationMark.color; c.fillStyle = 'rgba(8,20,15,0.88)'; c.lineWidth = 2 * dpr;
+      c.beginPath(); c.arc(0, 0, 6 * dpr, 0, Math.PI * 2); c.fill(); c.stroke(); c.beginPath(); c.moveTo(0, -7 * dpr); c.lineTo(0, 7 * dpr); c.stroke(); c.restore();
+      if (this.scale > 0.07 || navigationMarks.length < 3) label(x, y, navigationMark.label.toUpperCase(), navigationMark.color, 11);
+    }
     // Named-character work lives on the same paper chart, but gets a gold question mark rather than an arcade gate.
     const storyMarks = this.G.story ? (this.G.story.markers ? this.G.story.markers() : [this.G.story.marker()].filter(Boolean)) : [];
     for (const storyMark of storyMarks) {
@@ -187,7 +195,8 @@ export class WorldMap {
     const region = regionAt(p.pos.x, p.pos.y);
     const storyLegend = storyMarks.map(m => `<div>${m.contract ? (m.story ? 'Resident work' : 'Resident note') : m.story ? 'Story' : 'Chart note'} · ${m.label}</div>`).join('');
     const recoveryLegend = recoveryMarks.map(m => `<div>Storm recovery · ${m.label}</div>`).join('');
+    const navigationLegend = navigationMarks.map(m => `<div>Aid report · ${m.label}</div>`).join('');
     const fieldFound = fieldMarks.filter(mark => mark.found).length, liveField = fieldMarks.find(mark => mark.live);
-    this.legend.innerHTML = `<div class="h">Chart</div><div>${region.name} &nbsp;·&nbsp; ${(WORLD_HALF * 2 / MILE).toFixed(0)} miles square</div><div>${known.length} camps found &nbsp;·&nbsp; ${(this.G.save.regions || []).length} / ${REGIONS.length} regions seen &nbsp;·&nbsp; ${(this.G.save.traps || []).length} traps recovered &nbsp;·&nbsp; ${fieldFound} field notes</div>${nc ? `<div>Nearest camp ${nc.camp.name ? (known.includes(nc.camp.key) ? nc.camp.name : 'unknown') : ''} · ${fmtDist(nc.d)}</div>` : ''}${liveCall ? `<div>Live dispatch · ${liveCall.label}</div>` : ''}${liveField ? `<div>Live field sign · ${liveField.label}</div>` : ''}${recoveryLegend}${storyLegend}<div class="keys">scroll zoom · drag pan · Tab close</div>`;
+    this.legend.innerHTML = `<div class="h">Chart</div><div>${region.name} &nbsp;·&nbsp; ${(WORLD_HALF * 2 / MILE).toFixed(0)} miles square</div><div>${known.length} camps found &nbsp;·&nbsp; ${(this.G.save.regions || []).length} / ${REGIONS.length} regions seen &nbsp;·&nbsp; ${(this.G.save.traps || []).length} traps recovered &nbsp;·&nbsp; ${fieldFound} field notes</div>${nc ? `<div>Nearest camp ${nc.camp.name ? (known.includes(nc.camp.key) ? nc.camp.name : 'unknown') : ''} · ${fmtDist(nc.d)}</div>` : ''}${liveCall ? `<div>Live dispatch · ${liveCall.label}</div>` : ''}${liveField ? `<div>Live field sign · ${liveField.label}</div>` : ''}${navigationLegend}${recoveryLegend}${storyLegend}<div class="keys">scroll zoom · drag pan · Tab close</div>`;
   }
 }

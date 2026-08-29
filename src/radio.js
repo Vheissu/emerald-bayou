@@ -98,6 +98,8 @@ export class RadioDirector {
     const pool = region ? [...(REGION_TRAFFIC[region.id] || [])] : [];
     const working = this.game.life?.traffic?.radioPool?.() || [];
     for (const call of working) pool.push(call);
+    const navigation = this.navigationAids?.radioPool?.() || [];
+    for (const call of navigation) pool.push(call);
     const hour = this.environment.hour, night = hour < 5.5 || hour > 20.5;
     const locals = this.reputation ? this.reputation.score('locals') : 0;
     const fwc = this.reputation ? this.reputation.score('fwc') : 0;

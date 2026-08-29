@@ -39,6 +39,7 @@ import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelR
 import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel, readQualityPreference, writeQualityPreference } from './displaysettings.js';
 import { startupPlan, startupTerrainReady } from './startup.js';
 import { FieldDiscoveryDirector } from './discoveries.js';
+import { NavigationAids } from './navigationaids.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -226,6 +227,7 @@ async function init() {
   game.aftermath = aftermath; radio.aftermath = aftermath;
   const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
   game.discoveries = discoveries;
+  const navigationAids = new NavigationAids({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition });
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
     const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
     const addMaterial = material => {
@@ -264,11 +266,12 @@ async function init() {
       shoreFolk: { live: life.folk.live.size, cachedCells: life.folk.cells.size, cacheEvictions: life.folk.cacheEvictions, disposedLineGeometries: life.folk.disposedLineGeometries },
       fishFallbackReleased: life.fish.fallbackReleased,
       fieldDiscoveries: discoveries.resourceStats(),
+      navigationAids: navigationAids.resourceStats(),
     },
     chart: worldMap.memoryStats(),
     models: modelLoadingStats(),
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
@@ -556,6 +559,7 @@ async function init() {
     ecology.update(dtRaw, time, started && !game.paused);
     incidents.update(dtRaw, time, started && !game.paused && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
     discoveries.update(dtRaw, time, started && !game.paused);
+    navigationAids.update(dtRaw, time, started && !game.paused);
     radio.update(dtRaw, started && !game.paused);
 
     // world updates
