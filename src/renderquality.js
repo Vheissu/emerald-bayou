@@ -1,6 +1,6 @@
-// The map and simulation stay identical at every tier. These profiles only budget GPU-heavy screen-space work.
-// Cinematic is the existing presentation; lower tiers are selected from conservative hardware signals and only
-// reached at runtime after sustained missed frame budgets.
+// The map, physics and living-world simulation stay identical at every tier. These profiles budget GPU presentation:
+// screen-space attachments, reflections, shadows and the visual wake texture. Cinematic is the full presentation;
+// lower tiers are selected from conservative hardware signals or reached after sustained missed frame budgets.
 export const MAX_DEVICE_PIXEL_RATIO = 2;
 export const MAX_DRAW_PIXELS = 3_000_000;
 export const FOUR_SAMPLE_MAX_PIXELS = 1_600_000;
@@ -9,22 +9,22 @@ export const QUALITY_PROFILES = Object.freeze([
   Object.freeze({
     id: 'fallback', label: 'Fallback', maxDrawPixels: 800_000, maxDevicePixelRatio: 1,
     msaaSamples: 0, shadowMapSize: 1024, reflectionScale: 0.25, reflectionInterval: 3,
-    reflectionMipmaps: false, bloom: false, finalPass: false,
+    reflectionMipmaps: false, wakeResolution: 192, wakeMaxStamps: 10, bloom: false, finalPass: false,
   }),
   Object.freeze({
     id: 'performance', label: 'Performance', maxDrawPixels: 1_250_000, maxDevicePixelRatio: 1.25,
     msaaSamples: 0, shadowMapSize: 1024, reflectionScale: 0.32, reflectionInterval: 2,
-    reflectionMipmaps: false, bloom: false, finalPass: false,
+    reflectionMipmaps: false, wakeResolution: 256, wakeMaxStamps: 14, bloom: false, finalPass: false,
   }),
   Object.freeze({
     id: 'balanced', label: 'Balanced', maxDrawPixels: 2_000_000, maxDevicePixelRatio: 1.6,
     msaaSamples: 2, shadowMapSize: 2048, reflectionScale: 0.4, reflectionInterval: 2,
-    reflectionMipmaps: false, bloom: true, finalPass: false,
+    reflectionMipmaps: false, wakeResolution: 384, wakeMaxStamps: 18, bloom: true, finalPass: false,
   }),
   Object.freeze({
     id: 'cinematic', label: 'Cinematic', maxDrawPixels: MAX_DRAW_PIXELS, maxDevicePixelRatio: MAX_DEVICE_PIXEL_RATIO,
     msaaSamples: 4, shadowMapSize: 4096, reflectionScale: 0.5, reflectionInterval: 1,
-    reflectionMipmaps: true, bloom: true, finalPass: true,
+    reflectionMipmaps: true, wakeResolution: 512, wakeMaxStamps: 20, bloom: true, finalPass: true,
   }),
 ]);
 

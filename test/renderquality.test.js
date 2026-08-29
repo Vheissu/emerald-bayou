@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AdaptiveQualityController, gpuQualityCeiling, initialQualityLevel, msaaSamplesFor, pixelRatioFor, qualityProfile, webglRendererName } from '../src/renderquality.js';
+import { WAKE_SIZE } from '../src/water.js';
 
 test('caps dense displays by drawing-pixel budget', () => {
   assert.equal(pixelRatioFor(1000, 1000, 2), Math.sqrt(3));
@@ -35,6 +36,20 @@ test('removes multisample attachments on performance profiles', () => {
   assert.equal(msaaSamplesFor(1200, 800, 0), 0);
   assert.equal(msaaSamplesFor(1200, 800, 2), 2);
   assert.equal(msaaSamplesFor(2000, 1000, 4), 2);
+});
+
+test('scales wake simulation cost without shrinking its world-space footprint', () => {
+  const fallback = qualityProfile(0), performance = qualityProfile(1), balanced = qualityProfile(2), cinematic = qualityProfile(3);
+  assert.deepEqual(
+    [fallback.wakeResolution, performance.wakeResolution, balanced.wakeResolution, cinematic.wakeResolution],
+    [192, 256, 384, 512],
+  );
+  assert.deepEqual(
+    [fallback.wakeMaxStamps, performance.wakeMaxStamps, balanced.wakeMaxStamps, cinematic.wakeMaxStamps],
+    [10, 14, 18, 20],
+  );
+  assert.equal(WAKE_SIZE, 150);
+  assert.ok(fallback.wakeResolution ** 2 < cinematic.wakeResolution ** 2 * 0.15);
 });
 
 test('steps down on sustained missed frames and ignores a background pause', () => {

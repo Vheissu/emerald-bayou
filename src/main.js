@@ -593,22 +593,24 @@ async function init() {
     water.mesh.position.set(Math.round(camera.position.x / 50) * 50, water.level, Math.round(camera.position.z / 50) * 50);
 
     // wake stamps
-    stamps.length = 0; playerStampCount = 0;
     const wet = phys.wet;
     const sp = phys.speed * wet, rpm = phys.rpm, thr = Math.max(0, phys.throttle) * wet;
     const spF = Math.min(sp / 12, 1);
-    if (splashStamp > 0) { for (const p of splashPts) addPlayerStamp(p, 1.6 + splashStamp * 0.45, -2.2 * splashStamp, 2.4 * splashStamp, 2.2 + splashStamp * 0.6); splashStamp = 0; }
-    // rates are per second (simulate() scales by dt)
-    let pt = hullPt(0, -2.7); addPlayerStamp(pt, 1.3, -1.4 * spF, 0.12 * spF, 0.9);
-    pt = hullPt(0, -1.2); addPlayerStamp(pt, 1.5, -0.6 * spF);
-    pt = hullPt(1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
-    pt = hullPt(-1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
-    pt = hullPt(0, 2.6); addPlayerStamp(pt, 1.5, 0.9 * spF + 0.3 * thr, 0.9 * spF + 2.2 * thr * (0.3 + spF), 1.25);
-    pt = hullPt(0, 4.3); addPlayerStamp(pt, 2, 0, 1.3 * thr * (0.3 + spF), 1.7);
-    pt = hullPt(0, 6.5); addPlayerStamp(pt, 2.4, 0, 0.5 * thr * spF, 2.2);
-    skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); encounters.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); hazards.stamps(stamps);
-    wakeCenter.set(phys.pos.x + fwd2.x * -25, phys.pos.y + fwd2.y * -25);
-    water.simulate(wakeCenter, stamps, dt, currentFlow);
+    if (started && !game.paused) {
+      stamps.length = 0; playerStampCount = 0;
+      if (splashStamp > 0) { for (const p of splashPts) addPlayerStamp(p, 1.6 + splashStamp * 0.45, -2.2 * splashStamp, 2.4 * splashStamp, 2.2 + splashStamp * 0.6); splashStamp = 0; }
+      // rates are per second (simulate() scales by dt)
+      let pt = hullPt(0, -2.7); addPlayerStamp(pt, 1.3, -1.4 * spF, 0.12 * spF, 0.9);
+      pt = hullPt(0, -1.2); addPlayerStamp(pt, 1.5, -0.6 * spF);
+      pt = hullPt(1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
+      pt = hullPt(-1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
+      pt = hullPt(0, 2.6); addPlayerStamp(pt, 1.5, 0.9 * spF + 0.3 * thr, 0.9 * spF + 2.2 * thr * (0.3 + spF), 1.25);
+      pt = hullPt(0, 4.3); addPlayerStamp(pt, 2, 0, 1.3 * thr * (0.3 + spF), 1.7);
+      pt = hullPt(0, 6.5); addPlayerStamp(pt, 2.4, 0, 0.5 * thr * spF, 2.2);
+      skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); encounters.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); hazards.stamps(stamps);
+      wakeCenter.set(phys.pos.x + fwd2.x * -25, phys.pos.y + fwd2.y * -25);
+      water.simulate(wakeCenter, stamps, dt, currentFlow);
+    }
 
     // ---- spray ----
     // sun direction in view space drives the lighting of droplets / plume

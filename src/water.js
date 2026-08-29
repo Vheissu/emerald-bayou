@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as TEX from './textures.js';
 
-const WAKE_RES = 512;
+const MAX_WAKE_STAMPS = 20;
 const MURK_SIZE = 2400, MURK_PX = 240; // 10 m per texel
 export const WAKE_SIZE = 150; // metres covered by wake sim
 
@@ -27,21 +27,24 @@ export class Water {
 
     // ---- wake simulation ----
     const rtOpts = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping, depthBuffer: false };
-    this.wakeA = new THREE.WebGLRenderTarget(WAKE_RES, WAKE_RES, rtOpts);
-    this.wakeB = new THREE.WebGLRenderTarget(WAKE_RES, WAKE_RES, rtOpts);
+    this.wakeResolution = Math.max(128, Math.round(quality.wakeResolution ?? 512));
+    this.wakeMaxStamps = Math.max(1, Math.min(MAX_WAKE_STAMPS, Math.round(quality.wakeMaxStamps ?? MAX_WAKE_STAMPS)));
+    this.wakeA = new THREE.WebGLRenderTarget(this.wakeResolution, this.wakeResolution, rtOpts);
+    this.wakeB = new THREE.WebGLRenderTarget(this.wakeResolution, this.wakeResolution, rtOpts);
     this.wakeOrigin = new THREE.Vector2(0, 0);
-    this.wakeCell = WAKE_SIZE / WAKE_RES;
-    this.stamps = []; for (let i = 0; i < 20; i++) this.stamps.push(new THREE.Vector4());
-    this.foamStamps = []; for (let i = 0; i < 20; i++) this.foamStamps.push(new THREE.Vector4());
+    this.wakeCell = WAKE_SIZE / this.wakeResolution;
+    this.wakeNeedsClear = true;
+    this.stamps = []; for (let i = 0; i < MAX_WAKE_STAMPS; i++) this.stamps.push(new THREE.Vector4());
+    this.foamStamps = []; for (let i = 0; i < MAX_WAKE_STAMPS; i++) this.foamStamps.push(new THREE.Vector4());
     this.simMat = new THREE.ShaderMaterial({
       uniforms: {
         tPrev: { value: null }, shift: { value: new THREE.Vector2() }, advection: { value: new THREE.Vector2() }, damp: { value: 0.985 }, foamDecay: { value: 0.962 },
-        stamps: { value: this.stamps }, foamStamps: { value: this.foamStamps }, texel: { value: 1 / WAKE_RES },
+        stamps: { value: this.stamps }, foamStamps: { value: this.foamStamps }, stampCount: { value: this.wakeMaxStamps }, texel: { value: 1 / this.wakeResolution },
       },
       vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
       fragmentShader: `
         varying vec2 vUv; uniform sampler2D tPrev; uniform vec2 shift, advection; uniform float damp, foamDecay, texel;
-        uniform vec4 stamps[20]; uniform vec4 foamStamps[20];
+        uniform vec4 stamps[${MAX_WAKE_STAMPS}]; uniform vec4 foamStamps[${MAX_WAKE_STAMPS}]; uniform int stampCount;
         vec4 fetch(vec2 uv) { if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec4(0.0); return texture2D(tPrev, uv); }
         void main() {
           vec2 uv = vUv + shift - advection;
@@ -53,7 +56,8 @@ export class Water {
           // slight smoothing to kill grid noise
           nh = mix(nh, (l.r + r.r + d.r + u.r) * 0.25, 0.02);
           float foam = (c.b * 12.0 + l.b + r.b + d.b + u.b) / 16.0 * foamDecay;
-          for (int i = 0; i < 20; i++) {
+          for (int i = 0; i < ${MAX_WAKE_STAMPS}; i++) {
+            if (i >= stampCount) break;
             vec4 s = stamps[i];
             if (s.z > 0.0) { float dd = length(vUv - s.xy) / s.z; nh += s.w * exp(-dd * dd * 2.5); }
             vec4 f = foamStamps[i];
@@ -78,7 +82,7 @@ export class Water {
       absorb: { value: new THREE.Vector3(0.52, 0.13, 0.50) },
       scatterColor: { value: new THREE.Color(0.010, 0.15, 0.085) },
       scatterK: { value: 0.3 },
-      wakeOrigin: { value: this.wakeOrigin }, wakeSize: { value: WAKE_SIZE }, wakeTexel: { value: 1 / WAKE_RES },
+      wakeOrigin: { value: this.wakeOrigin }, wakeSize: { value: WAKE_SIZE }, wakeTexel: { value: 1 / this.wakeResolution },
       rippleStrength: { value: 0.16 }, wakeStrength: { value: 6.0 }, dbg: { value: 0 },
       seaState: { value: 0 }, weatherWind: { value: new THREE.Vector2(1, 0) },
       bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) },
@@ -262,6 +266,18 @@ export class Water {
     this.reflRT.texture.generateMipmaps = this.reflectionMipmaps;
     this.reflRT.texture.minFilter = this.reflectionMipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
     this.reflRT.texture.needsUpdate = true;
+    const wakeResolution = Math.max(128, Math.round(quality.wakeResolution ?? 512));
+    this.wakeMaxStamps = Math.max(1, Math.min(MAX_WAKE_STAMPS, Math.round(quality.wakeMaxStamps ?? MAX_WAKE_STAMPS)));
+    this.simMat.uniforms.stampCount.value = this.wakeMaxStamps;
+    if (wakeResolution !== this.wakeResolution) {
+      this.wakeResolution = wakeResolution;
+      this.wakeCell = WAKE_SIZE / wakeResolution;
+      this.simMat.uniforms.texel.value = 1 / wakeResolution;
+      this.uniforms.wakeTexel.value = 1 / wakeResolution;
+      this.wakeA.setSize(wakeResolution, wakeResolution);
+      this.wakeB.setSize(wakeResolution, wakeResolution);
+      this.wakeNeedsClear = true;
+    }
   }
 
   resize(w, h) {
@@ -272,7 +288,13 @@ export class Water {
   memoryStats() {
     const width = this.reflRT.width, height = this.reflRT.height, pixels = width * height;
     const colorBytes = pixels * 8 * (this.reflectionMipmaps ? 4 / 3 : 1), depthBytes = pixels * 4;
-    return { width, height, pixels, mipmaps: this.reflectionMipmaps, estimatedAttachmentBytes: Math.round(colorBytes + depthBytes) };
+    const reflectionAttachmentBytes = Math.round(colorBytes + depthBytes);
+    const wakeAttachmentBytes = this.wakeResolution * this.wakeResolution * 8 * 2;
+    return {
+      width, height, pixels, mipmaps: this.reflectionMipmaps, reflectionAttachmentBytes,
+      wakeResolution: this.wakeResolution, wakeMaxStamps: this.wakeMaxStamps, wakeAttachmentBytes,
+      estimatedAttachmentBytes: reflectionAttachmentBytes + wakeAttachmentBytes,
+    };
   }
 
   waveHeight(x, z, t) {
@@ -294,19 +316,26 @@ export class Water {
 
   // stamp list: [{x,z,radius,height,foam}]
   simulate(center, stampsIn, dt = 1 / 60, flow = null) {
+    if (this.wakeNeedsClear) {
+      const previousTarget = this.renderer.getRenderTarget();
+      this.renderer.setRenderTarget(this.wakeA); this.renderer.clear(true, false, false);
+      this.renderer.setRenderTarget(this.wakeB); this.renderer.clear(true, false, false);
+      this.renderer.setRenderTarget(previousTarget);
+      this.wakeNeedsClear = false;
+    }
     const cell = this.wakeCell;
     const nx = Math.round(center.x / cell) * cell, nz = Math.round(center.y / cell) * cell;
     const shift = this.simMat.uniforms.shift.value;
     shift.set((nx - this.wakeOrigin.x) / WAKE_SIZE, (nz - this.wakeOrigin.y) / WAKE_SIZE);
     this.simMat.uniforms.advection.value.set(flow ? flow.x * dt / WAKE_SIZE : 0, flow ? flow.y * dt / WAKE_SIZE : 0);
     this.wakeOrigin.set(nx, nz);
-    for (let i = 0; i < 20; i++) {
+    const stampCount = Math.min(stampsIn.length, this.wakeMaxStamps, MAX_WAKE_STAMPS);
+    this.simMat.uniforms.stampCount.value = stampCount;
+    for (let i = 0; i < stampCount; i++) {
       const s = stampsIn[i];
-      if (s) {
-        const u = (s.x - nx) / WAKE_SIZE + 0.5, v = (s.z - nz) / WAKE_SIZE + 0.5;
-        this.stamps[i].set(u, v, s.radius / WAKE_SIZE, s.height * dt);
-        this.foamStamps[i].set(u, v, (s.foamRadius || s.radius) / WAKE_SIZE, (s.foam || 0) * dt);
-      } else { this.stamps[i].set(0, 0, 0, 0); this.foamStamps[i].set(0, 0, 0, 0); }
+      const u = (s.x - nx) / WAKE_SIZE + 0.5, v = (s.z - nz) / WAKE_SIZE + 0.5;
+      this.stamps[i].set(u, v, s.radius / WAKE_SIZE, s.height * dt);
+      this.foamStamps[i].set(u, v, (s.foamRadius || s.radius) / WAKE_SIZE, (s.foam || 0) * dt);
     }
     this.simMat.uniforms.tPrev.value = this.wakeA.texture;
     this.renderer.setRenderTarget(this.wakeB);
