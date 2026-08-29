@@ -521,6 +521,7 @@ async function init() {
   const warm = new THREE.Group();
   { const nc = world.campAt(1, 1) || world.campsNear(0, 0, 5000)[0]; if (nc) { const g = world.buildCamp(nc); g.position.set(startX - nc.x, 0, startZ - 20 - nc.z); warm.add(g); } }
   for (const [i, mk] of [crabFloat(), fuelDrum(), wreck(), shack(), kayak()].entries()) { mk.position.set(startX - 6 + i * 3, 0.2, startZ - 8); warm.add(mk); }
+  { const spill = encounters.spills[0], sheen = spill.mesh.clone(); spill.uniforms.uAlpha.value = 0.35; sheen.visible = true; sheen.position.set(startX + 10, 0.15, startZ - 12); sheen.scale.set(5, 1, 3.4); warm.add(sheen); }
   { const funnel = hazards.spout.group.clone(true); funnel.traverse(o => { o.visible = true; }); warm.add(funnel); for (const d of hazards.debris.slice(0, 3)) { const m = d.mesh.clone(true); m.visible = true; warm.add(m); } }
   { const rr = mulberry32(3); const hf = terrain.hf; let i = 0;
     for (const kind of ['house', 'ramp', 'boathouse', 'blind']) { // one of each structure kind, anywhere the placer accepts, moved in front of the dock
@@ -547,7 +548,7 @@ async function init() {
   const t0 = performance.now();
   await Promise.all([preload(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a']), new Promise(r => { const poll = () => { if ((terrain.settled() && performance.now() - t0 > 800) || performance.now() - t0 > 20000) r(); else setTimeout(poll, 100); }; poll(); })]);
   await new Promise(r => setTimeout(r, 250)); // one more frame with the models in, so their programs are compiled
-  scene.remove(warm); window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false; for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
+  scene.remove(warm); encounters.spills[0].uniforms.uAlpha.value = 0; window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false; for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
   document.getElementById('loading').remove();
   startEl.classList.remove('hidden');
 }

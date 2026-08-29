@@ -8,9 +8,40 @@ import { fmtDist } from './game.js';
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
 const DEBUG_ORDER = ['distress', 'patrol', 'smuggler', 'salvage', 'netline'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
+const SPILL_POOL_SIZE = 3;
+
+const SPILL_VS = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+  }`;
+const SPILL_FS = `
+  precision highp float;
+  uniform float uTime, uAlpha, uPhase, uThin, uAgitation;
+  varying vec2 vUv;
+  void main() {
+    vec2 p = (vUv - 0.5) * 2.0;
+    float r = length(p), a = atan(p.y, p.x);
+    float edge = 0.87 + sin(a * 5.0 + uPhase) * 0.055 + sin(a * 11.0 - uPhase * 1.7) * 0.028 + sin(a * 19.0 + uTime * 0.025) * 0.015;
+    float shape = 1.0 - smoothstep(edge - 0.13, edge, r);
+    float grain = sin(p.x * 19.0 + p.y * 12.0 + uPhase * 3.0 + sin(p.y * 8.0 - uTime * 0.04));
+    float broken = mix(0.82 + grain * 0.08, smoothstep(-0.72, 0.48, grain), clamp(uAgitation, 0.0, 1.0));
+    float film = smoothstep(0.98, 0.10, r) * (0.58 + 0.42 * sin(r * 13.0 - a * 2.0 + uPhase));
+    float hue = r * 17.0 + a * 1.8 + uPhase * 4.0 + grain * 0.55;
+    vec3 spectral = 0.5 + 0.5 * cos(vec3(0.15, 2.25, 4.25) + hue);
+    spectral = mix(vec3(0.28, 0.24, 0.17), spectral, 0.58);
+    vec3 silver = mix(vec3(0.105, 0.135, 0.125), vec3(0.31, 0.34, 0.31), 0.5 + grain * 0.28);
+    float rainbow = (1.0 - uThin * 0.82) * (0.18 + film * 0.34);
+    vec3 color = mix(silver, spectral, rainbow);
+    float alpha = shape * broken * (0.085 + film * 0.105) * uAlpha * (1.0 - uThin * 0.38);
+    if (alpha < 0.003) discard;
+    gl_FragColor = vec4(color, alpha);
+  }`;
 
 function recolor(group, color) {
   let first = true;
@@ -94,6 +125,9 @@ export class EncounterDirector {
     } };
     this.phys.addObs('encounters', this.obs);
     this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.smuggler.agent, this.rigs.distress.echoAgent];
+    this.salvagePieces = this.rigs.salvage.drums.map((mesh, index) => ({ mesh, index, x: 0, z: 0, vx: 0, vz: 0, found: false, ruptured: false, resolved: false, hitCd: 0, sinkT: 0, ph: index * 2.3 }));
+    this.drumObs = this.salvagePieces.map((q, index) => ({ x: 0, z: 0, r: 0.52, tag: 'fuel drum', onHit: (into, nx, nz) => this.hitDrum(index, into, nx, nz) }));
+    this.spills = this.makeSpills();
     this.keyHandler = e => {
       if (e.code === 'KeyE' && !e.repeat) this.interact = true;
       if (e.code === 'KeyF' && !e.repeat) this.alternate = true;
@@ -253,14 +287,91 @@ export class EncounterDirector {
     this.active = { type: 'smuggler', x: at.x, z: at.z, state: 'waiting', t: 0, known: false, chase: 0, originX: at.x, originZ: at.z, trusted: standing >= 3, hostile: standing <= -3 };
   }
 
+  makeSpills() {
+    const geometry = new THREE.CircleGeometry(1, 48); geometry.rotateX(-Math.PI / 2); this.spillGeometry = geometry;
+    const spills = [];
+    for (let i = 0; i < SPILL_POOL_SIZE; i++) {
+      const uniforms = { uTime: { value: 0 }, uAlpha: { value: 0 }, uPhase: { value: i * 1.7 }, uThin: { value: 0 }, uAgitation: { value: 0 } };
+      const material = new THREE.ShaderMaterial({
+        name: 'fuel-sheen', uniforms, vertexShader: SPILL_VS, fragmentShader: SPILL_FS,
+        transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geometry, material); mesh.name = `fuel-sheen-${i + 1}`; mesh.visible = false; mesh.renderOrder = 74;
+      this.water.scene.add(mesh);
+      spills.push({ mesh, material, uniforms, active: false, x: 0, z: 0, age: 0, maxLife: 180, startRadius: 2, targetRadius: 38, radius: 0, phase: i * 1.7, churn: 0 });
+    }
+    return spills;
+  }
+
+  spawnSpill(x, z) {
+    let spill = null, oldest = -1;
+    for (const candidate of this.spills) {
+      if (!candidate.active) { spill = candidate; break; }
+      const age = candidate.age / candidate.maxLife; if (age > oldest) { oldest = age; spill = candidate; }
+    }
+    spill.active = true; spill.x = x; spill.z = z; spill.age = 0; spill.churn = 0; spill.radius = 2.2;
+    spill.startRadius = 2.2 + Math.random() * 0.8; spill.targetRadius = 34 + Math.random() * 12; spill.maxLife = 165 + Math.random() * 45; spill.phase = Math.random() * Math.PI * 2;
+    spill.mesh.visible = true; spill.mesh.position.set(x, this.water.level + 0.055, z); spill.mesh.rotation.y = spill.phase;
+    spill.mesh.scale.set(spill.radius * 1.18, 1, spill.radius * 0.72);
+    spill.uniforms.uTime.value = 0; spill.uniforms.uAlpha.value = 0; spill.uniforms.uPhase.value = spill.phase; spill.uniforms.uThin.value = 0; spill.uniforms.uAgitation.value = 0;
+    return spill;
+  }
+
+  updateSpills(dt) {
+    const V = this.environment.values, wind = V.wind || 0, sea = V.sea || 0;
+    for (const spill of this.spills) {
+      if (!spill.active) continue;
+      const playerD = Math.hypot(spill.x - this.phys.pos.x, spill.z - this.phys.pos.y);
+      if (dt > 0 && playerD < spill.radius * 0.92 && this.phys.speed > 2.2) spill.churn = clamp(spill.churn + dt * this.phys.speed * 0.045);
+      else spill.churn *= Math.exp(-dt * 0.18);
+      const breakup = 1 + Math.max(0, wind - 3.6) * 0.035 + sea * 0.25 + spill.churn * 0.65;
+      spill.age += dt * breakup;
+      if (spill.age >= spill.maxLife) { spill.active = false; spill.mesh.visible = false; spill.uniforms.uAlpha.value = 0; continue; }
+      if (dt > 0 && this.currents) {
+        const flow = this.currents.flowAt(spill.x, spill.z, this._flow); spill.x += flow.x * dt * 0.88; spill.z += flow.y * dt * 0.88;
+      }
+      const spread = 1 - Math.exp(-spill.age / 7.5), life = spill.age / spill.maxLife;
+      spill.radius = lerp(spill.startRadius, spill.targetRadius, spread);
+      spill.mesh.position.set(spill.x, this.water.level + 0.055, spill.z); spill.mesh.rotation.y += dt * (0.002 + sea * 0.002);
+      spill.mesh.scale.set(spill.radius * 1.18, 1, spill.radius * 0.72);
+      spill.uniforms.uTime.value = spill.age; spill.uniforms.uAlpha.value = smooth(0, 1.4, spill.age) * (1 - smooth(0.56, 1, life));
+      spill.uniforms.uThin.value = clamp(life); spill.uniforms.uAgitation.value = clamp(sea * 0.28 + spill.churn * 0.72);
+    }
+  }
+
+  hitDrum(index, into, nx, nz) {
+    const e = this.active, q = e && e.type === 'salvage' ? e.pieces[index] : null;
+    if (!q || q.resolved || q.hitCd > 0 || into < 0.7) return;
+    q.hitCd = 0.45; q.vx -= nx * into * 0.24; q.vz -= nz * into * 0.24;
+    if (into < 4.2) return;
+    q.ruptured = true; q.resolved = true; q.sinkT = 0; e.ruptured++; e.handled++; e.state = 'spill'; e.lastSpillX = q.x; e.lastSpillZ = q.z;
+    this.spawnSpill(q.x, q.z); this.audio.splash(Math.min(1.5, into / 5)); this.audio.warn(); this.game.shake = Math.max(this.game.shake, 0.28);
+    for (let i = 0; i < 22; i++) {
+      const a = Math.random() * Math.PI * 2, speed = 0.8 + Math.random() * 3.2;
+      this.spray.emit(q.x + Math.cos(a) * 0.4, this.water.level + 0.04, q.z + Math.sin(a) * 0.4, Math.cos(a) * speed, 0.8 + Math.random() * 2.8, Math.sin(a) * speed, 0.015 + Math.random() * 0.025, 0.35 + Math.random() * 0.35, 0.65);
+    }
+    this.game.save.salvageRuptures = (this.game.save.salvageRuptures || 0) + 1;
+    if (this.law) { this.law.stats.fuelSpills = (this.law.stats.fuelSpills || 0) + 1; this.law.add(0.6, 'fuel sheen from ruptured salvage drum', false); }
+    if (this.reputation) {
+      this.reputation.change('fwc', -0.65, 'fuel-spill', 'FWC logged a fuel sheen after your hull struck loose salvage.', true);
+      this.reputation.change('locals', -0.25, 'fuel-spill', 'The camps heard a recovery drum split under the tower boat.', false);
+    }
+    this.game.persist(); this.game.toast('Fuel drum ruptured', 'Visible sheen on the water. Back clear and mark the position.', 3.4);
+  }
+
+  recoverDrum(e, q) {
+    q.found = true; q.resolved = true; q.mesh.visible = false; e.found++; e.handled++;
+    this.audio.pickup(); this.pay(45, `Fuel drum ${e.found} of ${e.pieces.length - e.ruptured}`);
+  }
+
   startSalvage(at) {
     const R = this.rigs.salvage; R.wreck.visible = true; R.wreck.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) - 0.35, at.z); R.wreck.rotation.y = at.heading;
-    const pieces = [];
-    for (let i = 0; i < R.drums.length; i++) {
-      const a = at.heading + 0.8 + i * 2.1, r = 7 + i * 4, d = R.drums[i], x = at.x + Math.cos(a) * r, z = at.z + Math.sin(a) * r;
-      d.visible = true; d.position.set(x, this.water.waveHeight(x, z, 0) - 0.1, z); d.rotation.set(1.2, a, 0.2); pieces.push({ mesh: d, x, z, found: false, ph: i * 2.3 });
+    for (let i = 0; i < this.salvagePieces.length; i++) {
+      const a = at.heading + 0.8 + i * 2.1, r = 7 + i * 4, q = this.salvagePieces[i], x = at.x + Math.cos(a) * r, z = at.z + Math.sin(a) * r;
+      Object.assign(q, { x, z, vx: 0, vz: 0, found: false, ruptured: false, resolved: false, hitCd: 0, sinkT: 0, ph: i * 2.3 });
+      q.mesh.visible = true; q.mesh.position.set(x, this.water.waveHeight(x, z, 0) - 0.1, z); q.mesh.rotation.set(1.2, a, 0.2);
     }
-    this.active = { type: 'salvage', x: at.x, z: at.z, state: 'waiting', t: 0, known: false, pieces, found: 0, ph: Math.random() * 6 };
+    this.active = { type: 'salvage', x: at.x, z: at.z, state: 'waiting', t: 0, known: false, pieces: this.salvagePieces, found: 0, ruptured: 0, handled: 0, resolveT: 0, lastSpillX: at.x, lastSpillZ: at.z, ph: Math.random() * 6 };
   }
 
   startNetline(at) {
@@ -279,16 +390,16 @@ export class EncounterDirector {
     let target = e;
     if (e.type === 'patrol') target = this.rigs.patrol.agent;
     else if (e.type === 'smuggler' && e.state === 'chase') target = this.rigs.smuggler.agent;
-    else if (e.type === 'salvage') target = e.pieces.find(q => !q.found) || e;
+    else if (e.type === 'salvage') target = e.pieces.find(q => !q.resolved) || e;
     const dx = target.x - p.pos.x, dz = target.z - p.pos.y, d = Math.hypot(dx, dz) || 1;
     const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
     const x = target.x - dx / d * gap, z = target.z - dz / d * gap;
     p.reset(x, z, p.heading); p.y = this.water.waveHeight(x, z, 0);
   }
 
-  setPrompt(text) {
+  setPrompt(text, key = 'E') {
     if (this.game.dockCamp) return;
-    this.game.el.prompt.innerHTML = `<b>E</b> ${text}`; this.game.el.prompt.classList.add('on'); this.prompting = true;
+    this.game.el.prompt.innerHTML = `<b>${key}</b> ${text}`; this.game.el.prompt.classList.add('on'); this.prompting = true;
   }
   clearPrompt() { if (this.prompting && !this.game.dockCamp) this.game.el.prompt.classList.remove('on'); this.prompting = false; }
 
@@ -523,18 +634,40 @@ export class EncounterDirector {
     const R = this.rigs.salvage, p = this.phys, d = Math.hypot(e.x - p.pos.x, e.z - p.pos.y);
     R.wreck.position.y = this.water.waveHeight(e.x, e.z, t) - 0.35; R.wreck.rotation.z = Math.sin(t * 0.7 + e.ph) * 0.05;
     if (d < 130) this.known(e, 'Storm wreckage', 'Fuel drums are washing away from a sunken skiff.');
-    if (e.known) this.point(e.x, e.z, 'storm wreckage', '#f3ede0');
-    const o = this.fixedObs; o.x = e.x; o.z = e.z; o.r = 2.1; o.tag = 'wreck'; this.obs.push(o);
+    if (d < 70) { const o = this.fixedObs; o.x = e.x; o.z = e.z; o.r = 2.1; o.tag = 'wreck'; this.obs.push(o); }
+    let nearest = null, nearestD = Infinity;
     for (const q of e.pieces) {
+      q.hitCd = Math.max(0, q.hitCd - dt);
       if (q.found) continue;
-      if (this.currents) { const f = this.currents.flowAt(q.x, q.z, this._flow); q.x += f.x * dt * 0.74; q.z += f.y * dt * 0.74; }
-      q.mesh.position.y = this.water.waveHeight(q.x, q.z, t) - 0.1; q.mesh.rotation.z = 1.25 + Math.sin(t * 0.9 + q.ph) * 0.1;
+      if (this.currents) { const f = this.currents.flowAt(q.x, q.z, this._flow); q.x += (f.x * 0.74 + q.vx) * dt; q.z += (f.y * 0.74 + q.vz) * dt; }
+      else { q.x += q.vx * dt; q.z += q.vz * dt; }
+      const drag = Math.exp(-dt * 0.86); q.vx *= drag; q.vz *= drag;
+      if (q.ruptured) q.sinkT += dt;
+      q.mesh.position.y = this.water.waveHeight(q.x, q.z, t) - 0.1 - smooth(0, 5, q.sinkT) * 0.9; q.mesh.rotation.z = 1.25 + Math.sin(t * 0.9 + q.ph) * 0.1;
       q.mesh.position.x = q.x; q.mesh.position.z = q.z;
-      if (Math.hypot(q.x - p.pos.x, q.z - p.pos.y) < 4.5) {
-        q.found = true; q.mesh.visible = false; e.found++; this.audio.pickup(); this.pay(45, `Fuel drum ${e.found} of ${e.pieces.length}`);
+      if (q.ruptured) { if (q.sinkT >= 5) q.mesh.visible = false; continue; }
+      const qd = Math.hypot(q.x - p.pos.x, q.z - p.pos.y); if (qd < nearestD) { nearestD = qd; nearest = q; }
+      if (qd < 70) { const o = this.drumObs[q.index]; o.x = q.x; o.z = q.z; this.obs.push(o); }
+    }
+    if (e.known) {
+      if (nearest) this.point(nearest.x, nearest.z, 'loose fuel drum', '#f3ede0');
+      else if (e.ruptured) this.point(e.lastSpillX, e.lastSpillZ, 'fuel sheen', '#d8b06a');
+      else this.point(e.x, e.z, 'storm wreckage', '#f3ede0');
+    }
+    if (nearest && nearestD < 7.5 && this.canInteract()) {
+      const mph = p.speed * MPH;
+      if (mph < 5.5) { this.setPrompt('recover the fuel drum <i>· idle alongside</i>'); if (this.interact) this.recoverDrum(e, nearest); }
+      else this.setPrompt(`ease below 5 mph for the loose drum <i>· ${Math.round(mph)} mph</i>`, 'IDLE');
+    }
+    if (e.handled >= e.pieces.length) {
+      if (!e.ruptured) { if (this.law) this.law.cool(0.15); this.complete('Wreckage cleared', 'Three drums recovered before they split.', 140, 1, 'You cleared loose fuel drums out of the storm channel.', 'salvage-cleared'); return; }
+      if (e.resolveT <= 0) e.resolveT = 4.8;
+      e.resolveT -= dt;
+      if (e.resolveT <= 0) {
+        const line = e.found === 2 ? 'Two drums recovered. One split and the sheen was reported.' : e.found === 1 ? 'One drum recovered. Two split; the sheen was reported.' : 'All three split. The sheen was marked for response.';
+        this.complete('Fuel sheen reported', line, 0, 0, '', 'salvage-spill'); return;
       }
     }
-    if (e.found >= e.pieces.length) { if (this.law) this.law.cool(0.15); this.complete('Wreckage cleared', 'Three drums recovered before they split.', 140, 1, 'You cleared loose fuel drums out of the storm channel.', 'salvage-cleared'); }
   }
 
   beginNetRecovery(e, choice) {
@@ -627,6 +760,7 @@ export class EncounterDirector {
 
   update(dt, t, enabled = true) {
     this.enabled = enabled; this.obs.length = 0;
+    this.updateSpills(this.game.paused ? 0 : dt);
     if (!enabled) { if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
     if (this.game.state) { if (this.active) this.finish(false, true); if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
     if (this.game.paused) { this.interact = false; this.alternate = false; return; }
