@@ -11,13 +11,13 @@ const audioParam = (value = 0) => ({
 
 function mockAudioContext() {
   const counts = { oscillators: 0, gains: 0, filters: 0 };
-  const allocations = { buffers: 0, sources: [], panners: [] };
+  const allocations = { buffers: 0, sources: [], oscillators: [], panners: [] };
   const connectable = extras => ({ ...extras, connect() { return this; }, disconnect() { this.disconnected = true; } });
   const scheduled = extras => connectable({ ...extras, start() {}, stop() {}, addEventListener(type, handler) { if (type === 'ended') this.onended = handler; }, finish() { this.onended?.(); } });
   return {
     currentTime: 0,
     counts, allocations,
-    createOscillator() { counts.oscillators++; return scheduled({ type: 'sine', frequency: audioParam() }); },
+    createOscillator() { counts.oscillators++; const oscillator = scheduled({ type: 'sine', frequency: audioParam() }); allocations.oscillators.push(oscillator); return oscillator; },
     createGain() { counts.gains++; return connectable({ gain: audioParam() }); },
     createBiquadFilter() { counts.filters++; return connectable({ type: 'lowpass', frequency: audioParam(), Q: audioParam() }); },
     createStereoPanner() { const panner = connectable({ pan: audioParam() }); allocations.panners.push(panner); return panner; },
@@ -52,6 +52,17 @@ test('a compound world sound shares one transient panner across all of its voice
   assert.deepEqual(audio.spatialStats(), { supported: true, transientActive: 1, transientCreated: 1, persistentNodes: 0, listener: { x: 0, z: 0, forwardX: 0, forwardZ: -1 } });
   ctx.allocations.sources[0].finish();
   assert.equal(ctx.allocations.panners[0].disconnected, true); assert.equal(audio.spatialStats().transientActive, 0);
+});
+
+test('a multi-blast fog signal shares one spatial output and releases it after the last blast', () => {
+  const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx; audio.sfx = {};
+  audio.setListener(0, 0, 0, -1); audio.fogHornFishing(0.35, 18, 0);
+  assert.equal(ctx.allocations.panners.length, 1);
+  assert.equal(ctx.allocations.oscillators.length, 6);
+  assert.equal(audio.spatialStats().transientActive, 1);
+  ctx.allocations.oscillators.at(-1).finish();
+  assert.equal(ctx.allocations.panners[0].disconnected, true);
+  assert.equal(audio.spatialStats().transientActive, 0);
 });
 
 test('patrol siren is lazy and reuses one fixed audio graph throughout a chase', () => {

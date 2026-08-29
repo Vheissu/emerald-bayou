@@ -59,6 +59,7 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 | `M` | jobs board |
 | `Tab` | chart |
 | `L` | spotlight |
+| `H` | horn; one prolonged blast in dense fog |
 | `R` | reset the boat |
 
 ## What's in it
@@ -74,6 +75,8 @@ The seven resident crews keep their own schedules, jobs and operator records. Th
 At five wanted stars, a sustained pursuit can bring FWC Air 2 if the wind and storm conditions are flyable. It works from positions called by surface units and its own finite view. Lose both under canopy or in fog and the helicopter circles the last fix while its searchlight sweeps; the chase can still be escaped. The response reuses the Coast Guard helicopter rig, searchlight and rotor audio, so it adds no second aircraft pool. This is based on FWC's description of its [Aviation Unit](https://myfwc.com/law-enforcement/special-programs/) patrolling large areas of land and water as an "Eye in the Sky," and its account of coordinating [air, land and sea assets](https://myfwc.com/about/inside-fwc/le/what-we-do/).
 
 On clear, low-wind nights, dense fog can settle over the backcountry before dawn and burn off after sunrise. Visibility drops to a few hundred metres. Powerboats slow down, show their navigation lights and sound a prolonged blast while making way; every crew keeps its own signal clock.
+
+The horn is live on `H`. It gives a short warning in clear water and a 4.5-second prolonged blast in dense fog. Nearby working boats answer from their real bearing and alter course when the signal catches them closing. Red, green and stern lights disappear outside their legal arcs, so another boat's aspect can be read at night.
 
 The marked channels now match the radio traffic. Red aids carry even numbers, green aids carry odd numbers, and each light keeps its own flash characteristic while the float moves with chop and current. Hail, tropical weather, hurricanes and vessel strikes can leave a marker dim, dark, off station or down. Idle alongside a bad aid to report the exact fix; it stays on the working chart until FWC maintenance clears it.
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { lunarAgeAt, lunarIllumination, lunarPhaseAt, lunarPhaseName, lunarTideRange } from './lunar.js';
 import { updateAttributePrefix } from './cache.js';
+import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
 
 const FT = 3.28084;
 const MPS_TO_MPH = 2.23694;
@@ -191,6 +192,7 @@ export class Environment {
     this.windAngle = Number.isFinite(savedWind) ? Math.atan2(Math.sin(savedWind), Math.cos(savedWind)) : 0.7;
     this.gust = 1; this.waterLevel = 0; this.tideRate = 0; this.syncClockAndTide(); this.persistT = 10;
     this.rainbowMoisture = smooth(0.08, 0.72, this.values.rain); this.rainbow = 0; this.rainbowOverride = null;
+    this.navVisibility = { port: true, starboard: true, stern: true }; this.hornCooldown = 0;
     this.precip = new Precipitation(this.fxScene, this.effectBudget);
     this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
     this.lightDir = this.sunDir.clone();
@@ -212,9 +214,10 @@ export class Environment {
 
   makeBoatLights() {
     const g = new THREE.Group(); g.name = 'navigation-lights';
-    this.port = addBulb(g, 0xff2418, 1.03, 0.78, -1.55, 0.06);
-    this.starboard = addBulb(g, 0x2cff7c, -1.03, 0.78, -1.55, 0.06);
-    this.stern = addBulb(g, 0xffffff, 0, 2.1, 1.8, 0.07);
+    const port = PLAYER_NAV_LIGHT_LAYOUT.port, starboard = PLAYER_NAV_LIGHT_LAYOUT.starboard, stern = PLAYER_NAV_LIGHT_LAYOUT.stern;
+    this.port = addBulb(g, 0xff2418, port.x, port.y, port.z, 0.06);
+    this.starboard = addBulb(g, 0x2cff7c, starboard.x, starboard.y, starboard.z, 0.06);
+    this.stern = addBulb(g, 0xffffff, stern.x, stern.y, stern.z, 0.07);
     this.cockpitLight = new THREE.PointLight(0xffd69a, 0, 13, 2); this.cockpitLight.position.set(0, 1.7, 0.8); g.add(this.cockpitLight);
     const spot = new THREE.SpotLight(0xfff3dc, 0, 110, 0.31, 0.58, 2); spot.position.set(0, 1.15, -1.45);
     const target = new THREE.Object3D(); target.position.set(0, 0.1, -55); spot.target = target; g.add(spot, target); this.spotlight = spot; this.spotOn = false;
@@ -236,6 +239,13 @@ export class Environment {
     if (e.repeat) return;
     if (e.code === 'KeyL' && this.game.playing && !this.game.paused && !this.game.menuOpen && !this.game.mapOpen) {
       this.spotOn = !this.spotOn; this.game.toast(`Spotlight ${this.spotOn ? 'on' : 'off'}`, this.spotOn ? 'L sweeps the channel ahead' : '', 1.3);
+    }
+    if (e.code === 'KeyH' && this.hornCooldown <= 0 && this.game.playing && !this.game.paused && !this.game.menuOpen && !this.game.mapOpen) {
+      const prolonged = this.restrictedVisibility > 0.45;
+      if (prolonged) { this.audio.fogHorn(0.34); this.game.toast('Prolonged blast', 'Restricted visibility · four to six seconds', 2.2); }
+      else this.audio.horn(0.38);
+      this.hornCooldown = prolonged ? 5.1 : 0.65;
+      this.traffic?.signalPlayerHorn(prolonged);
     }
     // Test hooks are keys as well as methods on window.__dbg.environment. They make every extreme state inspectable.
     if (import.meta.env.DEV && e.code === 'F7') { e.preventDefault(); this.setHour((this.hour + 2) % 24); }
@@ -376,6 +386,7 @@ export class Environment {
   }
 
   update(dt, realTime, camera, paused = false) {
+    this.hornCooldown = Math.max(0, this.hornCooldown - dt);
     const step = paused ? 0 : dt;
     this.minutes += step * this.minutesPerSecond;
     if (step) {
@@ -463,7 +474,13 @@ export class Environment {
 
     this.precip.update(dt, camera, this.windDir, V.rain, V.hail, this.waterLevel);
     if (this.audio && this.audio.weather) this.audio.weather(V.wind * this.gust, V.rain, night, V.storm);
-    this.nav.visible = night > 0.03 || this.restrictedVisibility > 0.25 || this.spotOn; this.cockpitLight.intensity = night * 15; this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) : 0;
+    this.nav.visible = night > 0.03 || this.restrictedVisibility > 0.25 || this.spotOn;
+    if (this.nav.visible) {
+      const dx = camera.x - this.phys.pos.x, dz = camera.z - this.phys.pos.y, c = Math.cos(this.phys.heading), s = Math.sin(this.phys.heading);
+      const visible = navigationLightVisibility(dx * c - dz * s, dx * s + dz * c, this.navVisibility);
+      this.port.visible = visible.port; this.starboard.visible = visible.starboard; this.stern.visible = visible.stern;
+    }
+    this.cockpitLight.intensity = night * 15; this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) : 0;
     this.updateSettlementLights(dt, night);
 
     if (this.alertT > 0) { this.alertT -= dt; if (this.alertT <= 0 && this.alertEl) this.alertEl.classList.remove('on'); }

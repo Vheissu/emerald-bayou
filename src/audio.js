@@ -208,19 +208,26 @@ export class EngineAudio {
     const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol, now + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
     src.connect(bp); bp.connect(g); g.connect(destination); this.releaseSpatialDestination(destination, src); src.start(now); src.stop(now + 0.8);
   }
-  hornBlast(vol, duration, when = 0) {
-    if (!this.ctx || vol < 0.02) return; const ctx = this.ctx, now = ctx.currentTime + when;
+  hornBlast(vol, duration, when = 0, destination = this.sfx) {
+    if (!this.ctx || vol < 0.02) return null; const ctx = this.ctx, now = ctx.currentTime + when; let tail = null;
     for (const f of [311, 392]) { const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = f; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400;
       const release = Math.min(0.4, duration * 0.28), hold = duration - release;
       const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol * 0.5, now + 0.03); g.gain.setValueAtTime(vol * 0.5, now + hold); g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-      o.connect(lp); lp.connect(g); g.connect(this.sfx); o.start(now); o.stop(now + duration + 0.05); }
+      o.connect(lp); lp.connect(g); g.connect(destination || this.sfx); o.start(now); o.stop(now + duration + 0.05); tail = o; }
+    return tail;
+  }
+  hornPattern(blasts, vol, x, z) {
+    if (!this.ctx || vol < 0.02) return null;
+    const destination = this.spatialDestination(x, z, 0.92); let tail = null;
+    for (const blast of blasts) tail = this.hornBlast(vol * blast[2], blast[0], blast[1], destination) || tail;
+    this.releaseSpatialDestination(destination, tail); return tail;
   }
   // another boat's close-quarters warning: two-tone, a touch flat
-  horn(vol = 0.3) { this.hornBlast(vol, 0.55); }
+  horn(vol = 0.3, x, z) { return this.hornPattern([[0.55, 0, 1]], vol, x, z); }
   // Rule 32 prolonged blast: held inside the four-to-six-second window.
-  fogHorn(vol = 0.3) { this.hornBlast(vol, 4.5); }
+  fogHorn(vol = 0.3, x, z) { return this.hornPattern([[4.5, 0, 1]], vol, x, z); }
   // Rule 35(c): a vessel engaged in fishing sounds one prolonged followed by two short blasts.
-  fogHornFishing(vol = 0.3) { this.hornBlast(vol, 4.5); this.hornBlast(vol * 0.9, 1, 5.5); this.hornBlast(vol * 0.9, 1, 7.5); }
+  fogHornFishing(vol = 0.3, x, z) { return this.hornPattern([[4.5, 0, 1], [1, 5.5, 0.9], [1, 7.5, 0.9]], vol, x, z); }
   // osprey: a run of thin descending whistles
   osprey(vol = 0.18, x, z) {
     if (!this.ctx || vol < 0.02) return; const ctx = this.ctx;

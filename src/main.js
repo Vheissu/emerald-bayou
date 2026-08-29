@@ -213,7 +213,7 @@ async function init() {
   game.paused = true; // loading and the title screen are presentation states, not unobserved play time
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
-  const life = new Life({ terrain, scene, water, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
+  const life = new Life({ terrain, scene, water, camera, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
   const playerWater = (x, z, t) => water.waveHeight(x, z, t) + life.traffic.wakeHeightAt(x, z, t);
   world.fx = { plume, spray, audio, fish: life.fish, playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) }; world.onShot = (x, z) => { waders.flushNear && waders.flushNear(x, z, 140); };
   birds.audio = audio; gators.audio = audio;
@@ -222,7 +222,7 @@ async function init() {
   gators.onSplash = (x, z, sc) => { for (let i = 0; i < 14; i++) plume.emit(x + jitter() * 1.2, 0.1, z + jitter() * 1.2, jitter() * 2, 0.8 + Math.random() * 1.8, jitter() * 2, 0.2 + Math.random() * 0.25, 1.0, 0.6 + Math.random() * 0.4, 0.3); for (let i = 0; i < 40; i++) spray.emit(x + jitter() * 1.2, 0.05, z + jitter() * 1.2, jitter() * 3, 1 + Math.random() * 2.5, jitter() * 3, 0.015 + Math.random() * 0.03, 0.4 + Math.random() * 0.4, 0.6); audio.splash(0.5 * sc); };
   waders.onFlush = (w, d) => { game.bounties.event('flush', 1); if (Math.random() < 0.5) audio.squawk(0.25 * Math.max(0, 1 - d / 40), w.x, w.z); };
   const environment = new Environment({ scene, fxScene, camera, terrain, world, water, sky, sun, hemi, pipeline, wind, boat: boat.group, audio, game, phys, sunDir: SUN_DIR, effectBudget: startup.effectBudget });
-  life.traffic.environment = environment;
+  life.traffic.environment = environment; environment.traffic = life.traffic;
   const currents = new CurrentField({ fxScene, terrain, water, environment, phys, game });
   environment.currentField = currents; life.currents = currents; life.fx.currents = currents; world.currents = currents; world.fx.currents = currents; skiff.currents = currents;
   const reputation = new Reputation({ game, environment, audio }); game.reputation = reputation;

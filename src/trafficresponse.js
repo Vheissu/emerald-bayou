@@ -17,3 +17,20 @@ export function pursuitYieldSpeedScale(strength, kind = 'john') {
   const yieldStrength = clamp(Number(strength) || 0);
   return 1 - yieldStrength * (kind === 'canoe' ? 0.86 : 0.58);
 }
+
+export function hornYieldStrength(distance, aheadDot, closingSpeed, kind = 'john', prolonged = false) {
+  const d = Number(distance), ahead = Number(aheadDot), closing = Math.max(0, Number(closingSpeed) || 0);
+  if (!Number.isFinite(d) || d < 0 || !Number.isFinite(ahead)) return 0;
+  const reach = prolonged ? (kind === 'canoe' ? 260 : 230) : (kind === 'canoe' ? 200 : 175);
+  if (d >= reach || ahead <= -0.15) return 0;
+  const proximity = clamp((reach - d) / (reach * 0.72));
+  const bowSector = clamp((ahead + 0.15) / 1.15);
+  const closingUrgency = clamp((closing - 0.8) / 13);
+  const vulnerability = kind === 'canoe' ? 1.14 : 1;
+  return clamp(proximity * bowSector * (0.22 + closingUrgency * 0.62) * vulnerability);
+}
+
+export function hornYieldSpeedScale(strength, kind = 'john') {
+  const yieldStrength = clamp(Number(strength) || 0);
+  return 1 - yieldStrength * (kind === 'canoe' ? 0.72 : 0.46);
+}
