@@ -236,6 +236,7 @@ async function init() {
       manatees: debugTreeResources(manatees.list.map(m => m.mesh)),
       gators: debugTreeResources(gators.list.map(g => g.mesh)),
     },
+    stormRecovery: { sites: aftermath.sites.length, rigs: aftermath.rigs.size, disposed: { ...aftermath.disposedResources } },
   }) : null;
   window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, ...pipeline.memoryStats() }) };
 

@@ -4,6 +4,7 @@ import { animatePerson, cooler, person, wave } from './folk.js';
 import { mulberry32 } from './noise.js';
 import { regionAt } from './regions.js';
 import { WORLD_HALF } from './heightfield.js';
+import { cachedResource, sharedResource } from './cache.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -12,19 +13,60 @@ const fmtDist = metres => metres < 305 ? `${Math.max(1, Math.round(metres * 3.28
 const OPEN_STAGES = new Set(['open', 'tow', 'marked']);
 const SURVIVOR_STAGES = new Set(['waiting', 'aboard', 'reported']);
 
+// A storm can leave several recovery sites alive for an in-game day. Their identical debris parts are immutable,
+// so keep one GPU/CPU resource for every shape and surface instead of rebuilding a full set for every site.
+const RECOVERY_GEO = Object.freeze({
+  trunk: sharedResource(new THREE.CylinderGeometry(0.2, 0.36, 1, 9)),
+  root: sharedResource(new THREE.IcosahedronGeometry(0.72, 1)),
+  branch: sharedResource(new THREE.CylinderGeometry(0.045, 0.11, 2.7, 7)),
+  branchEnd: sharedResource(new THREE.CylinderGeometry(0.035, 0.07, 0.52, 7)),
+  sheetWide: sharedResource(new THREE.BoxGeometry(2.6, 0.07, 0.82)),
+  sheetNarrow: sharedResource(new THREE.BoxGeometry(2.25, 0.07, 0.82)),
+  buoy: sharedResource(new THREE.SphereGeometry(0.2, 10, 7)),
+  pole: sharedResource(new THREE.CylinderGeometry(0.025, 0.025, 0.72, 7)),
+  flag: sharedResource(new THREE.PlaneGeometry(0.32, 0.2)),
+  signal: sharedResource(new THREE.SphereGeometry(0.075, 8, 6)),
+});
+const RECOVERY_MAT = Object.freeze({
+  bark: sharedResource(new THREE.MeshStandardMaterial({ color: 0x59402d, roughness: 1 })),
+  broken: sharedResource(new THREE.MeshStandardMaterial({ color: 0x8c6e4e, roughness: 0.94 })),
+  tin: sharedResource(new THREE.MeshStandardMaterial({ color: 0x667679, roughness: 0.46, metalness: 0.58 })),
+  buoy: sharedResource(new THREE.MeshStandardMaterial({ color: 0xf05b24, roughness: 0.62 })),
+  pole: sharedResource(new THREE.MeshStandardMaterial({ color: 0x353b39, roughness: 0.7, metalness: 0.35 })),
+  rope: sharedResource(new THREE.LineBasicMaterial({ color: 0xc6a26d, transparent: true, opacity: 0.9, depthWrite: false })),
+});
+const SIGNAL_MATERIALS = new Map();
+
 function recolor(group, color) {
-  let done = false;
+  let owned = null;
   group.traverse(o => {
-    if (done || !o.isMesh || !o.material?.color || o.material.metalness < 0.45) return;
-    o.material = o.material.clone(); o.material.color.setHex(color); done = true;
+    if (owned || !o.isMesh || !o.material?.color || o.material.metalness < 0.45) return;
+    owned = o.material.clone(); owned.color.setHex(color);
+    owned.userData = { ...(owned.userData || {}), aftermathOwned: true };
+    delete owned.userData.sharedResource;
+    o.material = owned;
   });
+  return owned;
 }
 
 function signal(parent, color, x = 0, y = 1, z = 0, range = 42) {
   const group = new THREE.Group(); group.position.set(x, y, z); parent.add(group);
-  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6), new THREE.MeshBasicMaterial({ color, toneMapped: false }));
+  const material = cachedResource(SIGNAL_MATERIALS, color, () => new THREE.MeshBasicMaterial({ color, toneMapped: false }));
+  const bulb = new THREE.Mesh(RECOVERY_GEO.signal, material);
   const light = new THREE.PointLight(color, 0, range, 2); group.add(bulb, light);
   return { group, bulb, light };
+}
+
+function disposeRig(rig) {
+  if (!rig) return { geometries: 0, materials: 0 };
+  // A rescued passenger can be parented to the player or receiving boat, outside the rig's original root.
+  rig.survivor?.removeFromParent(); rig.bag?.removeFromParent();
+  const roots = rig.group ? [rig.group, rig.rope, rig.workboat] : [rig.root, rig.receiver];
+  for (const root of roots) root?.removeFromParent();
+  const geometries = new Set(rig.ownedGeometries || []), materials = new Set(rig.ownedMaterials || []);
+  for (const geometry of geometries) geometry?.dispose?.();
+  for (const material of materials) material?.dispose?.();
+  return { geometries: geometries.size, materials: materials.size };
 }
 
 function makeReceiverAgent(mesh) {
@@ -37,44 +79,39 @@ function makeReceiverAgent(mesh) {
 
 function makeBlockageRig(scene, site, onHit) {
   const group = new THREE.Group(); group.name = `storm blockage ${site.id}`;
-  const bark = new THREE.MeshStandardMaterial({ color: 0x59402d, roughness: 1 });
-  const broken = new THREE.MeshStandardMaterial({ color: 0x8c6e4e, roughness: 0.94 });
-  const tin = new THREE.MeshStandardMaterial({ color: 0x667679, roughness: 0.46, metalness: 0.58 });
   const len = site.length;
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.36, len, 9), bark); trunk.rotation.z = Math.PI / 2; trunk.position.y = 0.12; group.add(trunk);
-  const root = new THREE.Mesh(new THREE.IcosahedronGeometry(0.72, 1), bark); root.scale.set(0.8, 0.55, 1.1); root.position.set(-len * 0.48, 0.05, 0); group.add(root);
+  const trunk = new THREE.Mesh(RECOVERY_GEO.trunk, RECOVERY_MAT.bark); trunk.scale.y = len; trunk.rotation.z = Math.PI / 2; trunk.position.y = 0.12; group.add(trunk);
+  const root = new THREE.Mesh(RECOVERY_GEO.root, RECOVERY_MAT.bark); root.scale.set(0.8, 0.55, 1.1); root.position.set(-len * 0.48, 0.05, 0); group.add(root);
   for (const [x, z, ry] of [[-0.28, 0.8, -0.66], [0.12, -0.7, 0.72], [0.34, 0.58, -0.58]]) {
-    const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.11, 2.7, 7), bark);
+    const branch = new THREE.Mesh(RECOVERY_GEO.branch, RECOVERY_MAT.bark);
     branch.position.set(x * len, 0.15, z); branch.rotation.set(0.2, 0, ry); group.add(branch);
-    const end = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.07, 0.52, 7), broken); end.position.set(0, 1.52, 0); branch.add(end);
+    const end = new THREE.Mesh(RECOVERY_GEO.branchEnd, RECOVERY_MAT.broken); end.position.set(0, 1.52, 0); branch.add(end);
   }
   for (let i = 0; i < 2; i++) {
-    const sheet = new THREE.Mesh(new THREE.BoxGeometry(2.6 - i * 0.35, 0.07, 0.82), tin);
+    const sheet = new THREE.Mesh(i ? RECOVERY_GEO.sheetNarrow : RECOVERY_GEO.sheetWide, RECOVERY_MAT.tin);
     sheet.position.set((i - 0.5) * 2.2, 0.28, (i ? -1 : 1) * 0.62); sheet.rotation.set(0.08, i ? -0.38 : 0.26, i ? -0.06 : 0.04); group.add(sheet);
   }
   const strobe = signal(group, 0xff6a25, 0, 1.12, 0, 54);
-  const buoyMat = new THREE.MeshStandardMaterial({ color: 0xf05b24, roughness: 0.62 });
-  const poleMat = new THREE.MeshStandardMaterial({ color: 0x353b39, roughness: 0.7, metalness: 0.35 });
   const buoys = [];
   for (const x of [-len * 0.46, len * 0.46]) {
     const buoy = new THREE.Group(); buoy.position.set(x, 0.12, 0.75);
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 7), buoyMat); body.scale.y = 0.72; buoy.add(body);
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.72, 7), poleMat); pole.position.y = 0.38; buoy.add(pole);
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.2), buoyMat); flag.position.set(0.16, 0.65, 0); buoy.add(flag);
+    const body = new THREE.Mesh(RECOVERY_GEO.buoy, RECOVERY_MAT.buoy); body.scale.y = 0.72; buoy.add(body);
+    const pole = new THREE.Mesh(RECOVERY_GEO.pole, RECOVERY_MAT.pole); pole.position.y = 0.38; buoy.add(pole);
+    const flag = new THREE.Mesh(RECOVERY_GEO.flag, RECOVERY_MAT.buoy); flag.position.set(0.16, 0.65, 0); buoy.add(flag);
     buoy.visible = false; group.add(buoy); buoys.push(buoy);
   }
   group.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   scene.add(group);
 
   const ropeGeo = new THREE.BufferGeometry(); ropeGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(16 * 3), 3));
-  const rope = new THREE.Line(ropeGeo, new THREE.LineBasicMaterial({ color: 0xc6a26d, transparent: true, opacity: 0.9, depthWrite: false }));
+  const rope = new THREE.Line(ropeGeo, RECOVERY_MAT.rope);
   rope.frustumCulled = false; rope.visible = false; scene.add(rope);
-  const workboat = buildSkiff({ crew: true }); workboat.name = `FWC maintenance skiff ${site.id}`; recolor(workboat, 0x315e4d);
+  const workboat = buildSkiff({ crew: true }); workboat.name = `FWC maintenance skiff ${site.id}`; const workboatPaint = recolor(workboat, 0x315e4d);
   const workLamp = signal(workboat, 0x2c83ff, 0, 1.36, -0.2, 62); workboat.visible = false; scene.add(workboat);
   const agent = makeReceiverAgent(workboat); agent.role = 'storm-maintenance';
   const obstacle = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.75, tag: 'storm-debris', onHit };
   const workObstacle = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'FWC maintenance skiff' };
-  return { group, rope, strobe, buoys, obstacle, workboat, workLamp, agent, workObstacle };
+  return { group, rope, strobe, buoys, obstacle, workboat, workLamp, agent, workObstacle, ownedGeometries: [ropeGeo], ownedMaterials: workboatPaint ? [workboatPaint] : [] };
 }
 
 function makeSurvivorRig(scene, site) {
@@ -87,12 +124,12 @@ function makeSurvivorRig(scene, site) {
   root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   scene.add(root);
 
-  const receiver = buildSkiff({ crew: true }); receiver.name = `FWC recovery skiff ${site.id}`; recolor(receiver, 0x315e4d);
+  const receiver = buildSkiff({ crew: true }); receiver.name = `FWC recovery skiff ${site.id}`; const receiverPaint = recolor(receiver, 0x315e4d);
   const receiverLamp = signal(receiver, 0x2c83ff, 0, 1.36, -0.2, 62); receiver.visible = false; scene.add(receiver);
   const agent = makeReceiverAgent(receiver);
   const wreckObstacle = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'swamped skiff' };
   const receiverObstacle = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'FWC recovery skiff' };
-  return { root, skiff, survivor, bag, strobe, receiver, receiverLamp, agent, wreckObstacle, receiverObstacle };
+  return { root, skiff, survivor, bag, strobe, receiver, receiverLamp, agent, wreckObstacle, receiverObstacle, ownedGeometries: [], ownedMaterials: receiverPaint ? [receiverPaint] : [] };
 }
 
 function sanitizeSite(raw) {
@@ -138,6 +175,7 @@ export class StormRecovery {
     this.rigs = new Map(); this.obs = []; this.phys.addObs('storm-recovery', this.obs);
     this.enabled = false; this.interact = false; this.alternate = false; this.prompting = false; this.interactiveNear = null;
     this.towSite = null; this.passengerSite = null; this.persistT = 6; this.weatherPersistT = 12; this.hitCd = 0; this.cleanupT = 20;
+    this.disposedResources = { geometries: 0, materials: 0 };
     this.obLevel = 0; this.obPitch = 0.96; this._f = new THREE.Vector2(); this._flow = new THREE.Vector2();
     for (const site of this.sites) this.buildRig(site);
     this.restoreActiveStates();
@@ -155,6 +193,13 @@ export class StormRecovery {
       ? makeBlockageRig(this.scene, site, (into, nx, nz) => this.hitBlockage(site, into, nx, nz))
       : makeSurvivorRig(this.scene, site);
     this.rigs.set(site.id, rig); return rig;
+  }
+
+  releaseRig(rig) {
+    const released = disposeRig(rig);
+    this.disposedResources.geometries += released.geometries;
+    this.disposedResources.materials += released.materials;
+    return released;
   }
 
   restoreActiveStates() {
@@ -600,8 +645,7 @@ export class StormRecovery {
       const resolved = ['cleared', 'rescued'].includes(site.stage), age = this.environment.minutes - site.resolvedMinutes;
       if (!resolved || age < 1440) { keep.push(site); continue; }
       const rig = this.rigs.get(site.id);
-      if (site.type === 'blockage') { this.scene.remove(rig.group, rig.rope, rig.workboat); rig.group.traverse(o => o.geometry?.dispose?.()); rig.workboat.traverse(o => o.geometry?.dispose?.()); rig.rope.geometry.dispose(); }
-      else { this.scene.remove(rig.root, rig.receiver); rig.root.traverse(o => o.geometry?.dispose?.()); rig.receiver.traverse(o => o.geometry?.dispose?.()); }
+      this.releaseRig(rig);
       this.rigs.delete(site.id);
     }
     if (keep.length !== this.sites.length) { this.sites = keep; this.state.sites = keep; this.persist(); }
@@ -642,10 +686,7 @@ export class StormRecovery {
   resetDebug() {
     if (this.towSite) { this.rigs.get(this.towSite.id).rope.visible = false; this.towSite = null; this.phys.towDrag = 0; }
     if (this.passengerSite) { this.passengerSite = null; this.phys.loaded = 0; }
-    for (const rig of this.rigs.values()) {
-      if (rig.group) this.scene.remove(rig.group, rig.rope, rig.workboat);
-      else { rig.survivor.removeFromParent(); rig.bag.removeFromParent(); this.scene.remove(rig.root, rig.receiver); }
-    }
+    for (const rig of this.rigs.values()) this.releaseRig(rig);
     this.sites = []; this.rigs.clear(); this.obs.length = 0; this.state.sites = this.sites; this.state.episode = null; this.state.pendingPeak = 0; this.state.lastBatchMinutes = 0; this.state.lastBatchAt = 0; this.state.nextId = 1;
     this.state.stats = { generated: 0, cleared: 0, rescued: 0, marked: 0, reported: 0 };
     this.clearPrompt(); if (this.game.wpTarget?.recovery) this.game.wpTarget = null; this.persist();
