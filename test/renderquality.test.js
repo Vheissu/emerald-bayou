@@ -62,6 +62,10 @@ test('reserves procedural precipitation impacts for balanced and cinematic water
   assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).precipitationRipples), [0, 0, 0.62, 1]);
 });
 
+test('scales the nocturnal point draw down to zero on fallback hardware', () => {
+  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).fireflyPoints), [0, 72, 153, 243]);
+});
+
 test('passes rain and hail conditions into the existing water surface uniforms', () => {
   const water = Object.create(Water.prototype);
   Object.assign(water, { level: 0, seaState: 0, windAngle: 0, rain: 0, hail: 0, windSpeed: 0 });

@@ -1,7 +1,7 @@
 const clampAudio = value => Math.max(0, Math.min(1, Number(value) || 0));
 
 export class EngineAudio {
-  constructor() { this.ctx = null; this.windLevel = 0; this.rainLevel = 0; this.nightLevel = 0; this.stormLevel = 0; }
+  constructor() { this.ctx = null; this.windLevel = 0; this.rainLevel = 0; this.nightLevel = 0; this.stormLevel = 0; this.nightLifeLevel = 0; }
   start() {
     if (this.ctx) return;
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -108,6 +108,7 @@ export class EngineAudio {
   }
   frog(vol = 0.12) { this.tone(86, 0.16, vol, 'sine'); this.tone(72, 0.22, vol * 0.8, 'sine', 0.12); }
   weather(wind = 0, rain = 0, night = 0, storm = 0) { this.windLevel = wind; this.rainLevel = rain; this.nightLevel = night; this.stormLevel = storm; }
+  nightLife(level = 0) { this.nightLifeLevel = clampAudio(level); }
   // ---- the bayou's own voices ----
   // a mullet hitting the water: a short bright slap
   plip(vol = 0.4) {
@@ -256,9 +257,9 @@ export class EngineAudio {
     this.engGain.gain.setTargetAtTime(rpm > 0.01 ? 0.04 + rpm * 0.18 : 0, now, 0.05);
     this.noiseGain.gain.setTargetAtTime(rpm * rpm * 0.35, now, 0.08);
     this.noiseBP.frequency.setTargetAtTime(500 + rpm * 1400, now, 0.08);
-    const rain = this.rainLevel || 0, storm = this.stormLevel || 0, night = this.nightLevel || 0, wind = this.windLevel || 0;
+    const rain = this.rainLevel || 0, storm = this.stormLevel || 0, night = this.nightLevel || 0, wind = this.windLevel || 0, nightLife = this.nightLifeLevel || 0;
     this.ambGain.gain.setTargetAtTime((0.018 + night * 0.022) * (1 - rain * 0.75), now, 0.8);
-    this.hg.gain.setTargetAtTime((0.006 + night * 0.012 + 0.004 * Math.sin(t * 0.7)) * (1 - rain * 0.9), now, 0.5);
+    this.hg.gain.setTargetAtTime((0.006 + night * 0.009 + nightLife * 0.017 + 0.004 * Math.sin(t * 0.7)) * (1 - rain * 0.9), now, 0.5);
     this.windGain.gain.setTargetAtTime(Math.min(0.28, Math.pow(Math.max(0, wind) / 36, 0.78) * 0.26), now, 0.35);
     this.windBP.frequency.setTargetAtTime(260 + Math.min(900, wind * 22), now, 0.6);
     this.rainGain.gain.setTargetAtTime(Math.min(0.24, rain * (0.08 + storm * 0.16)), now, 0.25);

@@ -42,6 +42,7 @@ import { FieldDiscoveryDirector } from './discoveries.js';
 import { NavigationAids } from './navigationaids.js';
 import { DolphinPod } from './dolphins.js';
 import { Fishing } from './fishing.js';
+import { NocturnalWetland } from './nocturnal.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -249,6 +250,7 @@ async function init() {
   game.dolphins = dolphins;
   const fishing = new Fishing({ scene, boat: boat.group, terrain, world, water, phys, game, audio, environment, currents, regions, life });
   game.fishing = fishing;
+  const nocturnal = new NocturnalWetland({ scene, terrain, world, phys, environment, regions, audio, profile: renderProfile });
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
     const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
     const addMaterial = material => {
@@ -290,6 +292,7 @@ async function init() {
       fieldDiscoveries: discoveries.resourceStats(),
       navigationAids: navigationAids.resourceStats(),
       fishing: fishing.resourceStats(),
+      nocturnalWetland: nocturnal.resourceStats(),
       feedingActivity: ecology.feedingSnapshot(),
     },
     chart: worldMap.memoryStats(),
@@ -305,7 +308,7 @@ async function init() {
       },
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
@@ -363,7 +366,7 @@ async function init() {
   };
   let renderFrameNo = 0;
   const applyRenderQuality = profile => {
-    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile);
+    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); nocturnal.setQuality(profile);
     if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
       sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
       if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
@@ -592,6 +595,7 @@ async function init() {
     currents.update(dtRaw, time, started && !game.paused);
     hazards.update(dtRaw, time, started && !game.paused);
     aftermath.update(dtRaw, time, started && !game.paused && !fishing.blocking());
+    nocturnal.update(dtRaw, time, started && !game.paused);
     ecology.update(dtRaw, time, started && !game.paused);
     dolphins.update(dtRaw, time, started && !game.paused);
     incidents.update(dtRaw, time, started && !game.paused && !fishing.blocking() && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());

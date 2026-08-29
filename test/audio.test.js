@@ -36,3 +36,10 @@ test('fishing reel audio is lazy and reuses one graph while tension changes', ()
   audio.fishingReel(1, 0.9); audio.fishingReel(0, 0);
   assert.equal(audio.fishingReelGraph, graph); assert.deepEqual(ctx.counts, { oscillators: 1, gains: 1, filters: 1 });
 });
+
+test('night-life ambience changes the existing bed without allocating another graph', () => {
+  const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx;
+  audio.nightLife(2); assert.equal(audio.nightLifeLevel, 1);
+  audio.nightLife(-1); assert.equal(audio.nightLifeLevel, 0);
+  assert.deepEqual(ctx.counts, { oscillators: 0, gains: 0, filters: 0 });
+});

@@ -97,6 +97,10 @@ Rare field signs depend on the place and the water rather than a mission marker.
 
 On some calm nights, a plankton bloom reaches Mangrove Reach. The water stays black until something moves through it: hull wakes, fish, paddles and splashes leave blue fire behind them. The bloom runs through the existing wake and particle buffers, so it adds no extra scene assets.
 
+Calm banks now carry fireflies after sunset, with the thickest displays in cypress and mangrove water. Heavy rain and hard wind shut them down. A fast engine thins the flashes close to the hull, while the bow spotlight washes out the insects caught in its cone. Each bank is seeded from its world cell, so the same lights remain in place as the boat idles past. The display is one textureless point draw capped at 243 insects; Performance and Balanced draw smaller prefixes, and Fallback skips it.
+
+The timing and wet-bank placement draw on [University of Florida field notes](https://entnemdept.ufl.edu/lloyd/firefly/ffcomp1-1.pdf). The mangrove bias follows the documented habitat of the [Florida intertidal firefly](https://xerces.org/press/first-conservation-status-assessments-published-for-north-american-fireflies), and the weather and light response follows [National Park Service viewing guidance](https://home.nps.gov/cong/fireflies.htm).
+
 People are jointed figures driven by a pose target system rather than baked animation, so a man on a dock will track you as you go past, drink his beer, check his rod, cast, and reel in a fish. Boat ramps run a 150 second cycle where a truck backs down the slab, floats a boat off the trailer, motors out and comes back to winch it on.
 
 <img src="docs/screenshots/02-mission.jpg" alt="A story job in progress" width="100%">
@@ -126,6 +130,7 @@ src/
   discoveries.js   tide, time and region-driven field observations
   navigationaids.js seeded channel markers, light failures and reports
   fishing.js       boat-bound fishing, habitat, line tension and catch log
+  nocturnal.js     seeded bank fireflies and night disturbance response
   encounters.js    rescues, patrols, races, contraband and wildlife calls
   law.js           wanted attention and pursuit state
   story.js         the channel 68 arc
@@ -151,6 +156,8 @@ __dbg.ecology.setBioluminescence(1, true) // force the disturbed-water glow
 __dbg.discoveries.start('roseate-roost', true, true) // force a nearby field sign
 __dbg.navigationAids.resourceStats()     // active aids, draw calls, faults and reports
 __dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fish budget
+__dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspection
+__dbg.nocturnal.resourceStats()           // point count, draw count and geometry bytes
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera
 __dbg.terrain.hf.computeBase(x, z)        // { h, s, lake, prairie, hammock }
 ```
