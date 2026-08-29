@@ -304,6 +304,9 @@ export function loadDriver(group, { scale = 0.65, position = [0, 1.7, 0.4], yaw 
 // ---------------- physics ----------------
 const DRAFT = 0.32; // hull bottom sits this far below the hull reference point
 const G = 9.8;
+const HULL_COLLISION_CIRCLES = [0, -1.7, 1.2, 0, 0, 1.3, 0, 1.6, 1.25];
+const hullHeightAt = (terrain, px, pz, right, forward, ox, oz) => terrain.heightAt(px + right.x * ox + forward.x * (-oz), pz + right.y * ox + forward.y * (-oz));
+const springStep = (value, target, velocity, stiffness, damping, dt) => velocity + ((target - value) * stiffness - velocity * damping) * dt;
 
 export class AirboatPhysics {
   constructor(terrain, x = 0, z = 60, heading = 0) {
@@ -337,7 +340,7 @@ export class AirboatPhysics {
     this.topSpeed = 0;
     this.windHeel = 0; this.apparentWind = 0; this.crosswind = 0;
     this.current = new THREE.Vector2(); this.waterSpeed = 0;
-    this._g = new THREE.Vector2(); this._n = new THREE.Vector2();
+    this._g = new THREE.Vector2(); this._n = new THREE.Vector2(); this._f = new THREE.Vector2(); this._r = new THREE.Vector2();
   }
   forward(out = new THREE.Vector2()) { return out.set(-Math.sin(this.heading), -Math.cos(this.heading)); }
   right(out = new THREE.Vector2()) { return out.set(-Math.cos(this.heading), Math.sin(this.heading)); }
@@ -365,6 +368,35 @@ export class AirboatPhysics {
     }
     return out;
   }
+  resolveCircle(cx, cz, radius, obstacle, forward) {
+    for (let i = 0; i < HULL_COLLISION_CIRCLES.length; i += 3) {
+      const ox = HULL_COLLISION_CIRCLES[i], oz = HULL_COLLISION_CIRCLES[i + 1], circleRadius = HULL_COLLISION_CIRCLES[i + 2];
+      const hx = this.pos.x + forward.x * (-oz) + this._r.x * ox, hz = this.pos.y + forward.y * (-oz) + this._r.y * ox;
+      const dx = hx - cx, dz = hz - cz, distance = Math.hypot(dx, dz), combinedRadius = radius + circleRadius;
+      if (distance >= combinedRadius) continue;
+      const nx = dx / (distance || 1), nz = dz / (distance || 1), penetration = combinedRadius - distance;
+      this.pos.x += nx * penetration; this.pos.y += nz * penetration;
+      const into = this.vel.x * nx + this.vel.y * nz;
+      if (into >= 0) continue;
+      this.vel.x -= into * nx * 1.35; this.vel.y -= into * nz * 1.35;
+      if (-into >= this.hit) { this.hit = -into; this.hitNormal.set(nx, nz); this.hitTag = obstacle && obstacle.tag || ''; this.hitObj = obstacle; }
+      if (obstacle && obstacle.onHit) obstacle.onHit(-into, nx, nz, this);
+      // Glancing contact turns the hull about the point that struck the obstacle.
+      const lx = hx - this.pos.x, lz = hz - this.pos.y;
+      this.angVel += (lx * (-into * nz) - lz * (-into * nx)) * 0.12;
+      this.vel.multiplyScalar(0.82);
+    }
+  }
+  resolveObstacle(obstacle, forward) {
+    let cx = obstacle.x, cz = obstacle.z;
+    if (obstacle.ax !== undefined) {
+      const abx = obstacle.bx - obstacle.ax, abz = obstacle.bz - obstacle.az, lengthSq = abx * abx + abz * abz;
+      let along = ((this.pos.x - obstacle.ax) * abx + (this.pos.y - obstacle.az) * abz) / (lengthSq || 1);
+      along = Math.max(0, Math.min(1, along)); cx = obstacle.ax + abx * along; cz = obstacle.az + abz * along;
+    }
+    if (Math.abs(cx - this.pos.x) > 12 || Math.abs(cz - this.pos.y) > 12) return;
+    this.resolveCircle(cx, cz, obstacle.r, obstacle, forward);
+  }
   reset(x, z, heading = this.heading) {
     this.pos.set(x, z); this.vel.set(0, 0); this.heading = heading; this.angVel = 0; this.y = 0; this.vy = 0;
     this.pitch = this.roll = this.pitchVel = this.rollVel = 0; this.prevFloor = null; this.airTime = 0; this.airPeak = 0; this.lastFloat.set(x, z);
@@ -383,15 +415,15 @@ export class AirboatPhysics {
     const rpmTarget = powerScale > 0.01 ? (0.18 + Math.max(0, this.throttle) * 0.82) * Math.max(0.28, powerScale) : 0;
     this.rpm += (rpmTarget - this.rpm) * (1 - Math.exp(-dt * 2.5));
 
-    const fwd = this.forward(), rgt = this.right();
+    const fwd = this.forward(this._f), rgt = this.right(this._r);
     const massF = 1 + this.loaded * 0.18 + (this.damageLoad || 0);
     this.hit = 0; this.hitTag = ''; this.hitObj = null;
 
     // ---- support surfaces under the hull ----
     const px = this.pos.x, pz = this.pos.y;
-    const hAt = (ox, oz) => T.heightAt(px + rgt.x * ox + fwd.x * (-oz), pz + rgt.y * ox + fwd.y * (-oz));
-    const hC = T.heightAt(px, pz), hBow = hAt(0, -2.6), hStern = hAt(0, 2.3);
-    const hL = (hAt(-1.1, -1.0) + hAt(-1.1, 1.6)) * 0.5, hR = (hAt(1.1, -1.0) + hAt(1.1, 1.6)) * 0.5;
+    const hC = T.heightAt(px, pz), hBow = hullHeightAt(T, px, pz, rgt, fwd, 0, -2.6), hStern = hullHeightAt(T, px, pz, rgt, fwd, 0, 2.3);
+    const hL = (hullHeightAt(T, px, pz, rgt, fwd, -1.1, -1.0) + hullHeightAt(T, px, pz, rgt, fwd, -1.1, 1.6)) * 0.5;
+    const hR = (hullHeightAt(T, px, pz, rgt, fwd, 1.1, -1.0) + hullHeightAt(T, px, pz, rgt, fwd, 1.1, 1.6)) * 0.5;
     const hMean = (hC * 2 + hBow + hStern + hL + hR) / 6;
     const floor = Math.max(hC, hMean) + DRAFT;
     const waterC = waveFn(px, pz, t);
@@ -492,47 +524,16 @@ export class AirboatPhysics {
     }
 
     // ---- obstacles: dock, tower, tree trunks ----
-    const circles = [[0, -1.7, 1.2], [0, 0, 1.3], [0, 1.6, 1.25]];
-    const resolve = (cx, cz, r, o = null) => {
-      for (const [ox, oz, cr] of circles) {
-        const hx = this.pos.x + fwd.x * (-oz), hz = this.pos.y + fwd.y * (-oz);
-        const dx = hx - cx, dz = hz - cz; const dd = Math.hypot(dx, dz); const R = r + cr;
-        if (dd >= R) continue;
-        const nx = dx / (dd || 1), nz = dz / (dd || 1);
-        const pen = R - dd;
-        this.pos.x += nx * pen; this.pos.y += nz * pen;
-        const into = this.vel.x * nx + this.vel.y * nz;
-        if (into < 0) {
-          this.vel.x -= into * nx * 1.35; this.vel.y -= into * nz * 1.35;
-          if (-into >= this.hit) { this.hit = -into; this.hitNormal.set(nx, nz); this.hitTag = o && o.tag || ''; this.hitObj = o; }
-          if (o && o.onHit) o.onHit(-into, nx, nz, this);
-          // glance: spin the hull about the contact point
-          const lx = hx - this.pos.x, lz = hz - this.pos.y;
-          this.angVel += (lx * (-into * nz) - lz * (-into * nx)) * 0.12;
-          this.vel.multiplyScalar(0.82);
-        }
-      }
-    };
-    const obs = (o) => {
-      let cx = o.x, cz = o.z;
-      if (o.ax !== undefined) { // capsule segment
-        const abx = o.bx - o.ax, abz = o.bz - o.az; const l2 = abx * abx + abz * abz;
-        let tt = ((this.pos.x - o.ax) * abx + (this.pos.y - o.az) * abz) / (l2 || 1); tt = Math.max(0, Math.min(1, tt));
-        cx = o.ax + abx * tt; cz = o.az + abz * tt;
-      }
-      if (Math.abs(cx - this.pos.x) > 12 || Math.abs(cz - this.pos.y) > 12) return;
-      resolve(cx, cz, o.r, o);
-    };
-    for (const o of this.obstacles) obs(o);
-    for (const l of this.dyn.values()) for (const o of l) obs(o);
+    for (const obstacle of this.obstacles) this.resolveObstacle(obstacle, fwd);
+    for (const list of this.dyn.values()) for (const obstacle of list) this.resolveObstacle(obstacle, fwd);
     const near = this.trunksNear(this.pos.x, this.pos.y, this.nearTrunks);
-    for (const tr of near) resolve(tr.x, tr.z, tr.r);
+    for (const trunk of near) this.resolveCircle(trunk.x, trunk.z, trunk.r, null, fwd);
     this.speed = this.vel.length();
     this.grounded = land;
 
     // ---- attitude ----
-    const hw = (ox, oz) => waveFn(px + rgt.x * ox + fwd.x * (-oz), pz + rgt.y * ox + fwd.y * (-oz), t);
-    const wb = hw(0, -2.5), ws = hw(0, 2.3), wl = hw(-1.1, 0), wr = hw(1.1, 0);
+    const wb = waveFn(px + fwd.x * 2.5, pz + fwd.y * 2.5, t), ws = waveFn(px - fwd.x * 2.3, pz - fwd.y * 2.3, t);
+    const wl = waveFn(px - rgt.x * 1.1, pz - rgt.y * 1.1, t), wr = waveFn(px + rgt.x * 1.1, pz + rgt.y * 1.1, t);
     const wavePitch = Math.atan2(wb - ws, 4.8) * wet, waveRoll = Math.atan2(wr - wl, 2.2) * wet;
     const landPitch = Math.atan2(hBow - hStern, 4.9) * land, landRoll = Math.atan2(hR - hL, 2.2) * land;
     const accelF = thrust + df;
@@ -547,7 +548,6 @@ export class AirboatPhysics {
       tgtPitch = accelF * 0.012 * wet + Math.min(vf, 14) * 0.0035 * wet + surfPitch + (this.damageTrim || 0) * wet;
       tgtRoll = -vl * 0.02 * wet + this.angVel * vf * 0.012 + waveRoll + landRoll + (this.damageList || 0) * wet + this.windHeel;
     }
-    const spring = (v, tgt, vel, k, d) => { const a = (tgt - v) * k - vel * d; return vel + a * dt; };
     if (this.takeoffFrame) {
       // the stern is still on the ramp as the bow clears it: a nose-up pop proportional to how hard the lip was rising
       this.pitchVel += Math.max(0, Math.min(0.8, this.lastSurfVel * 0.1));
@@ -557,14 +557,14 @@ export class AirboatPhysics {
     if (this.airborne) {
       const lean = wiped ? 0 : (input.pitch || 0);
       this.pitchVel += lean * 2.2 * dt;
-      this.pitchVel = spring(this.pitch, tgtPitch, this.pitchVel, 1.0, 1.8);
+      this.pitchVel = springStep(this.pitch, tgtPitch, this.pitchVel, 1.0, 1.8, dt);
       this.pitch += this.pitchVel * dt;
       this.pitch = Math.max(-0.8, Math.min(0.75, this.pitch));
-      this.rollVel = spring(this.roll, tgtRoll, this.rollVel, 6, 2.5); this.roll += this.rollVel * dt;
+      this.rollVel = springStep(this.roll, tgtRoll, this.rollVel, 6, 2.5, dt); this.roll += this.rollVel * dt;
     } else {
       const kP = this.landedFrame ? 14 : 30, dP = this.landedFrame ? 4 : 6;
-      this.pitchVel = spring(this.pitch, tgtPitch, this.pitchVel, kP, dP); this.pitch += this.pitchVel * dt;
-      this.rollVel = spring(this.roll, tgtRoll, this.rollVel, 28, 5.5); this.roll += this.rollVel * dt;
+      this.pitchVel = springStep(this.pitch, tgtPitch, this.pitchVel, kP, dP, dt); this.pitch += this.pitchVel * dt;
+      this.rollVel = springStep(this.roll, tgtRoll, this.rollVel, 28, 5.5, dt); this.roll += this.rollVel * dt;
     }
     // ---- landing quality: how the hull met the surface decides whether it skips, slams or stuffs the bow ----
     this.surfPitch = surfPitch;

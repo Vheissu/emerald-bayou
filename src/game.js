@@ -16,6 +16,8 @@ const esc = value => String(value ?? '').replace(/[&<>"]/g, character => ({ '&':
 // Florida measures in feet and miles: under about a fifth of a mile in feet, then miles
 export const fmtDist = (m) => m < 300 ? `${Math.round(m * FT / 10) * 10} ft` : m < 16090 ? `${(m * MI).toFixed(m < 3219 ? 2 : 1)} mi` : `${Math.round(m * MI)} mi`;
 const MEDALS = ['BRONZE', 'SILVER', 'GOLD'];
+export const HUD_REFRESH_HZ = 12;
+const HUD_REFRESH_INTERVAL = 1 / HUD_REFRESH_HZ;
 
 export class Game {
   constructor(o) {
@@ -37,7 +39,7 @@ export class Game {
     this.nearCamp = null; this.nearTraps = []; this.scanT = 0; this.dockCamp = null; this.mapOpen = false; this.map = null;
     this.noWakeScan = { key: '', label: '', kind: '', d: Infinity, radius: 0, limit: 8, priority: 0, animal: null };
     this.noWakeOverT = 0; this.noWakeCooldown = 0; this.manateeWarnCooldown = 0; this.noWakeHudKey = '';
-    this.toastT = 0; this.bountyT = 0; this.shake = 0; this.wpTarget = null; this.mapMarkers = []; this.mapMarkerPool = new MapMarkerPool();
+    this.toastT = 0; this.bountyT = 0; this.shake = 0; this.wpTarget = null; this.mapMarkers = []; this.mapMarkerPool = new MapMarkerPool(); this.hudT = 0;
     this.missions = buildMissions(this);
     this.jobs = this.buildJobs();
     this.bounties = new Bounties(this);
@@ -630,7 +632,7 @@ export class Game {
       }
     }
     this.collectMarkers(t);
-    this.renderHud(true);
+    this.refreshHud(dt);
   }
   // everything the radar shows: the objective (pinned to the edge when off the radar), job posts, camps, homesteads,
   // ramps, other boats, anglers, the bull, traps close by, home
@@ -657,6 +659,13 @@ export class Game {
       for (const b of this.life.traffic.boats) if (b.active) emitMapMarker(this, b.x, b.z, 'boat', b.profile?.color || (b.kind === 'canoe' ? 'rgba(225,205,150,0.95)' : b.kind === 'air' ? 'rgba(240,235,220,0.95)' : 'rgba(125,175,235,0.95)'), b.heading);
       for (const { a } of this.life.traffic.liveAnglers.values()) emitMapMarker(this, a.x, a.z, 'angler');
     }
+  }
+  refreshHud(dt) {
+    this.hudT += Number.isFinite(dt) ? Math.max(0, dt) : 0;
+    if (this.hudT + 1e-9 < HUD_REFRESH_INTERVAL) return false;
+    this.hudT %= HUD_REFRESH_INTERVAL;
+    this.renderHud(true);
+    return true;
   }
   renderHud(light = false) {
     const s = this.state, e = this.el;

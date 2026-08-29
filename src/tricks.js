@@ -9,6 +9,7 @@ export class Tricks {
     // Trunks belong to streamed terrain chunks. Weak keys let an evicted chunk and its collider objects be collected
     // instead of retaining every tree that has ever produced a near miss during a long crossing of the map.
     this.nearSeen = new WeakMap();
+    this._forward = { x: 0, y: 0, set(x, y) { this.x = x; this.y = y; return this; } };
     this.onBank = null; this.onEvent = null;
   }
   award(text, pts, kind = '', value = 0) {
@@ -31,8 +32,12 @@ export class Tricks {
   }
   update(dt, t) {
     const p = this.phys;
-    for (const e of this.events) e.t += dt;
-    this.events = this.events.filter(e => e.t < 2.4);
+    let liveEvents = 0;
+    for (const event of this.events) {
+      event.t += dt;
+      if (event.t < 2.4) this.events[liveEvents++] = event;
+    }
+    this.events.length = liveEvents;
     if (this.chain.length) { this.chainT -= dt; if (this.chainT <= 0) this.bank(); }
 
     // ---- air ----
@@ -62,7 +67,7 @@ export class Tricks {
     }
     // ---- drift ----
     if (!p.airborne && p.speed > 7) {
-      const fwd = p.forward(); const vAng = Math.atan2(-p.vel.x, -p.vel.y);
+      const fwd = p.forward(this._forward); const vAng = Math.atan2(-p.vel.x, -p.vel.y);
       let skid = Math.abs(((p.heading - vAng + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
       if (skid > Math.PI / 2) skid = Math.PI - skid; // reversing counts as skid too
       if (skid > 0.45) { this.driftT += dt; this.drift += dt * (35 + skid * 40) * (p.speed / 10); }
