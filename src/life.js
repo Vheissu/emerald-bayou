@@ -271,6 +271,14 @@ const GEAR_MATS = {
   red: new THREE.MeshBasicMaterial({ color: 0xff3028, toneMapped: false }), green: new THREE.MeshBasicMaterial({ color: 0x35ff86, toneMapped: false }),
   blue: new THREE.MeshBasicMaterial({ color: 0x2d82ff, toneMapped: false }), warm: new THREE.MeshBasicMaterial({ color: 0xffe7b3, toneMapped: false }),
 };
+const SEARCH_BEAM_GEO = new THREE.PlaneGeometry(1, 1);
+const searchBeamMaterial = color => new THREE.ShaderMaterial({
+  uniforms: { color: { value: new THREE.Color(color) } },
+  vertexShader: 'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+  fragmentShader: 'uniform vec3 color; varying vec2 vUv; void main(){float v=vUv.y;float width=mix(0.06,0.7,v);float side=1.0-smoothstep(width*0.54,width,abs(vUv.x-0.5)*2.0);float fade=smoothstep(0.0,0.09,v)*(1.0-smoothstep(0.68,1.0,v));gl_FragColor=vec4(color,side*fade*0.075);}',
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
+});
+const SEARCH_BEAM_MATS = { patrol: searchBeamMaterial(0xd9efff), courier: searchBeamMaterial(0xffe1b5) };
 const shiftOn = (hour, duty) => duty[0] < duty[1] ? hour >= duty[0] && hour < duty[1] : hour >= duty[0] || hour < duty[1];
 function wakeSampleAt(sx, sz, heading, speed, maxSpeed, scale, x, z, t) {
   const strength = Math.max(0, Math.min(1, (speed - 2.2) / Math.max(1, maxSpeed - 2.2))); if (strength <= 0) return 0;
@@ -315,7 +323,7 @@ export class Traffic {
     for (let i = 0; i < hulls.length; i++) {
       const b = hulls[i], profile = TRAFFIC_PROFILES[i];
       const record = this.state.operators[profile.id] ||= { shifts: 0, passes: 0, collisions: 0, lastMet: '', lastShift: '' };
-      Object.assign(b, { profile, record, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
+      Object.assign(b, { profile, record, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
       this.addWorkingDetails(b, i);
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
       b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
@@ -365,6 +373,13 @@ export class Traffic {
     const deckLight = new THREE.PointLight(0xffe0ad, 0, 11, 2); deckLight.position.set(0, deck + 0.72, 0.15); nav.add(deckLight); nav.visible = false;
     b.mesh.add(nav); b.navLights = nav;
     b.deckLight = deckLight;
+    if (b.profile.id === 'fwc-27' || b.profile.id === 'back-line') {
+      const patrol = b.profile.id === 'fwc-27', rig = new THREE.Group(); rig.name = `searchlight:${b.profile.id}`; rig.position.set(0, deck + 0.72, -0.65);
+      const target = new THREE.Object3D(); target.position.set(0, -0.5, -70);
+      const light = new THREE.SpotLight(patrol ? 0xd9efff : 0xffe1b5, 0, patrol ? 135 : 95, patrol ? 0.13 : 0.11, 0.52, 1.65); light.target = target;
+      const length = patrol ? 36 : 28, width = patrol ? 5.5 : 3.8, beam = new THREE.Mesh(SEARCH_BEAM_GEO, patrol ? SEARCH_BEAM_MATS.patrol : SEARCH_BEAM_MATS.courier); beam.rotation.x = -Math.PI / 2; beam.scale.set(width, length, 1); beam.renderOrder = 34; beam.visible = false;
+      rig.add(light, target); rig.visible = false; b.mesh.add(rig); (this.fx.waterScene || this.scene).add(beam); b.searchRig = rig; b.searchLight = light; b.searchBeam = beam; b.searchLength = length; b.searchWidth = width;
+    }
     if (b.profile.id === 'fwc-27') {
       const beacon = new THREE.Group(); const blue = new THREE.Mesh(NAV_LIGHT, GEAR_MATS.blue), red = new THREE.Mesh(NAV_LIGHT, GEAR_MATS.red);
       blue.scale.setScalar(1.45); red.scale.setScalar(1.45); blue.position.x = -0.1; red.position.x = 0.1;
@@ -396,6 +411,7 @@ export class Traffic {
   retire(b, delay = 28) {
     b.active = false; b.retiring = false; b.state = 'off'; b.mesh.visible = false; b.x = b.z = 1e9; b.speed = 0; b.spawnT = delay + this.rand() * delay;
     if (b.workRig) b.workRig.visible = false; if (b.navLights) b.navLights.visible = false; if (b.deckLight) b.deckLight.intensity = 0;
+    if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; }
     if (b.beacon) b.beacon.visible = false; if (b.beaconBulbs) b.beaconBulbs.blueLight.intensity = b.beaconBulbs.redLight.intensity = 0;
   }
   // a deep channel spot 350-650 m from the boat, and a heading along the channel
@@ -428,6 +444,13 @@ export class Traffic {
     const h = this.environment?.hour ?? 12, storm = this.environment?.values.storm || 0;
     const night = h < 6.1 || h > 19.2; if (b.navLights) b.navLights.visible = b.active && (night || storm > 0.42);
     if (b.deckLight) b.deckLight.intensity = b.navLights.visible ? (night ? 28 : 12) : 0;
+    if (b.searchRig) {
+      const on = b.active && (night || storm > 0.58), patrol = b.profile.id === 'fwc-27'; b.searchRig.visible = on; b.searchBeam.visible = on;
+      b.searchLight.intensity = on ? (patrol ? 720 : 360) * Math.max(0.5, 1 - storm * 0.28) : 0;
+      const scan = patrol ? Math.sin(t * 0.43) * 0.34 + Math.sin(t * 0.17 + 1.2) * 0.1 : Math.sin(t * 0.21 + 0.7) * 0.055;
+      b.searchRig.rotation.y = scan;
+      if (on) { const a = b.heading + scan, fx = -Math.sin(a), fz = -Math.cos(a); b.searchBeam.position.set(b.x + fx * b.searchLength * 0.5, (this.environment?.waterLevel || 0) + 0.055, b.z + fz * b.searchLength * 0.5); b.searchBeam.rotation.set(-Math.PI / 2, a, 0, 'YXZ'); }
+    }
     if (b.workRig?.visible) b.workRig.rotation.z = Math.sin(t * 0.8 + b.heading) * 0.05;
     if (b.beacon) {
       const called = (this.law?.attention || 0) > 0.55 || storm > 0.65;
@@ -522,7 +545,7 @@ export class Traffic {
       b.yellT = Math.max(0, b.yellT - dt); b.hornT = Math.max(0, b.hornT - dt); b.greetT = Math.max(0, b.greetT - dt); b.wakeT = Math.max(0, b.wakeT - dt);
       const operate = this.shouldOperate(b);
       if (!b.active) {
-        b.mesh.visible = false;
+        b.mesh.visible = false; if (b.searchBeam) b.searchBeam.visible = false;
         if (!operate) { b.spawnT = Math.max(2, b.spawnT); continue; }
         b.spawnT -= dt; if (b.spawnT > 0) continue;
         if (!this.spawnSpot(b)) { b.spawnT = 5 + this.rand() * 8; continue; }
@@ -547,7 +570,9 @@ export class Traffic {
         if (sc > bs) { bs = sc; best = da; }
       }
       const fx0 = -Math.sin(b.heading), fz0 = -Math.cos(b.heading);
-      let cruise = b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise;
+      const weather = this.environment?.values, sea = weather?.sea || 0, storm = weather?.storm || 0;
+      b.weatherSpeedScale = 1 - Math.min(b.retiring ? 0.24 : 0.46, sea * 0.15 + storm * 0.12);
+      let cruise = (b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise) * b.weatherSpeedScale;
       let want = cruise * (bs < 1.5 ? 0.45 : 1); if (d < 30 && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5; // slow for the player ahead
       const playerWake = d < 100 ? wakeSampleAt(bx, bz, P.heading, P.speed, 18, 0.2, b.x, b.z, t) : 0;
       if (b.kind === 'canoe' && d < 72 && P.speed > 4 && Math.abs(playerWake) > 0.012) {
@@ -560,13 +585,22 @@ export class Traffic {
       b.speed += (want - b.speed) * (1 - Math.exp(-dt * 0.7));
       const fx = -Math.sin(b.heading), fz = -Math.cos(b.heading);
       const flow = this.fx.currents ? this.fx.currents.flowAt(b.x, b.z, this._flow) : null;
-      b.x += (fx * b.speed + (flow ? flow.x : 0)) * dt + b.shx * dt;
-      b.z += (fz * b.speed + (flow ? flow.y : 0)) * dt + b.shz * dt;
+      const windDir = this.environment?.windDir, leeway = (b.kind === 'canoe' ? 0.018 : b.kind === 'air' ? 0.006 : 0.009) * (weather?.wind || 0);
+      b.x += (fx * b.speed + (flow ? flow.x : 0) + (windDir ? windDir.x * leeway : 0)) * dt + b.shx * dt;
+      b.z += (fz * b.speed + (flow ? flow.y : 0) + (windDir ? windDir.z * leeway : 0)) * dt + b.shz * dt;
       const sk = Math.exp(-dt * 2); b.shx *= sk; b.shz *= sk;
       const gh = this.T.heightAt(b.x, b.z); b.ground = gh > -0.5 ? b.ground + dt : 0; if (gh > -0.5) b.speed *= 0.9;
       const wy = waveFn(b.x, b.z, t) + playerWake;
       const wakeSide = Math.sign((b.x - bx) * -Math.cos(P.heading) + (b.z - bz) * Math.sin(P.heading));
-      b.roll += ((-b.turn * b.speed * 0.02 + playerWake * wakeSide * 0.52) - b.roll) * (1 - Math.exp(-dt * 4)); b.pitch += ((b.speed * (b.kind === 'air' ? 0.004 : 0.007) + playerWake * 0.18) - b.pitch) * (1 - Math.exp(-dt * 3));
+      const halfLength = b.kind === 'canoe' ? 1.45 : b.kind === 'cruiser' ? 2.7 : b.kind === 'air' ? 2.45 : 2.05;
+      const halfBeam = b.kind === 'canoe' ? 0.34 : b.kind === 'cruiser' ? 1.25 : b.kind === 'air' ? 1.05 : 0.74;
+      const rx = Math.cos(b.heading), rz = -Math.sin(b.heading);
+      const bowH = waveFn(b.x + fx * halfLength, b.z + fz * halfLength, t), sternH = waveFn(b.x - fx * halfLength, b.z - fz * halfLength, t);
+      const rightH = waveFn(b.x + rx * halfBeam, b.z + rz * halfBeam, t), leftH = waveFn(b.x - rx * halfBeam, b.z - rz * halfBeam, t);
+      b.waterPitch = Math.max(-0.2, Math.min(0.2, Math.atan2(bowH - sternH, halfLength * 2)));
+      b.waterRoll = Math.max(-0.2, Math.min(0.2, Math.atan2(rightH - leftH, halfBeam * 2)));
+      b.roll += ((-b.turn * b.speed * 0.02 + b.waterRoll + playerWake * wakeSide * 0.52) - b.roll) * (1 - Math.exp(-dt * 4));
+      b.pitch += ((b.speed * (b.kind === 'air' ? 0.004 : 0.007) + b.waterPitch + playerWake * 0.18) - b.pitch) * (1 - Math.exp(-dt * 3));
       b.mesh.position.set(b.x, wy + (b.kind === 'air' ? -0.27 : b.kind === 'john' || b.kind === 'canoe' ? -0.05 : 0), b.z); b.mesh.rotation.set(b.pitch, b.heading, b.roll, 'YXZ');
       if (b.kind === 'air') { b.prop.rotation.z += dt * (8 + b.speed * 8); b.blur.material.opacity = Math.min(0.35, b.speed / b.max * 0.4); for (const r of b.rudders) r.rotation.y = -b.turn * 0.25; }
       else if (b.kind === 'john') { const motor = b.mesh.userData.motor; motor.rotation.y = -b.turn * 0.3; motor.userData.prop.rotation.z += dt * (6 + b.speed * 5); }
@@ -665,9 +699,9 @@ export class Folk {
 
 // ---------------------------------------------------------------------------------------------------------------
 export class Life {
-  constructor(o) { // { terrain, scene, phys, plume, spray, audio, waveFn, game }
+  constructor(o) { // { terrain, scene, water, phys, plume, spray, audio, waveFn, game }
     this.stampList = [];
-    const fx = { plume: o.plume, spray: o.spray, audio: o.audio, waveFn: o.waveFn, stamps: this.stampList, game: o.game };
+    const fx = { plume: o.plume, spray: o.spray, audio: o.audio, waterScene: o.water?.scene, waveFn: o.waveFn, stamps: this.stampList, game: o.game };
     this.fish = new Fish(o.terrain, o.scene, fx);
     this.debris = new Debris(o.terrain, o.scene, o.phys);
     this.traffic = new Traffic(o.terrain, o.scene, o.phys, fx);

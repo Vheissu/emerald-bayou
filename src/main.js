@@ -175,7 +175,7 @@ async function init() {
   const game = new Game({ phys, T: terrain, scene, audio, tricks, manatees, gators, skiff, boat: boat.group, dockTie, startX, startZ, world });
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
-  const life = new Life({ terrain, scene, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
+  const life = new Life({ terrain, scene, water, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
   const playerWater = (x, z, t) => water.waveHeight(x, z, t) + life.traffic.wakeHeightAt(x, z, t);
   world.fx = { plume, spray, audio, fish: life.fish }; world.onShot = (x, z) => { waders.flushNear && waders.flushNear(x, z, 140); };
   birds.audio = audio; gators.audio = audio;
@@ -512,7 +512,10 @@ async function init() {
       if (st) { const g = buildSite(st, terrain); g.position.set(startX - st.x + 20 + i * 14, 0, startZ - 40 - st.z); warm.add(g); st.colliders = []; } i++;
     }
     for (const d of life.debris.near(0, 0, 3000).slice(0, 4)) { const m = life.debris.build(d); m.position.set(startX - 10 + Math.random() * 20, 0, startZ - 25); warm.add(m); }
-    for (const b of life.traffic.boats) { b.mesh.visible = true; b.mesh.position.set(startX + 8, 0, startZ - 10); }
+    for (const b of life.traffic.boats) {
+      b.mesh.visible = true; b.mesh.position.set(startX + 8, 0, startZ - 10);
+      if (b.searchRig) { b.searchRig.visible = true; b.searchLight.intensity = 0.01; b.searchBeam.visible = true; b.searchBeam.position.set(startX + 8, 0.05, startZ - 10); b.searchBeam.scale.set(b.searchWidth * 0.004, b.searchLength * 0.004, 1); }
+    }
     for (let k = 0; k < 6; k++) life.fish.launch(startX + k, startZ - 6, 3, 0, 0, 1, 0, true);
     // the people and the Meshy models: a figure in each pose, a canoe, every hull, the gator, a turtle
     { const pr = mulberry32(11); let k = 0; for (const pose of ['stand', 'sit', 'sitEdge', 'crouch']) { const pp = person(pr, { pose, rod: k % 2 === 0, gun: k === 3 }); pp.position.set(startX - 8 + k * 2, 0.4, startZ - 6); warm.add(pp); k++; } const cn = canoe(pr); cn.position.set(startX + 6, 0, startZ - 8); warm.add(cn); }
@@ -524,7 +527,7 @@ async function init() {
   const t0 = performance.now();
   await Promise.all([preload(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a']), new Promise(r => { const poll = () => { if ((terrain.settled() && performance.now() - t0 > 800) || performance.now() - t0 > 20000) r(); else setTimeout(poll, 100); }; poll(); })]);
   await new Promise(r => setTimeout(r, 250)); // one more frame with the models in, so their programs are compiled
-  scene.remove(warm); skiff.mesh.visible = false; for (const b of life.traffic.boats) b.mesh.visible = false;
+  scene.remove(warm); skiff.mesh.visible = false; for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
   document.getElementById('loading').remove();
   startEl.classList.remove('hidden');
 }
