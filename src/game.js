@@ -743,6 +743,7 @@ const BOUNTY_POOL = [
   { id: 'deadhead', text: 'Hit a deadhead at 25 mph and stay on the water', kind: 'deadhead', target: 25, pay: 180 },
   { id: 'idlepass', text: 'Idle past an angler', kind: 'idlepass', target: 1, pay: 120 },
   { id: 'charged', text: 'Get charged by the bull and live', kind: 'charged', target: 1, pay: 200 },
+  { id: 'baitwatch', text: 'Hold off a feeding school for six seconds', kind: 'baitwatch', target: 1, pay: 140 },
 ];
 class Bounties {
   constructor(G) {
