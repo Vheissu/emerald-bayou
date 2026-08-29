@@ -16,6 +16,29 @@ export function surfaceMistEnvelope({ hour = 12, fog = 0, rain = 0, wind = 0, st
   return clamp(weatherFog + dawnCooling * calm * 0.58 + rainCooling);
 }
 
+// Local rain can stop before the retreating curtain has cleared the opposite horizon. Retaining a small amount of
+// atmospheric moisture lets a bow emerge during that clearing interval without inventing another weather state.
+export function rainbowMoistureStep(current = 0, rain = 0, dt = 0) {
+  const moisture = clamp(Number(current) || 0), target = smooth(0.08, 0.72, Number(rain) || 0);
+  const seconds = clamp(Number(dt) || 0, 0, 60), rate = target > moisture ? 0.65 : 0.018;
+  return clamp(target + (moisture - target) * Math.exp(-seconds * rate));
+}
+
+export function rainbowPotential({ moisture = 0, rain = 0, storm = 0, daylight = 0, sunAltitude = 0, cloudLight = 1 } = {}) {
+  const droplets = smooth(0.12, 0.52, Math.max(Number(moisture) || 0, (Number(rain) || 0) * 0.72));
+  const clearing = 1 - smooth(0.72, 0.98, Number(storm) || 0);
+  const lowSun = smooth(0.015, 0.075, Number(sunAltitude) || 0) * (1 - smooth(0.58, 0.72, Number(sunAltitude) || 0));
+  const sunBreak = smooth(0.88, 0.98, Number(cloudLight) || 0);
+  const rainVeil = 1 - smooth(0.82, 1, Number(rain) || 0);
+  return clamp(droplets * clearing * lowSun * clamp(Number(daylight) || 0) * sunBreak * rainVeil);
+}
+
+export function rainbowResponse(current = 0, target = 0, dt = 0) {
+  const from = clamp(Number(current) || 0), to = clamp(Number(target) || 0), seconds = clamp(Number(dt) || 0, 0, 60);
+  const rate = to > from ? 0.45 : 0.18;
+  return clamp(to + (from - to) * Math.exp(-seconds * rate));
+}
+
 // Wind values are metres per second. A hurricane is intentionally uncommon in the natural
 // sequence, but it is a fully simulated state rather than a cosmetic preset.
 const WEATHER = {
@@ -167,6 +190,7 @@ export class Environment {
     this.remaining = Number.isFinite(savedRemaining) ? clamp(savedRemaining, 0, 600) : 95;
     this.windAngle = Number.isFinite(savedWind) ? Math.atan2(Math.sin(savedWind), Math.cos(savedWind)) : 0.7;
     this.gust = 1; this.waterLevel = 0; this.tideRate = 0; this.syncClockAndTide(); this.persistT = 10;
+    this.rainbowMoisture = smooth(0.08, 0.72, this.values.rain); this.rainbow = 0; this.rainbowOverride = null;
     this.precip = new Precipitation(this.fxScene, this.effectBudget);
     this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
     this.lightDir = this.sunDir.clone();
@@ -252,6 +276,15 @@ export class Environment {
   setHour(hour) {
     this.minutes = (this.day - 1) * 1440 + ((hour % 24) + 24) % 24 * 60;
     this.syncClockAndTide(); this.persistState(true);
+  }
+  setRainbow(value = null) {
+    const n = Number(value); this.rainbowOverride = value === null || value === undefined || !Number.isFinite(n) ? null : clamp(n);
+    if (this.rainbowOverride !== null) this.rainbow = this.rainbowOverride;
+    this.sky.uniforms.rainbow.value = this.rainbow;
+    return this.rainbowOverride;
+  }
+  rainbowSnapshot() {
+    return { intensity: this.rainbow, moisture: this.rainbowMoisture, forced: this.rainbowOverride !== null };
   }
   setWeather(key, instant = false, announce = true) {
     if (!WEATHER[key]) return;
@@ -377,6 +410,9 @@ export class Environment {
     const cloudZ = this.phys.pos.y + this.windDir.z * realTime * V.wind * 14;
     const overheadCloud = clamp(0.5 + Math.sin(cloudX * 0.0017 + cloudZ * 0.0008) * 0.28 + Math.sin(cloudX * -0.0006 + cloudZ * 0.0021 + 1.7) * 0.18);
     this.cloudLight = 1 - smooth(V.cloud, V.cloud + 0.2, overheadCloud) * lerp(0.12, 0.045, V.storm);
+    this.rainbowMoisture = rainbowMoistureStep(this.rainbowMoisture, V.rain, step);
+    const rainbowTarget = this.rainbowOverride ?? rainbowPotential({ moisture: this.rainbowMoisture, rain: V.rain, storm: V.storm, daylight, sunAltitude: this.sunDir.y, cloudLight: this.cloudLight });
+    this.rainbow = rainbowResponse(this.rainbow, rainbowTarget, step);
     const sunBase = daylight * smooth(-0.01, 0.055, sunY) * lerp(3.15, 2.6, horizon) * stormShade * this.cloudLight;
     const useMoon = moonLight > sunBase;
     this.lightDir.copy(useMoon ? this.moonDir : this.sunDir);
@@ -401,7 +437,7 @@ export class Environment {
     this.sun.position.copy(this.lightDir).multiplyScalar(420).add(this.sun.target.position); this.sun.target.updateMatrixWorld();
     this.sky.uniforms.sunDir.value.copy(this.sunDir); this.sky.uniforms.moonDir.value.copy(this.moonDir);
     this.sky.uniforms.lightDir.value.copy(this.lightDir); this.sky.uniforms.windDir.value.set(this.windDir.x, this.windDir.z); this.sky.uniforms.windSpeed.value = V.wind;
-    this.sky.uniforms.daylight.value = daylight; this.sky.uniforms.storm.value = V.storm; this.sky.uniforms.flash.value = this.flash; this.sky.uniforms.cover.value = V.cloud;
+    this.sky.uniforms.daylight.value = daylight; this.sky.uniforms.storm.value = V.storm; this.sky.uniforms.flash.value = this.flash; this.sky.uniforms.cover.value = V.cloud; this.sky.uniforms.rainbow.value = this.rainbow;
 
     this.water.setConditions({ level: this.waterLevel, seaState: V.sea, windAngle: this.windAngle, rain: V.rain, hail: V.hail, wind: V.wind });
     this.water.uniforms.sunDir.value.copy(this.lightDir);

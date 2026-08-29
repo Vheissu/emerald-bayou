@@ -85,6 +85,8 @@ The storm system still owns twelve debris bodies and 44 meshes. Sharing their im
 
 World sounds follow their sources across the water. Gator bellows, bird calls, fish splashes, duck-blind shots, lightning, fires, patrol sirens and helicopters pan left or right as the camera turns. The siren and rotor beds each keep one stereo panner for their lifetime, while every compound one-shot shares a single short-lived panner. Browsers without stereo panning still get the same sounds in the centre.
 
+A clearing squall can leave a rainbow opposite the low sun. The primary bow carries red on the outside; a faint secondary reverses the colours, with Alexander's dark band between them. It needs recent rain and a break in the cloud, then fades as the rain curtain moves off. Both arcs are drawn inside the existing sky shader and its water reflection, with no extra scene objects, textures or render targets.
+
 The Moon advances through a 29.531-day cycle. Its rise time, crescent or quarter terminator, moonlight and shadows all come from the same phase. New and full moons retain the strongest spring range; quarter moons soften the water and currents into a neap range. Clouds now hide the stars and Moon instead of letting either draw over the weather.
 
 The renderer budgets its internal drawing buffer instead of blindly doubling every Retina dimension. Performance profiles release the full-size optional post targets, reduce reflection and shadow work, and defer optional GLB decoding until the dock scene is playable. The map, streaming distance and simulation stay unchanged while the largest HDR and depth attachments remain bounded.
@@ -166,6 +168,7 @@ __dbg.navigationAids.resourceStats()     // active aids, draw calls, faults and 
 __dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fish budget
 __dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspection
 __dbg.nocturnal.resourceStats()           // point count, draw count and geometry bytes
+__dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
 __dbg.encounters.pursuitSnapshot()        // surface units, shared visual and pooled aviation state
 __dbg.hazards.resourceStats()             // debris pool, shared resources and wake-stamp budget
 __dbg.audio.spatialStats()                 // listener direction and spatial-node allocation totals
