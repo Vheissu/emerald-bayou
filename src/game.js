@@ -386,7 +386,7 @@ export class Game {
         this.bountyToast(`Lost trap recovered <b>+$40</b> · ${this.save.traps.length} total`); this.bounties.event('trap', 1); this.record('traps', this.save.traps.length);
         this.nearTraps = this.nearTraps.filter(x => x !== tr); break;
       }
-      const nc = this.nearCamp; const slow = this.mph() < 6, freeRide = !this.state && !this.story?.blocking() && !this.aftermath?.blocking();
+      const nc = this.nearCamp; const slow = this.mph() < 6, freeRide = !this.state && !this.story?.blocking() && !this.aftermath?.blocking() && !this.encounters?.active;
       this.dockCamp = (freeRide && nc && Math.hypot(nc.camp.tie.x - p.pos.x, nc.camp.tie.z - p.pos.y) < 16 && slow) ? nc.camp : null;
       this.dockJob = null; if (freeRide && slow) { let bd = 14; for (const j of this.jobs) { const d = this.dist(j.x, j.z); if (d < bd) { bd = d; this.dockJob = j; } } }
       this.atBoard = freeRide && slow && !this.dockJob && this.dist(this.dockTie.x, this.dockTie.z) < 18;

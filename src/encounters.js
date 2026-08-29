@@ -82,7 +82,7 @@ function boatAgent(mesh) {
 
 export class EncounterDirector {
   constructor(o) {
-    Object.assign(this, o); // scene, terrain, world, water, phys, game, audio, environment, plume, spray, law, reputation
+    Object.assign(this, o); // scene, terrain, world, water, phys, boat, game, audio, environment, plume, spray, law, reputation
     this.next = 48; this.active = null; this.seenT = 0; this.interact = false; this.alternate = false; this.enabled = false; this.debugIndex = 0;
     this.obs = []; this.boatObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat' }; this.fixedObs = { x: 0, z: 0, r: 2.1, tag: 'wreck' };
     this.netObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.32, tag: 'monofilament net', onHit: (into) => {
@@ -110,6 +110,7 @@ export class EncounterDirector {
 
     const distressBoat = buildSkiff({ crew: false }); distressBoat.visible = false; this.scene.add(distressBoat);
     const survivor = person(rr, { pose: 'stand', hat: true }); survivor.position.set(0, 0.5, -0.55); survivor.rotation.y = Math.PI; distressBoat.add(survivor);
+    const passenger = person(rr, { pose: 'sit', hat: true, vest: true }); passenger.position.set(0.52, 1.08, -0.76); passenger.rotation.y = Math.PI; passenger.visible = false; this.boat.add(passenger);
     const flare = signalLight(distressBoat, 0xff3b20, 0, 3.2, -0.9);
 
     const patrolBoat = buildSkiff({ crew: true }); recolor(patrolBoat, 0x2d5c4b); patrolBoat.visible = false; this.scene.add(patrolBoat);
@@ -125,7 +126,7 @@ export class EncounterDirector {
 
     const netline = makeGillNet(); this.scene.add(netline);
 
-    return { distress: { boat: distressBoat, survivor, flare }, patrol, smuggler, salvage, netline };
+    return { distress: { boat: distressBoat, survivor, passenger, flare }, patrol, smuggler, salvage, netline };
   }
 
   spot(min = 160, max = 300, sideMax = 170) {
@@ -174,9 +175,37 @@ export class EncounterDirector {
   }
 
   startDistress(at) {
-    const R = this.rigs.distress; R.boat.visible = true; R.boat.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) - 0.05, at.z); R.boat.rotation.y = at.heading;
+    const R = this.rigs.distress; R.boat.visible = true; R.survivor.visible = true; R.passenger.visible = false;
+    R.boat.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) - 0.05, at.z); R.boat.rotation.y = at.heading;
     wave(R.survivor);
     this.active = { type: 'distress', x: at.x, z: at.z, heading: at.heading, state: 'waiting', t: 0, hold: 0, known: false, leave: 0, recognized: Boolean(this.reputation && this.reputation.score('locals') >= 3) };
+  }
+
+  distressDrop(x, z) {
+    const options = [], berth = (baseX, baseZ, name, preferred = 0) => {
+      for (let i = 0; i < 16; i++) {
+        const a = preferred + (i ? Math.ceil(i / 2) * (i % 2 ? 1 : -1) * Math.PI / 8 : 0), r = 21 + (i % 3) * 3;
+        const px = baseX + Math.cos(a) * r, pz = baseZ + Math.sin(a) * r;
+        if (this.terrain.heightAt(px, pz) < -0.72 && !this.world.blockedAt(px, pz)) return { x: px, z: pz, name };
+      }
+      return { x: baseX, z: baseZ, name };
+    };
+    const nc = this.world.nearestCamp(x, z, 4200);
+    if (nc) {
+      const c = nc.camp, dx = c.tie.x - c.bank.x, dz = c.tie.z - c.bank.z;
+      options.push(berth(c.tie.x, c.tie.z, c.name, Math.atan2(dz, dx)));
+    }
+    const home = this.game.dockTie;
+    options.push(berth(home.x, home.z, 'tower dock', Math.atan2(home.z - z, home.x - x)));
+    options.sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z));
+    return options[0];
+  }
+
+  boardDistress(e) {
+    if (e.state !== 'waiting') return;
+    const R = this.rigs.distress; e.state = 'aboard'; e.drop = this.distressDrop(e.x, e.z); e.boardedAt = e.t;
+    R.survivor.visible = false; R.passenger.visible = true; this.clearPrompt(); this.audio.checkpoint();
+    this.game.toast('Operator aboard', `Run him to ${e.drop.name}. Keep the front bench dry.`, 3.2);
   }
 
   startPatrol(at) {
@@ -267,6 +296,7 @@ export class EncounterDirector {
     const e = this.active; if (!e) return;
     this.clearPrompt(); this.obs.length = 0;
     this.rigs.distress.boat.visible = false;
+    this.rigs.distress.survivor.visible = true; this.rigs.distress.passenger.visible = false;
     this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false;
     this.rigs.smuggler.boat.visible = false; this.rigs.smuggler.agent.active = false; this.rigs.smuggler.pack.visible = false;
     this.rigs.salvage.wreck.visible = false; for (const d of this.rigs.salvage.drums) d.visible = false;
@@ -311,20 +341,36 @@ export class EncounterDirector {
 
   updateDistress(e, dt, t) {
     const R = this.rigs.distress;
-    if (this.currents && e.state === 'waiting') { const f = this.currents.flowAt(e.x, e.z, this._flow); e.x += f.x * dt * 0.58; e.z += f.y * dt * 0.58; }
+    if (this.currents && e.state !== 'repair') { const f = this.currents.flowAt(e.x, e.z, this._flow); e.x += f.x * dt * 0.58; e.z += f.y * dt * 0.58; }
     const d = Math.hypot(e.x - this.phys.pos.x, e.z - this.phys.pos.y);
     R.boat.position.x = e.x; R.boat.position.z = e.z;
     R.boat.position.y = this.water.waveHeight(e.x, e.z, t) - 0.05; R.boat.rotation.z = Math.sin(t * 0.8) * 0.025;
     animatePerson(R.survivor, t, dt, { x: this.phys.pos.x, z: this.phys.pos.y });
+    if (R.passenger.visible) animatePerson(R.passenger, t, dt);
     if (R.survivor.userData.waveT <= 0 && d < 130) wave(R.survivor);
     const pulse = 0.5 + 0.5 * Math.sin(t * 7); R.flare.light.intensity = 50 + pulse * 95; R.flare.bulb.scale.setScalar(0.7 + pulse * 0.8);
     if (d < 120) this.known(e, 'Distress flare', e.recognized ? 'He knows the hull and is waving you in.' : 'A skiff is dead in the water ahead.');
-    if (e.known) this.point(e.x, e.z, 'distress flare', '#ff5a36');
-    const o = this.boatObs; o.ax = e.x - Math.sin(e.heading) * 2; o.az = e.z - Math.cos(e.heading) * 2; o.bx = e.x + Math.sin(e.heading) * 2; o.bz = e.z + Math.cos(e.heading) * 2; o.tag = 'boat'; this.obs.push(o);
-    if (e.state === 'waiting' && d < 13 && this.phys.speed * MPH < 6 && this.canInteract()) { this.setPrompt('help with the dead motor'); if (this.interact) { e.state = 'repair'; this.clearPrompt(); this.game.toast('Hold her steady', 'He is clearing the fuel line.', 2.4); } }
+    if (e.known && e.state !== 'aboard') this.point(e.x, e.z, 'distress flare', '#ff5a36');
+    if (d < 70 && R.boat.visible) { const o = this.boatObs; o.ax = e.x - Math.sin(e.heading) * 2; o.az = e.z - Math.cos(e.heading) * 2; o.bx = e.x + Math.sin(e.heading) * 2; o.bz = e.z + Math.cos(e.heading) * 2; o.tag = 'boat'; this.obs.push(o); }
+    if (e.state === 'waiting' && d < 13 && this.phys.speed * MPH < 6 && this.canInteract()) {
+      this.setPrompt('hold steady for a fuel-line repair <i>· F bring the operator aboard</i>');
+      if (this.interact) { e.state = 'repair'; this.clearPrompt(); this.game.toast('Hold her steady', 'He is clearing the fuel line.', 2.4); }
+      else if (this.alternate) this.boardDistress(e);
+    }
     if (e.state === 'repair') {
       if (d < 15 && this.phys.speed * MPH < 7) e.hold += dt; else e.hold = Math.max(0, e.hold - dt * 1.5);
       if (e.hold >= 6) { this.audio.checkpoint(); if (this.law) this.law.cool(0.2); this.complete('Stranger helped', e.recognized ? 'Motor caught. He says the camps will hear about it.' : 'Motor caught. He owes you one.', 180, 1, 'You pulled a stranded skiff clear.'); }
+    } else if (e.state === 'aboard') {
+      if (d > 360) R.boat.visible = false;
+      const q = e.drop, dd = Math.hypot(q.x - this.phys.pos.x, q.z - this.phys.pos.y);
+      this.point(q.x, q.z, q.name, '#7be08a');
+      if (dd < 13 && this.phys.speed * MPH < 5 && !this.game.dockJob && !this.game.atBoard) {
+        this.setPrompt(`put the operator ashore at ${q.name}`);
+        if (this.interact) {
+          if (this.law) this.law.cool(0.3);
+          this.complete('Safe berth reached', `${q.name} took him in. His skiff can wait for daylight.`, 275, 1.25, 'You carried a stranded operator to a safe berth.');
+        }
+      }
     }
   }
 
@@ -522,8 +568,9 @@ export class EncounterDirector {
     else if (e.type === 'smuggler') this.updateSmuggler(e, dt, t);
     else if (e.type === 'netline') this.updateNetline(e, dt, t);
     else this.updateSalvage(e, dt, t);
+    const carryingDistress = e.type === 'distress' && e.state === 'aboard';
     const focus = e.type === 'patrol' ? this.rigs.patrol.agent : e.type === 'smuggler' && e.state === 'chase' ? this.rigs.smuggler.agent : e;
-    if (this.active && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) this.finish(false);
+    if (this.active && ((!carryingDistress && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) || (carryingDistress && e.t > 600))) this.finish(false);
     this.interact = false; this.alternate = false;
   }
 

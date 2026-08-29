@@ -191,7 +191,8 @@ async function init() {
   const regions = new RegionDirector({ game, phys }); game.regions = regions;
   const law = new Law({ game, phys, environment, audio }); game.law = law;
   life.traffic.reputation = reputation; life.traffic.law = law;
-  const encounters = new EncounterDirector({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, plume, spray, law, reputation });
+  const encounters = new EncounterDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, plume, spray, law, reputation });
+  game.encounters = encounters;
   law.onAttention = () => { if (!game.state) encounters.next = Math.min(encounters.next, 12); };
   const condition = new BoatCondition({ game, phys, water, environment, audio, startX, startZ }); game.condition = condition;
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
