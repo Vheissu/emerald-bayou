@@ -8,7 +8,7 @@ import * as TEX from './textures.js';
 import { spawn, loadGeo, SPEC } from './models.js';
 import { person, animatePerson, wave, pair, walkAlong, canoe, paddleAnim, cooler, bucket, fishingLine } from './folk.js';
 import { animateSite } from './sites.js';
-import { trimOldest } from './cache.js';
+import { cachedResource, sharedResource, trimOldest } from './cache.js';
 
 // The bayou's small life: mullet jumping, bait boiling away from the bow, deadhead logs and dead snags in the still
 // water (with an anhinga drying its wings), other boats running the channels, and anglers anchored in the pools who
@@ -33,12 +33,20 @@ export class Fish {
     this.T = terrain; this.fx = fx; // fx: { plume, spray, audio, stamps }
     const mat = new THREE.MeshStandardMaterial({ color: 0xd4dbd6, roughness: 0.3, metalness: 0.6 });
     this.n = 48; this.mesh = new THREE.InstancedMesh(fishGeo(), mat, this.n); this.mesh.frustumCulled = false; this.mesh.castShadow = false;
+    this.fallbackReleased = false;
     this.list = []; for (let i = 0; i < this.n; i++) this.list.push({ on: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, t: 0, s: 1, hops: 0, roll: 0 });
     this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler(); this._p = new THREE.Vector3(); this._s = new THREE.Vector3();
     for (let i = 0; i < this.n; i++) { this._m.makeScale(0, 0, 0); this.mesh.setMatrixAt(i, this._m); }
     scene.add(this.mesh);
     this.nextT = 1; this.boilT = 0; this.activity = 1;
-    loadGeo('fish_a').then(r => { if (r) { this.mesh.geometry = r.geo; this.mesh.material = r.mat; } });
+    loadGeo('fish_a').then(r => {
+      if (!r) return;
+      const fallbackGeometry = this.mesh.geometry, fallbackMaterial = this.mesh.material;
+      this.mesh.geometry = r.geo; this.mesh.material = r.mat;
+      if (fallbackGeometry !== r.geo) fallbackGeometry.dispose();
+      if (fallbackMaterial !== r.mat) fallbackMaterial.dispose();
+      this.fallbackReleased = true;
+    });
   }
   free() { for (const f of this.list) if (!f.on) return f; return null; }
   launch(x, z, vy, vx, vz, s = 1, hops = 0, quiet = false) {
@@ -116,14 +124,21 @@ function snagGeo(seed) {
   for (let i = 0; i < 3; i++) { const L = 0.5 + r() * 0.7; const b = new THREE.CylinderGeometry(0.025, 0.07, L, 5); b.translate(0, L / 2, 0); b.rotateZ(0.8 + r() * 0.7); b.rotateY(r() * 6.28); b.translate(0, 0.5 + r() * 0.4, 0); parts.push(b); }
   return mergeGeometries(parts.map(g => g.toNonIndexed()), false);
 }
+const ANHINGA_GEO = Object.freeze({
+  body: sharedResource(new THREE.SphereGeometry(0.13, 10, 8)),
+  neck: sharedResource(new THREE.CylinderGeometry(0.03, 0.045, 0.5, 6)),
+  head: sharedResource(new THREE.ConeGeometry(0.035, 0.32, 6)),
+  wing: sharedResource(new THREE.PlaneGeometry(0.62, 0.3, 4, 1)),
+  tail: sharedResource(new THREE.PlaneGeometry(0.16, 0.34)),
+});
+const ANHINGA_MAT = sharedResource(new THREE.MeshStandardMaterial({ color: 0x1b1b1a, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide }));
 function anhinga() {
   const g = new THREE.Group();
-  const black = new THREE.MeshStandardMaterial({ color: 0x1b1b1a, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide });
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), black); body.scale.set(1, 0.9, 1.9); body.position.y = 0.2; g.add(body);
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.045, 0.5, 6), black); neck.position.set(0, 0.5, -0.1); neck.rotation.x = 0.3; g.add(neck);
-  const head = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.32, 6), black); head.rotation.x = -Math.PI / 2 + 0.5; head.position.set(0, 0.76, -0.25); g.add(head);
-  for (const sx of [-1, 1]) { const w = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.3, 4, 1), black); w.position.set(sx * 0.36, 0.3, 0.02); w.rotation.z = sx * 0.35; w.rotation.y = sx * 0.1; g.add(w); }
-  const tail = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.34), black); tail.rotation.x = -1.2; tail.position.set(0, 0.16, 0.36); g.add(tail);
+  const body = new THREE.Mesh(ANHINGA_GEO.body, ANHINGA_MAT); body.scale.set(1, 0.9, 1.9); body.position.y = 0.2; g.add(body);
+  const neck = new THREE.Mesh(ANHINGA_GEO.neck, ANHINGA_MAT); neck.position.set(0, 0.5, -0.1); neck.rotation.x = 0.3; g.add(neck);
+  const head = new THREE.Mesh(ANHINGA_GEO.head, ANHINGA_MAT); head.rotation.x = -Math.PI / 2 + 0.5; head.position.set(0, 0.76, -0.25); g.add(head);
+  for (const sx of [-1, 1]) { const w = new THREE.Mesh(ANHINGA_GEO.wing, ANHINGA_MAT); w.position.set(sx * 0.36, 0.3, 0.02); w.rotation.z = sx * 0.35; w.rotation.y = sx * 0.1; g.add(w); }
+  const tail = new THREE.Mesh(ANHINGA_GEO.tail, ANHINGA_MAT); tail.rotation.x = -1.2; tail.position.set(0, 0.16, 0.36); g.add(tail);
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
 }
@@ -296,18 +311,51 @@ function wakeSampleAt(sx, sz, heading, speed, maxSpeed, scale, x, z, t) {
   const phase = t * (4.2 + strength * 0.8) - aft * (0.46 + strength * 0.08) + (sx + sz) * 0.013;
   return scale * strength * strength * Math.exp(-aft / 85) * (ridge * Math.sin(phase) - trough * 0.27 * Math.sin(phase * 0.73 + 1.2));
 }
-function recolor(group, from, to) { group.traverse(o => { if (o.isMesh && o.material && o.material.color && o.material.color.getHex() === from) { o.material = o.material.clone(); o.material.color.setHex(to); } }); }
+const RECOLOR_MATERIALS = new Map();
+function recolor(group, from, to) {
+  if (from === to) return;
+  group.traverse(o => {
+    if (!o.isMesh || !o.material?.color || o.material.color.getHex() !== from) return;
+    const original = o.material, key = `${original.uuid}:${to}`;
+    o.material = cachedResource(RECOLOR_MATERIALS, key, () => { const material = original.clone(); material.color.setHex(to); return material; });
+  });
+}
+const FISHERMAN_GEO = Object.freeze({
+  torso: sharedResource(new THREE.CapsuleGeometry(0.17, 0.4, 4, 8)),
+  head: sharedResource(new THREE.SphereGeometry(0.11, 10, 8)),
+  brim: sharedResource(new THREE.CylinderGeometry(0.2, 0.22, 0.05, 12)),
+  crown: sharedResource(new THREE.CylinderGeometry(0.11, 0.12, 0.1, 10)),
+  leg: sharedResource(new THREE.CapsuleGeometry(0.06, 0.3, 4, 6)),
+  arm: sharedResource(new THREE.CapsuleGeometry(0.05, 0.35, 4, 6)),
+  rod: sharedResource(new THREE.CylinderGeometry(0.008, 0.016, 2.4, 5)),
+});
+const FISHERMAN_MAT = Object.freeze({
+  skin: sharedResource(new THREE.MeshStandardMaterial({ color: 0xb98a66, roughness: 0.85 })),
+  shirts: [0xd8d2c0, 0x3b5f8a, 0x8a3b2f, 0x6b7a4a].map(color => sharedResource(new THREE.MeshStandardMaterial({ color, roughness: 0.9 }))),
+  hat: sharedResource(new THREE.MeshStandardMaterial({ color: 0xd9c9a0, roughness: 0.9 })),
+  pants: sharedResource(new THREE.MeshStandardMaterial({ color: 0x2b2a26, roughness: 0.9 })),
+  rod: sharedResource(new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.6 })),
+});
+const ANGLER_GEO = Object.freeze({
+  anchorLine: sharedResource(new THREE.CylinderGeometry(0.006, 0.006, 2.2, 4)),
+  cooler: sharedResource(new THREE.BoxGeometry(0.5, 0.35, 0.35)),
+  bobber: sharedResource(new THREE.SphereGeometry(0.05, 8, 6)),
+});
+const ANGLER_MAT = Object.freeze({
+  anchorLine: sharedResource(new THREE.MeshStandardMaterial({ color: 0xd9d4c4 })),
+  cooler: sharedResource(new THREE.MeshStandardMaterial({ color: 0xe8e4da, roughness: 0.6 })),
+  bobber: sharedResource(new THREE.MeshStandardMaterial({ color: 0xe2552a })),
+});
 function fisherman(rr) {
   const g = new THREE.Group();
-  const skin = new THREE.MeshStandardMaterial({ color: 0xb98a66, roughness: 0.85 });
-  const shirt = new THREE.MeshStandardMaterial({ color: [0xd8d2c0, 0x3b5f8a, 0x8a3b2f, 0x6b7a4a][Math.floor(rr() * 4)], roughness: 0.9 });
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.4, 4, 8), shirt); torso.position.y = 0.42; g.add(torso);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), skin); head.position.y = 0.82; g.add(head);
-  const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.05, 12), new THREE.MeshStandardMaterial({ color: 0xd9c9a0, roughness: 0.9 })); hat.position.y = 0.9; g.add(hat);
-  const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.12, 0.1, 10), hat.material); crown.position.y = 0.96; g.add(crown);
-  for (const sx of [-1, 1]) { const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.3, 4, 6), new THREE.MeshStandardMaterial({ color: 0x2b2a26, roughness: 0.9 })); leg.position.set(sx * 0.1, 0.12, -0.15); leg.rotation.x = -1.1; g.add(leg); }
-  const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.35, 4, 6), skin); arm.position.set(0.22, 0.5, -0.15); arm.rotation.x = -1.1; arm.rotation.z = -0.5; g.add(arm);
-  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.016, 2.4, 5), new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.6 })); rod.position.set(0.32, 0.9, -0.9); rod.rotation.x = -1.0; rod.rotation.z = -0.15; g.add(rod); g.userData.rod = rod;
+  const shirt = FISHERMAN_MAT.shirts[Math.floor(rr() * FISHERMAN_MAT.shirts.length)];
+  const torso = new THREE.Mesh(FISHERMAN_GEO.torso, shirt); torso.position.y = 0.42; g.add(torso);
+  const head = new THREE.Mesh(FISHERMAN_GEO.head, FISHERMAN_MAT.skin); head.position.y = 0.82; g.add(head);
+  const hat = new THREE.Mesh(FISHERMAN_GEO.brim, FISHERMAN_MAT.hat); hat.position.y = 0.9; g.add(hat);
+  const crown = new THREE.Mesh(FISHERMAN_GEO.crown, FISHERMAN_MAT.hat); crown.position.y = 0.96; g.add(crown);
+  for (const sx of [-1, 1]) { const leg = new THREE.Mesh(FISHERMAN_GEO.leg, FISHERMAN_MAT.pants); leg.position.set(sx * 0.1, 0.12, -0.15); leg.rotation.x = -1.1; g.add(leg); }
+  const arm = new THREE.Mesh(FISHERMAN_GEO.arm, FISHERMAN_MAT.skin); arm.position.set(0.22, 0.5, -0.15); arm.rotation.x = -1.1; arm.rotation.z = -0.5; g.add(arm);
+  const rod = new THREE.Mesh(FISHERMAN_GEO.rod, FISHERMAN_MAT.rod); rod.position.set(0.32, 0.9, -0.9); rod.rotation.x = -1.0; rod.rotation.z = -0.15; g.add(rod); g.userData.rod = rod;
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
 }
@@ -345,7 +393,7 @@ export class Traffic {
     this.assist = { active: false, failed: false, berthSafe: false, berthDepth: 0, boat: null, boatId: '', phase: '', side: 0, fore: 0, headingOffset: 0, targetX: 0, targetZ: 0, distance: 0, eta: 0, arrived: false, holdT: 0 };
     // anchored anglers
     this.anglerCells = new Map(); this.liveAnglers = new Map(); this.checkT = 0; this.anglerCacheEvictions = 0;
-    this.idlePasses = 0; this._flow = new THREE.Vector2(); this._pf = new THREE.Vector2();
+    this.idlePasses = 0; this._flow = new THREE.Vector2(); this._pf = new THREE.Vector2(); this._bob = new THREE.Vector3();
   }
   addWorkingDetails(b, profileIndex) {
     const deck = b.kind === 'air' ? 0.55 : b.kind === 'canoe' ? 0.3 : b.kind === 'cruiser' ? 0.85 : 0.42;
@@ -738,9 +786,9 @@ export class Traffic {
     const g = buildSkiff({ crew: false }); recolor(g, 0x6f7570, [0x6f7570, 0x4c6b4a, 0xb8b4a8][Math.floor(rr() * 3)]);
     const man = fisherman(rr); man.position.set(0.1, 0.45, 0.3); g.add(man); g.userData.man = man;
     // anchor line off the bow, a cooler, a bobber out on the water
-    const line = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 2.2, 4), new THREE.MeshStandardMaterial({ color: 0xd9d4c4 })); line.position.set(0, -0.4, -2.6); line.rotation.x = 0.5; g.add(line);
-    const cooler = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.35, 0.35), new THREE.MeshStandardMaterial({ color: 0xe8e4da, roughness: 0.6 })); cooler.position.set(-0.4, 0.3, -0.8); g.add(cooler);
-    const bob = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), new THREE.MeshStandardMaterial({ color: 0xe2552a })); bob.position.set(1.6, 0, -3.6); g.add(bob); g.userData.bob = bob;
+    const line = new THREE.Mesh(ANGLER_GEO.anchorLine, ANGLER_MAT.anchorLine); line.position.set(0, -0.4, -2.6); line.rotation.x = 0.5; g.add(line);
+    const cooler = new THREE.Mesh(ANGLER_GEO.cooler, ANGLER_MAT.cooler); cooler.position.set(-0.4, 0.3, -0.8); g.add(cooler);
+    const bob = new THREE.Mesh(ANGLER_GEO.bobber, ANGLER_MAT.bobber); bob.position.set(1.6, 0, -3.6); g.add(bob); g.userData.bob = bob;
     g.position.set(a.x, 0, a.z); g.rotation.y = a.heading;
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     a.obs = { ax: a.x - Math.sin(a.heading) * 2, az: a.z - Math.cos(a.heading) * 2, bx: a.x + Math.sin(a.heading) * 2, bz: a.z + Math.cos(a.heading) * 2, r: 1.1, tag: 'angler', angler: a, onHit: (into) => { if (into > 2 && a.said !== 2) { a.said = 2; this.fx.game.anglerSay(a, YELLS[Math.floor(Math.random() * YELLS.length)]); } } };
@@ -903,7 +951,7 @@ export class Traffic {
       if (d < 60) this.obs.push(a.obs);
       if (d < 13 && a.said === 0) { a.said = 1; const mph = P.speed * 2.23694; if (mph > 8) this.fx.game.anglerSay(a, ANGLER_WAKE[Math.floor(Math.random() * ANGLER_WAKE.length)], true); else { this.fx.game.anglerSay(a, ANGLER_SLOW[Math.floor(Math.random() * ANGLER_SLOW.length)]); this.idlePasses++; this.fx.game.bounties.event('idlepass', 1); } }
       // now and then something takes the bait
-      a.biteT -= dt; if (a.biteT <= 0) { a.biteT = 12 + Math.random() * 25; const bp = g.userData.bob.getWorldPosition(new THREE.Vector3()); if (fish) fish.launch(bp.x, bp.z, 2.4, jitter() * 1.5, jitter() * 1.5, 0.8, 1); }
+      a.biteT -= dt; if (a.biteT <= 0) { a.biteT = 12 + Math.random() * 25; const bp = g.userData.bob.getWorldPosition(this._bob); if (fish) fish.launch(bp.x, bp.z, 2.4, jitter() * 1.5, jitter() * 1.5, 0.8, 1); }
     }
   }
 }
@@ -914,7 +962,7 @@ export class Traffic {
 const FOLK_CELL = 500;
 const SHORE_WAKE = ['Hey! Idle speed along the bank!', 'You are putting the fish down!', 'Slow it down, son!', 'Real nice. Real nice.'];
 export class Folk {
-  constructor(terrain, scene, fx) { this.T = terrain; this.scene = scene; this.fx = fx; this.cells = new Map(); this.live = new Map(); this.checkT = 0; this.activity = 1; this.cacheEvictions = 0; }
+  constructor(terrain, scene, fx) { this.T = terrain; this.scene = scene; this.fx = fx; this.cells = new Map(); this.live = new Map(); this.checkT = 0; this.activity = 1; this.cacheEvictions = 0; this.disposedLineGeometries = 0; }
   at(ci, cj) {
     const key = `${ci},${cj}`; if (this.cells.has(key)) return this.cells.get(key);
     let f = null; const cx = ci * FOLK_CELL, cz = cj * FOLK_CELL;
@@ -943,15 +991,26 @@ export class Folk {
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     return g;
   }
+  release(g) {
+    g.removeFromParent(); const geometries = new Set();
+    for (const pp of g.userData.people || []) if (pp.userData.line?.geometry) geometries.add(pp.userData.line.geometry);
+    for (const geometry of geometries) geometry.dispose();
+    this.disposedLineGeometries += geometries.size;
+  }
   update(dt, t, ctx) {
     const bx = ctx.bx, bz = ctx.bz;
-    if (this.activity <= 0.2) { for (const { g } of this.live.values()) g.visible = false; return; }
+    if (this.activity <= 0.2) {
+      for (const [key, { f, g }] of this.live) {
+        if (Math.hypot(f.x - bx, f.z - bz) > 480) { this.release(g); this.live.delete(key); } else g.visible = false;
+      }
+      return;
+    }
     for (const { g } of this.live.values()) g.visible = true;
     this.checkT -= dt;
     if (this.checkT <= 0) {
       this.checkT = 0.6;
       for (const f of this.near(bx, bz, 400)) if (!this.live.has(f.key)) { const g = this.build(f); this.scene.add(g); this.live.set(f.key, { f, g }); }
-      for (const [key, l] of this.live) if (Math.hypot(l.f.x - bx, l.f.z - bz) > 480) { this.scene.remove(l.g); this.live.delete(key); }
+      for (const [key, l] of this.live) if (Math.hypot(l.f.x - bx, l.f.z - bz) > 480) { this.release(l.g); this.live.delete(key); }
     }
     for (const { f, g } of this.live.values()) {
       animateSite(g, t, this.fx.waveFn, null, ctx);

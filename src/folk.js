@@ -301,7 +301,7 @@ export function fishingUpdate(p, t, dt, waveFn, ctx) {
 
 // ---- props ----
 export function cooler(rr) { const g = new THREE.Group(); const b = new THREE.Mesh(personGeometry('cooler-body', () => new THREE.BoxGeometry(0.58, 0.4, 0.38)), rr() < 0.5 ? PLASTIC : BLUE); b.position.y = 0.2; g.add(sh(b)); const lid = new THREE.Mesh(personGeometry('cooler-lid', () => new THREE.BoxGeometry(0.6, 0.06, 0.4)), PLASTIC); lid.position.y = 0.43; g.add(lid); return g; }
-export function bucket() { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.34, 10), PLASTIC); b.position.y = 0.17; return sh(b); }
+export function bucket() { const b = new THREE.Mesh(personGeometry('bucket', () => new THREE.CylinderGeometry(0.15, 0.13, 0.34, 10)), PLASTIC); b.position.y = 0.17; return sh(b); }
 export function chair(rr) {
   const g = new THREE.Group(); const m = pick(rr, [BLUE, PLASTIC, SHIRT[3]]);
   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.04, 0.48), m); seat.position.y = 0.45; g.add(sh(seat));
