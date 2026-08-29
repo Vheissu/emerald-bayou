@@ -73,6 +73,8 @@ On clear, low-wind nights, dense fog can settle over the backcountry before dawn
 
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
 
+The Moon advances through a 29.531-day cycle. Its rise time, crescent or quarter terminator, moonlight and shadows all come from the same phase. New and full moons retain the strongest spring range; quarter moons soften the water and currents into a neap range. Clouds now hide the stars and Moon instead of letting either draw over the weather.
+
 The renderer budgets its internal drawing buffer toward three million pixels instead of blindly doubling every Retina dimension. Dense displays use two hardware samples plus the final FXAA pass; smaller buffers keep four samples. The map, streaming distance, simulation and asset detail stay unchanged while the largest HDR and depth attachments remain bounded.
 
 Wildlife lives its own life. Alligators bask on banks and slide in when you get close, and the bull will charge an idle hull inside 16 m. Mullet jump near the boat, bait boils off the bow in the shallows, ibis and pelicans run lines low over the water, and vultures circle high. When you get more than 700 m away it all quietly relocates ahead of you.
@@ -123,6 +125,7 @@ __dbg.mode = 'depth'                      // full | raw | nowater | depth | refl
 __dbg.phys.reset(x, z, heading)           // teleport
 __dbg.environment.minutesPerSecond = 0    // freeze the clock
 __dbg.environment.setHour(17.4)           // pick the light
+__dbg.environment.lunarSnapshot()         // phase, illumination, tide range, altitude
 __dbg.ecology.setBioluminescence(1, true) // force the disturbed-water glow
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera
 __dbg.terrain.hf.computeBase(x, z)        // { h, s, lake, prairie, hammock }

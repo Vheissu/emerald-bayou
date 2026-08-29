@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { lunarAgeAt, lunarIllumination, lunarPhaseAt, lunarPhaseName, lunarTideRange } from './lunar.js';
 
 const FT = 3.28084;
 const MPS_TO_MPH = 2.23694;
@@ -215,11 +216,14 @@ export class Environment {
 
   syncClockAndTide() {
     this.day = Math.floor(this.minutes / 1440) + 1; this.hour = (this.minutes / 60) % 24;
+    this.lunarAge = lunarAgeAt(this.minutes); this.lunarPhase = lunarPhaseAt(this.minutes);
+    this.moonIllumination = lunarIllumination(this.lunarPhase); this.tideRange = lunarTideRange(this.lunarPhase);
     const absHours = this.minutes / 60, tidePhase = absHours / 12.42 * Math.PI * 2;
-    const astronomical = Math.sin(tidePhase) * 0.34 + Math.sin(tidePhase * 0.5 + 0.8) * 0.08;
+    const astronomical = (Math.sin(tidePhase) * 0.34 + Math.sin(tidePhase * 0.5 + 0.8) * 0.08) * this.tideRange;
     this.waterLevel = astronomical + (this.values.surge || 0);
-    this.tideRate = Math.cos(tidePhase) * 0.34 + Math.cos(tidePhase * 0.5 + 0.8) * 0.04;
+    this.tideRate = (Math.cos(tidePhase) * 0.34 + Math.cos(tidePhase * 0.5 + 0.8) * 0.04) * this.tideRange;
   }
+  lunarSnapshot() { return { age: this.lunarAge, phase: this.lunarPhase, name: lunarPhaseName(this.lunarPhase), illumination: this.moonIllumination, tideRange: this.tideRange, altitude: this.moonDir?.y || 0 }; }
   persistState(write = true) {
     this.game.save.environment = {
       minutes: this.minutes,
@@ -356,11 +360,13 @@ export class Environment {
 
     const solar = (this.hour - 6) / 24 * Math.PI * 2;
     const sunY = Math.sin(solar), sunX = -Math.cos(solar) * 0.86;
-    this.sunDir.set(sunX, sunY, -0.42).normalize(); this.moonDir.copy(this.sunDir).multiplyScalar(-1);
+    this.sunDir.set(sunX, sunY, -0.42).normalize();
+    const lunar = solar - this.lunarPhase;
+    this.moonDir.set(-Math.cos(lunar) * 0.86, Math.sin(lunar), -0.42 * Math.cos(this.lunarPhase)).normalize();
     const daylight = smooth(-0.08, 0.16, sunY), night = 1 - smooth(-0.04, 0.18, sunY);
     const horizon = 1 - smooth(0.04, 0.52, Math.max(0, sunY));
     const stormShade = 1 - V.storm * 0.7;
-    const moonLight = night * lerp(0.055, 0.14, smooth(0.04, 0.68, this.moonDir.y)) * lerp(1, 0.34, V.storm);
+    const moonLight = night * smooth(0.01, 0.68, this.moonDir.y) * lerp(0, 0.14, Math.pow(this.moonIllumination, 0.72)) * lerp(1, 0.34, V.storm);
     const cloudX = this.phys.pos.x + this.windDir.x * realTime * V.wind * 14;
     const cloudZ = this.phys.pos.y + this.windDir.z * realTime * V.wind * 14;
     const overheadCloud = clamp(0.5 + Math.sin(cloudX * 0.0017 + cloudZ * 0.0008) * 0.28 + Math.sin(cloudX * -0.0006 + cloudZ * 0.0021 + 1.7) * 0.18);
@@ -422,7 +428,8 @@ export class Environment {
     const from = (this.windAngle + Math.PI) % (Math.PI * 2), dirs = ['E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'];
     const dir = dirs[Math.round(from / (Math.PI * 2) * 8) % 8];
     const tideFt = this.waterLevel * FT, tide = `${this.tideRate >= 0 ? 'Rising' : 'Falling'} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
+    const lunarRange = this.tideRange > 0.94 ? ' · spring tide' : this.tideRange < 0.76 ? ' · neap tide' : '';
     const current = this.currentField ? ` · ${this.currentField.hud()}` : '';
-    this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${WEATHER[this.key].label}</div><div class="world-detail">${tide} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${current}</div>`;
+    this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${WEATHER[this.key].label}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${current}</div>`;
   }
 }

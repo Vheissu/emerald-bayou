@@ -104,6 +104,8 @@ export class RadioDirector {
     const runners = this.reputation ? this.reputation.score('runners') : 0;
     const flow = this.environment.tideRate >= 0 ? 'Flood is building' : 'Ebb is running';
     pool.push(['CH 68', 'MARA KEENE · TOWER', `${flow}. Set a second line if you stop in a narrow cut.`]);
+    if (this.environment.tideRange > 0.94) pool.push(['CH 16', 'MARA KEENE · TOWER', 'Spring range is on. High water will cover the low banks, and the ebb will pull hard through the cuts.']);
+    else if (this.environment.tideRange < 0.76) pool.push(['CH 68', 'JUNE BELL · SPLIT PINE', 'Neap range is on. The turn will be soft, and the back cuts will hold longer than usual.']);
     if (night) pool.push(['CH 16', 'MARA KEENE · TOWER', 'Dock lights are sparse tonight. Call the camp before you enter its basin.']);
     if (locals >= 3) pool.push(['CH 68', 'JUNE BELL · SPLIT PINE', 'Tower Boat, Split Pine heard what you did. Coffee is on if you pass this way.']);
     else if (locals <= -3) pool.push(['CH 68', 'CAMP RADIO', 'That tower airboat is in the district. Nobody give out a private cut.']);

@@ -67,6 +67,7 @@ export class Sky {
           // cumulus: big towering cells (low-frequency mass, warped), cauliflower detail on top, lit from the sun side
           float yy = max(y, 0.0);
           float hf = smoothstep(0.0, 0.14, yy);
+          float cloudOpacity = 0.0;
           if (hf > 0.001) {
             vec2 drift = windDir * uTime * (0.0015 + windSpeed * 0.00018);
             vec2 p = d.xz / (yy + 0.09) + drift;
@@ -76,6 +77,7 @@ export class Sky {
             float n = big * 0.68 + det * 0.32;
             float dens = smoothstep(cover, cover + 0.17, n);
             float thick = smoothstep(cover, cover + 0.45, n);
+            cloudOpacity = max(cloudOpacity, dens * hf * 0.985);
             // self-shadowing: sample toward the active sun or moon and compare
             vec2 toLight = normalize(lightDir.xz + 1e-4) * 0.09;
             float nS = fbm6((p + toLight) * 0.27 + warp * 1.6) * 0.68 + fbm6((p + toLight) * 0.95 + warp * 0.8 + 3.0) * 0.32;
@@ -104,6 +106,7 @@ export class Sky {
             vec2 p2 = d.xz / (yy + 0.12) * 0.7 + drift * 0.55;
             float ci = smoothstep(0.62, 0.9, fbm6(p2 * 1.7 + 30.0)) * 0.18;
             sky = mix(sky, mix(vec3(0.09, 0.11, 0.16), vec3(0.95, 0.97, 1.0), daylight), ci * hf * (1.0 - dens));
+            cloudOpacity = max(cloudOpacity, ci * hf * 0.55);
           }
           // stars are sparse enough to read as points, not procedural noise. Cloud cover erases them first.
           if (y > 0.03) {
@@ -111,12 +114,26 @@ export class Sky {
             vec2 starCell = floor(starUv * 185.0);
             float sh = hash21(starCell);
             float star = smoothstep(0.9977, 1.0, sh) * (0.72 + 0.28 * sin(uTime * (1.2 + sh * 1.6) + sh * 80.0));
-            star *= (1.0 - daylight) * (1.0 - storm) * smoothstep(0.03, 0.18, y);
+            star *= (1.0 - daylight) * (1.0 - storm) * (1.0 - cloudOpacity) * smoothstep(0.03, 0.18, y);
             sky += vec3(0.72, 0.82, 1.0) * star * 1.8;
           }
-          float moon = pow(max(dot(d, moonDir), 0.0), 1700.0);
-          float moonHalo = pow(max(dot(d, moonDir), 0.0), 80.0);
-          sky += vec3(0.66, 0.76, 1.0) * (moon * 5.0 + moonHalo * 0.12) * (1.0 - daylight) * (1.0 - storm * 0.82);
+          // The Moon is a shaded sphere rather than an always-full point. Its terminator follows the actual Sun/Moon
+          // angle, so crescents, quarters and the full disc agree with moonrise timing and the spring-neap tide.
+          float moonDot = max(dot(d, moonDir), 0.0);
+          vec3 moonAxis = abs(moonDir.y) > 0.92 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+          vec3 moonRight = normalize(cross(moonAxis, moonDir));
+          vec3 moonUp = normalize(cross(moonDir, moonRight));
+          vec2 moonQ = vec2(dot(d, moonRight), dot(d, moonUp)) / 0.014;
+          float moonR = length(moonQ), moonDisc = 1.0 - smoothstep(0.90, 1.04, moonR);
+          float moonZ = sqrt(max(0.0, 1.0 - moonR * moonR));
+          vec3 moonNormal = normalize(moonRight * moonQ.x + moonUp * moonQ.y - moonDir * moonZ);
+          float moonLit = smoothstep(0.005, 0.045, dot(moonNormal, sunDir));
+          float phaseLight = clamp((1.0 - dot(sunDir, moonDir)) * 0.5, 0.0, 1.0);
+          float moonClear = (1.0 - cloudOpacity) * (1.0 - storm * 0.82);
+          float earthshine = 0.012 * (1.0 - phaseLight);
+          sky += vec3(0.70, 0.79, 0.94) * moonDisc * (earthshine + moonLit * 2.6) * moonClear * mix(0.32, 1.0, 1.0 - daylight);
+          float moonHalo = pow(moonDot, 80.0) * phaseLight * (1.0 - daylight);
+          sky += vec3(0.48, 0.62, 0.92) * moonHalo * 0.13 * moonClear;
           // A severe cell removes skylight instead of washing the whole dome toward pale grey.
           // This keeps the horizon legible while giving lightning enough darkness to own the frame.
           sky = mix(sky, vec3(0.055, 0.075, 0.082), storm * 0.58);
