@@ -9,6 +9,7 @@ import { spawn, loadGeo, SPEC } from './models.js';
 import { person, animatePerson, wave, pair, walkAlong, canoe, paddleAnim, cooler, bucket, fishingLine } from './folk.js';
 import { animateSite } from './sites.js';
 import { cachedResource, sharedResource, trimOldest } from './cache.js';
+import { MAX_SHIFT_WAKE_COMPLAINTS, wakeConsequence, wakeSeverity } from './wakeconduct.js';
 
 // The bayou's small life: mullet jumping, bait boiling away from the bow, deadhead logs and dead snags in the still
 // water (with an anhinga drying its wings), other boats running the channels, and anglers anchored in the pools who
@@ -377,6 +378,8 @@ export class Traffic {
       const b = hulls[i], profile = TRAFFIC_PROFILES[i];
       const record = this.state.operators[profile.id] ||= { shifts: 0, passes: 0, collisions: 0, lastMet: '', lastShift: '' };
       record.seriousCollisions = Number(record.seriousCollisions) || 0; record.aidedAfterCollision = Number(record.aidedAfterCollision) || 0; record.leftDisabled = Number(record.leftDisabled) || 0;
+      record.wakeComplaints = Math.max(0, Math.min(9999, Number(record.wakeComplaints) || 0)); record.wakeReports = Math.max(0, Math.min(9999, Number(record.wakeReports) || 0));
+      record.wakeShiftKey = typeof record.wakeShiftKey === 'string' ? record.wakeShiftKey : ''; record.wakeShiftComplaints = Math.max(0, Math.min(MAX_SHIFT_WAKE_COMPLAINTS, Number(record.wakeShiftComplaints) || 0)); record.lastWakeSeverity = Math.max(0, Math.min(2, Number(record.lastWakeSeverity) || 0));
       const shelter = { active: false, arrived: false, kind: '', key: '', name: '', x: 0, z: 0, heading: 0, distance: 0 };
       const collision = { active: false, stage: '', t: 0, elapsed: 0, hold: 0, farT: 0, signalT: 0, impact: 0, distance: Infinity, prevState: 'transit', prevRetiring: false, prevLeg: 0, prevWorkT: 0, prevWorkRig: false, marker: { x: 0, z: 0, label: '', color: '#f06c38', trafficCollision: profile.id } };
       Object.assign(b, { profile, record, shelter, collision, shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, fogHornT: 6 + i * 16, fogSignalIndex: i, yellT: 0, ground: 0, shx: 0, shz: 0 });
@@ -685,7 +688,35 @@ export class Traffic {
     if (b.people?.length) wave(b.people[b.people.length - 1]);
     const restricted = (this.environment?.restrictedVisibility || 0) > 0.45;
     const state = b.state === 'tow-response' ? 'responding to your tow call' : b.state === 'tow-alongside' ? 'passing a tow line' : b.state === 'shelter-run' ? `making for ${b.shelter.name}` : b.state === 'sheltered' ? `weathered in at ${b.shelter.name}` : b.state === 'work' ? `working · ${b.profile.job}` : restricted ? 'making way slow · restricted visibility' : b.retiring ? 'heading in' : b.profile.job;
-    this.fx.game.toast(`${b.profile.callsign} · ${b.profile.operator}`, state, 2.8);
+    const wakeMemory = !b.assisting && !b.shelter.active && b.record.wakeComplaints > 0 ? (b.record.wakeReports > 0 ? ' · prior wake report on file' : ' · remembers your last wake') : '';
+    this.fx.game.toast(`${b.profile.callsign} · ${b.profile.operator}`, state + wakeMemory, 2.8);
+  }
+  recordWakeComplaint(b, severity, distance) {
+    const P = b.profile, record = b.record, shift = this.shiftKey(b);
+    if (record.wakeShiftKey !== shift) { record.wakeShiftKey = shift; record.wakeShiftComplaints = 0; }
+    if (record.wakeShiftComplaints >= MAX_SHIFT_WAKE_COMPLAINTS) { b.wakeT = 30; return false; }
+    const previousComplaints = record.wakeComplaints;
+    record.wakeShiftComplaints++; record.wakeComplaints = Math.min(9999, previousComplaints + 1); record.lastWakeSeverity = severity;
+    const enforcementCrew = P.faction === 'fwc';
+    const consequence = wakeConsequence({ severity, shiftComplaints: record.wakeShiftComplaints, previousComplaints, enforcementCrew });
+    b.wakeT = consequence.reported ? 24 : 14;
+    if (!consequence.reported) {
+      const warning = b.kind === 'canoe' ? '“Easy on the wake.”' : '“No wake. Gear in the water.”';
+      const detail = b.kind === 'canoe' ? `${P.callsign} · water survey under paddle` : `${P.callsign} · ${P.job}`;
+      this.fx.game.toast(warning, detail, 2.6);
+    } else {
+      record.wakeReports = Math.min(9999, record.wakeReports + 1);
+      const hard = severity >= 2;
+      const text = enforcementCrew
+        ? hard ? 'Tower Boat, hard wake through an active survey station. Your hull and direction are going on the FWC log.' : 'Tower Boat, that is another wake through our station. Your hull and direction are going on the FWC log.'
+        : hard ? 'Tower Boat, that wake hit our gear hard. I am logging your hull and direction with FWC.' : 'Tower Boat, that is the second wake through our gear. I am logging your hull and direction with FWC.';
+      if (consequence.horn) this.fx.audio.horn(Math.max(0.1, 0.34 * (1 - distance / 115)));
+      this.fx.game.toast('Dangerous wake reported', `${P.callsign} logged your hull and direction`, 3.5);
+      this.radio?.transmit({ channel: P.channel, speaker: `${P.callsign} · ${P.operator}`, text, priority: 3, key: `working-wake:${P.id}:${record.wakeReports}`, cooldown: 99999 });
+      this.law?.add(consequence.attention, `dangerous wake reported by ${P.callsign}`, false);
+    }
+    this.reputation?.change(P.faction, consequence.reputation, 'working-wake', `${P.callsign} remembers the tower airboat's wake through ${b.kind === 'canoe' ? 'their paddle station' : 'their working gear'}.`, false);
+    this.fx.game.persist(); return true;
   }
   updateWorkingDetails(b, t) {
     const h = this.environment?.hour ?? 12, storm = this.environment?.values.storm || 0, restricted = this.environment?.restrictedVisibility || 0;
@@ -766,7 +797,7 @@ export class Traffic {
     return wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, 0.22, x, z, t);
   }
   snapshot() {
-    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, weatherSpeedScale: b.weatherSpeedScale, fogSignalIn: b.fogHornT, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled }));
+    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, weatherSpeedScale: b.weatherSpeedScale, fogSignalIn: b.fogHornT, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled, wakeComplaints: b.record.wakeComplaints, wakeReports: b.record.wakeReports, shiftWakeComplaints: b.record.wakeShiftComplaints }));
   }
   // ---- anglers ----
   anglerAt(ci, cj) {
@@ -873,12 +904,11 @@ export class Traffic {
       let want = cruise * (bs < 1.5 ? 0.45 : 1); if (d < playerAheadRange && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5 - fogRisk * 0.14; // slow for the player ahead
       if (b.state === 'shelter-run') { const desired = Math.atan2(-(b.shelter.x - b.x), -(b.shelter.z - b.z)), alignment = 1 - Math.min(1, Math.abs(wrapAngle(desired - b.heading)) / 1.25); want *= 0.04 + alignment * 0.96; }
       const playerWake = d < 100 ? wakeSampleAt(bx, bz, P.heading, P.speed, 18, 0.2, b.x, b.z, t) : 0;
-      if (b.kind === 'canoe' && d < 72 && P.speed > 4 && Math.abs(playerWake) > 0.012) {
+      const wakeLevel = !b.collision.active && !assisting ? wakeSeverity({ kind: b.kind, working: Boolean(b.workRig?.visible), playerSpeed: P.speed, wakeHeight: playerWake }) : 0;
+      if (wakeLevel && b.kind === 'canoe' && d < 72) {
         want *= 0.12; const cross = pf.x * (b.z - bz) - pf.y * (b.x - bx); b.routeBias = cross > 0 ? -0.65 : 0.65;
-        if (b.wakeT <= 0) { b.wakeT = 12; this.fx.game.toast('“Easy on the wake.”', `${b.profile.callsign} · water survey under paddle`, 2.4); }
-      } else if (b.workRig?.visible && P.speed > 4.5 && Math.abs(playerWake) > 0.022 && b.wakeT <= 0) {
-        b.wakeT = 14; this.fx.game.toast('“No wake. Gear in the water.”', `${b.profile.callsign} · ${b.profile.job}`, 2.5);
       }
+      if (wakeLevel && b.wakeT <= 0) this.recordWakeComplaint(b, wakeLevel, d);
       b.turn += ((b.collision.active ? 0 : best * 2.2) - b.turn) * (1 - Math.exp(-dt * 3)); b.heading += b.turn * dt;
       if (b.state === 'tow-alongside') { const settle = 1 - Math.exp(-dt * 1.8); b.heading += wrapAngle(P.heading + this.assist.headingOffset - b.heading) * settle; b.turn *= Math.exp(-dt * 3); }
       else if (b.state === 'sheltered') { const settle = 1 - Math.exp(-dt * 1.5); b.heading += wrapAngle(b.shelter.heading - b.heading) * settle; b.turn *= Math.exp(-dt * 2.6); }
