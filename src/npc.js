@@ -63,7 +63,7 @@ function skiffCrew(x, z, cap, driver = false) {
 }
 
 // A shallow-draft, open aluminium johnboat shared by traffic, residents, incidents and shoreline sets.
-export function buildSkiff({ crew = true } = {}) {
+export function buildSkiff({ crew = true, driverModel = true } = {}) {
   const g = new THREE.Group(); g.name = 'aluminum johnboat';
   const hull = skiffPart(SKIFF_GEO.hull, SKIFF_MAT.hull); g.add(hull);
   const floor = skiffPart(SKIFF_GEO.floor, SKIFF_MAT.floor); floor.position.set(0, 0.07, 0.16); g.add(floor);
@@ -88,7 +88,7 @@ export function buildSkiff({ crew = true } = {}) {
   if (crew) {
     const driver = skiffCrew(0.16, 1.18, SKIFF_MAT.capRed, true); g.add(driver); crewList.push(driver);
     const rr = mulberry32(0x51cf2d + skiffSerial++ * 977); const deckhand = person(rr, { pose: 'sit', hat: true, vest: rr() < 0.55 }); deckhand.scale.setScalar(0.74); deckhand.position.set(-0.1, 0.142, -0.68); deckhand.rotation.y = Math.PI; g.add(deckhand); people.push(deckhand);
-    loadDriver(g, { scale: 0.48, position: [0.16, 0.49, 1.16] }).then(model => { driver.visible = false; g.userData.driverModel = model; }).catch(() => {});
+    if (driverModel) loadDriver(g, { scale: 0.48, position: [0.16, 0.49, 1.16] }).then(model => { driver.visible = false; g.userData.driverModel = model; }).catch(() => {});
   }
   const net = skiffPart(SKIFF_GEO.net, SKIFF_MAT.net); net.scale.set(1.32, 0.42, 0.8); net.position.set(0, 0.42, -1.52); g.add(net);
   for (const x of [-0.24, 0.22]) { const coil = skiffPart(SKIFF_GEO.netCoil, SKIFF_MAT.rope); coil.rotation.x = Math.PI / 2; coil.position.set(x, 0.5, -1.48); g.add(coil); }
