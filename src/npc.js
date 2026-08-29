@@ -93,7 +93,7 @@ export function buildSkiff({ crew = true, driverModel = true } = {}) {
   const net = skiffPart(SKIFF_GEO.net, SKIFF_MAT.net); net.scale.set(1.32, 0.42, 0.8); net.position.set(0, 0.42, -1.52); g.add(net);
   for (const x of [-0.24, 0.22]) { const coil = skiffPart(SKIFF_GEO.netCoil, SKIFF_MAT.rope); coil.rotation.x = Math.PI / 2; coil.position.set(x, 0.5, -1.48); g.add(coil); }
   const fuel = skiffPart(SKIFF_GEO.fuel, SKIFF_MAT.fuel); fuel.position.set(0.5, 0.32, 1.16); g.add(fuel);
-  g.userData.motor = motor; g.userData.crew = crewList; g.userData.people = people;
+  g.userData.motor = motor; g.userData.crew = crewList; g.userData.people = people; g.userData.fuel = fuel;
   return g;
 }
 

@@ -3,6 +3,11 @@ import { spawn } from './models.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './noise.js';
 
+const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
+const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
+const fract = v => v - Math.floor(v);
+const feedingDive = (phase, osprey, scatter) => smooth(osprey ? 0.48 : 0.52, osprey ? 0.64 : 0.67, phase) * (1 - smooth(osprey ? 0.74 : 0.76, osprey ? 0.9 : 0.91, phase)) * (1 - scatter);
+
 function birdGeo() {
   const body = new THREE.SphereGeometry(0.11, 10, 8); body.scale(1, 0.75, 2.3);
   const neck = new THREE.CylinderGeometry(0.035, 0.05, 0.42, 6); neck.rotateX(-Math.PI / 2 + 0.25); neck.translate(0, 0.06, -0.38);
@@ -49,9 +54,12 @@ export class Birds {
     };
     const r = mulberry32(77);
     this.flocks = []; this.birds = [];
+    let feedingPelicansAssigned = false;
     for (const kind of FLOCKS) {
       const K = BIRD_KINDS[kind]; const fi = this.flocks.length;
-      this.flocks.push({ kind, K, cx: center.x + (r() - 0.5) * 300, cz: center.z + (r() - 0.5) * 300, radius: K.radius[0] + r() * (K.radius[1] - K.radius[0]), alt: K.alt[0] + r() * (K.alt[1] - K.alt[0]), speed: (K.speed[0] + r() * (K.speed[1] - K.speed[0])) * (r() < 0.5 ? 1 : -1), ph: r() * 7, callT: 5 + r() * 20 });
+      const feedingRole = kind === 'osprey' ? 'osprey' : kind === 'pelican' && !feedingPelicansAssigned ? 'pelican' : '';
+      if (feedingRole === 'pelican') feedingPelicansAssigned = true;
+      this.flocks.push({ kind, K, cx: center.x + (r() - 0.5) * 300, cz: center.z + (r() - 0.5) * 300, radius: K.radius[0] + r() * (K.radius[1] - K.radius[0]), alt: K.alt[0] + r() * (K.alt[1] - K.alt[0]), speed: (K.speed[0] + r() * (K.speed[1] - K.speed[0])) * (r() < 0.5 ? 1 : -1), ph: r() * 7, callT: 5 + r() * 20, feedingRole, feedBlend: 0 });
       for (let i = 0; i < K.n; i++) this.birds.push({ flock: fi, i, off: new THREE.Vector3((r() - 0.5) * K.spread, (r() - 0.5) * K.vspread, (r() - 0.5) * K.spread), phase: r() * Math.PI * 2, flap: K.flap[0] + r() * (K.flap[1] - K.flap[0]) });
     }
     this.count = this.birds.length;
@@ -67,6 +75,17 @@ export class Birds {
     this._m = new THREE.Matrix4(); this._p = new THREE.Vector3(); this._q = new THREE.Quaternion(); this._s = new THREE.Vector3(1, 1, 1);
     this._look = new THREE.Matrix4(); this._up = new THREE.Vector3(0, 1, 0); this._tgt = new THREE.Vector3(); this._bank = new THREE.Quaternion(); this._z = new THREE.Vector3(0, 0, 1);
     this.audio = null; this.activity = 1;
+    // Feeding birds redirect existing instance slots. The event never allocates another flock or draw call.
+    this.feeding = { active: false, x: 0, z: 0, intensity: 0, scatter: 0 };
+  }
+  setFeedingActivity(activity = null) {
+    const F = this.feeding;
+    if (!activity || activity.active === false) { F.active = false; F.intensity = 0; F.scatter = 0; return; }
+    F.active = true; F.x = Number(activity.x) || 0; F.z = Number(activity.z) || 0;
+    F.intensity = clamp(Number(activity.intensity) || 0); F.scatter = clamp(Number(activity.scatter) || 0);
+  }
+  feedingSnapshot() {
+    return { ...this.feeding, redirectedFlocks: this.flocks.filter(f => f.feedingRole).length, birdCapacity: this.count };
   }
   relocate(f, cam) {
     for (let k = 0; k < 20; k++) {
@@ -78,23 +97,46 @@ export class Birds {
   update(t, cam, dt = 1 / 60) {
     if (this.shader) this.shader.uniforms.uTime.value = t;
     if (cam) for (const f of this.flocks) {
+      const feedTarget = f.feedingRole && this.feeding.active ? this.feeding.intensity : 0;
+      f.feedBlend += (feedTarget - f.feedBlend) * (1 - Math.exp(-dt * (feedTarget > f.feedBlend ? 0.95 : 0.28)));
       const d = Math.hypot(f.cx - cam.x, f.cz - cam.z);
-      if (d > 900) this.relocate(f, cam);
-      if (f.K.call && this.audio) { f.callT -= dt; if (f.callT <= 0) { f.callT = 18 + Math.random() * 30; if (d < 260) this.audio.osprey(0.2 * (1 - d / 300)); } }
+      if (d > 900 && f.feedBlend < 0.035) this.relocate(f, cam);
+      if (f.K.call && this.audio) { f.callT -= dt; if (f.callT <= 0) { f.callT = 18 + Math.random() * 30; if (d < 260) this.audio.osprey(0.2 * (1 - d / 300), f.cx, f.cz); } }
     }
     for (let i = 0; i < this.count; i++) {
       const b = this.birds[i]; const f = this.flocks[b.flock]; const K = f.K;
       const a = t * f.speed + f.ph - (K.line ? b.i * K.line / f.radius * Math.sign(f.speed) : 0);
-      const wob = Math.sin(t * (K.kind === 'swallow' ? 3.1 : 0.7) + i) * K.wob;
-      const x = f.cx + Math.cos(a) * f.radius + b.off.x + wob, z = f.cz + Math.sin(a) * f.radius * 0.7 + b.off.z, y = f.alt + b.off.y + Math.sin(t * 0.9 + i * 2) * (K.kind === 'pelican' ? 0.3 : 1.5);
+      const wob = Math.sin(t * (f.kind === 'swallow' ? 3.1 : 0.7) + i) * K.wob;
+      let x = f.cx + Math.cos(a) * f.radius + b.off.x + wob, z = f.cz + Math.sin(a) * f.radius * 0.7 + b.off.z;
+      let y = f.alt + b.off.y + Math.sin(t * 0.9 + i * 2) * (f.kind === 'pelican' ? 0.3 : 1.5);
       const a2 = a + 0.02 * Math.sign(f.speed);
-      const nx = f.cx + Math.cos(a2) * f.radius + b.off.x + wob, nz = f.cz + Math.sin(a2) * f.radius * 0.7 + b.off.z;
+      let nx = f.cx + Math.cos(a2) * f.radius + b.off.x + wob, nz = f.cz + Math.sin(a2) * f.radius * 0.7 + b.off.z, ny = y;
+      if (f.feedingRole && f.feedBlend > 0.001) {
+        const osprey = f.feedingRole === 'osprey', cycleRate = osprey ? 0.086 : 0.071, cycleOffset = osprey ? 0 : b.i * 0.173;
+        const cycle = fract(t * cycleRate + cycleOffset + f.ph * 0.09);
+        const nextCycle = fract((t + 0.055) * cycleRate + cycleOffset + f.ph * 0.09);
+        const dive = feedingDive(cycle, osprey, this.feeding.scatter), nextDive = feedingDive(nextCycle, osprey, this.feeding.scatter), orbit = osprey ? 24 : 34;
+        const feedA = t * (osprey ? 0.42 : 0.27) + f.ph + b.i * (osprey ? 0 : 1.18);
+        const feedA2 = (t + 0.055) * (osprey ? 0.42 : 0.27) + f.ph + b.i * (osprey ? 0 : 1.18);
+        const spread = 1 + this.feeding.scatter * 1.35;
+        const radius = orbit * (1 - dive * 0.9) * spread, radius2 = orbit * (1 - nextDive * 0.9) * spread;
+        const baseY = osprey ? 17 : 7.2;
+        const feedX = this.feeding.x + Math.cos(feedA) * radius + b.off.x * 0.18;
+        const feedZ = this.feeding.z + Math.sin(feedA) * radius * 0.76 + b.off.z * 0.18;
+        const feedY = baseY - dive * (baseY - 0.42) + this.feeding.scatter * (osprey ? 18 : 12) + Math.sin(t * 0.8 + i) * 0.35;
+        const feedNX = this.feeding.x + Math.cos(feedA2) * radius2 + b.off.x * 0.18;
+        const feedNZ = this.feeding.z + Math.sin(feedA2) * radius2 * 0.76 + b.off.z * 0.18;
+        const feedNY = baseY - nextDive * (baseY - 0.42) + this.feeding.scatter * (osprey ? 18 : 12) + Math.sin((t + 0.055) * 0.8 + i) * 0.35;
+        x += (feedX - x) * f.feedBlend; y += (feedY - y) * f.feedBlend; z += (feedZ - z) * f.feedBlend;
+        nx += (feedNX - nx) * f.feedBlend; ny += (feedNY - ny) * f.feedBlend; nz += (feedNZ - nz) * f.feedBlend;
+      }
       this._p.set(x, y, z); this._tgt.set(nx, y, nz);
+      this._tgt.y = ny;
       this._look.lookAt(this._tgt, this._p, this._up);
       this._q.setFromRotationMatrix(this._look);
       this._bank.setFromAxisAngle(this._z, Math.sign(f.speed) * K.bank);
       this._q.multiply(this._bank);
-      this._s.setScalar(i < this.count * this.activity ? K.scale : 0);
+      this._s.setScalar(i < this.count * this.activity || (f.feedingRole && f.feedBlend > 0.035) ? K.scale : 0);
       this._m.compose(this._p, this._q, this._s);
       this.mesh.setMatrixAt(i, this._m);
     }
@@ -340,7 +382,7 @@ export class Gators {
         g.surfaced = false;
         if (g.slide <= 0) {
           g.mesh.position.copy(g.pos); g.mesh.rotation.set(0, g.heading, 0);
-          if ((dB < 32 && boatSpeed > 2) || dB < 12) { g.slide = 3.5; g.heading = g.toWater; this.spooked++; if (this.audio) this.audio.hiss(0.4 * Math.max(0, 1 - dB / 50)); if (this.onSlide) this.onSlide(g, dB); }
+          if ((dB < 32 && boatSpeed > 2) || dB < 12) { g.slide = 3.5; g.heading = g.toWater; this.spooked++; if (this.audio) this.audio.hiss(0.4 * Math.max(0, 1 - dB / 50), g.pos.x, g.pos.z); if (this.onSlide) this.onSlide(g, dB); }
           continue;
         }
         g.slide -= dt;
@@ -355,7 +397,7 @@ export class Gators {
       // the bull: idle near him for long and he comes at the hull
       g.chargeCd = Math.max(0, g.chargeCd - dt);
       if (g.big && !this.calm && !g.parked && g.charge <= 0 && g.chargeCd <= 0 && g.dive <= 0 && g.hitT <= 0 && dB < 16 && dB > 3 && boatSpeed < 3) {
-        g.charge = 3.5; g.chargeCd = 30; g.heading = Math.atan2(-(boatX - g.pos.x), -(boatZ - g.pos.z)); if (this.audio) this.audio.bellow(0.6);
+        g.charge = 3.5; g.chargeCd = 30; g.heading = Math.atan2(-(boatX - g.pos.x), -(boatZ - g.pos.z)); if (this.audio) this.audio.bellow(0.6, g.pos.x, g.pos.z);
       }
       if (g.charge > 0) {
         g.charge -= dt;
@@ -368,7 +410,7 @@ export class Gators {
         continue;
       }
       // bellows carry across the water now and then
-      if (g.big && this.audio) { g.bellowT -= dt; if (g.bellowT <= 0) { g.bellowT = 25 + this.rand() * 40; if (dB < 120 && g.dive <= 0) this.audio.bellow(0.35 * (1 - dB / 140)); } }
+      if (g.big && this.audio) { g.bellowT -= dt; if (g.bellowT <= 0) { g.bellowT = 25 + this.rand() * 40; if (dB < 120 && g.dive <= 0) this.audio.bellow(0.35 * (1 - dB / 140), g.pos.x, g.pos.z); } }
       const ahead = 6, fx = -Math.sin(g.heading), fz = -Math.cos(g.heading);
       const hAhead = this.T.heightAt(g.pos.x + fx * ahead, g.pos.z + fz * ahead);
       const hL = this.T.heightAt(g.pos.x + (fx * 0.7 - fz * 0.7) * ahead, g.pos.z + (fz * 0.7 + fx * 0.7) * ahead);

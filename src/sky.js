@@ -28,6 +28,7 @@ export class Sky {
       daylight: { value: 1 },
       storm: { value: 0 },
       flash: { value: 0 },
+      rainbow: { value: 0 },
     };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -45,8 +46,12 @@ export class Sky {
           gl_Position.z = gl_Position.w;
         }`,
       fragmentShader: `
-        varying vec3 vDir; uniform vec3 sunDir, moonDir, lightDir; uniform vec2 windDir; uniform float windSpeed, uTime, cover, daylight, storm, flash;
+        varying vec3 vDir; uniform vec3 sunDir, moonDir, lightDir; uniform vec2 windDir; uniform float windSpeed, uTime, cover, daylight, storm, flash, rainbow;
         ${SKY_FRAG_NOISE}
+        vec3 rainbowSpectrum(float h) {
+          vec3 p = abs(fract(h + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0);
+          return clamp(p - 1.0, 0.0, 1.0);
+        }
         void main() {
           vec3 d = normalize(vDir);
           float y = d.y;
@@ -111,6 +116,26 @@ export class Sky {
             sky = mix(sky, mix(vec3(0.09, 0.11, 0.16), vec3(0.95, 0.97, 1.0), daylight), ci * hf * (1.0 - dens));
             cloudOpacity = max(cloudOpacity, ci * hf * 0.55);
           }
+          // A real bow is a cone around the antisolar point: red lies outside the primary at about 42 degrees,
+          // while the faint secondary sits near 51 degrees with its colour order reversed. A broken rain-curtain
+          // modulation keeps both arcs atmospheric instead of drawing a clean HUD ring. This is part of the existing
+          // sky draw, so it also reaches the planar water reflection without another mesh, texture or render pass.
+          if (rainbow > 0.001 && y > 0.003) {
+            float anti = dot(d, -sunDir);
+            float primaryT = (anti - 0.7373) / (0.7660 - 0.7373);
+            float secondaryT = (anti - 0.5948) / (0.6428 - 0.5948);
+            float primaryBand = smoothstep(0.0, 0.09, primaryT) * (1.0 - smoothstep(0.91, 1.0, primaryT));
+            float secondaryBand = smoothstep(0.0, 0.1, secondaryT) * (1.0 - smoothstep(0.9, 1.0, secondaryT));
+            float curtain = mix(0.42, 1.08, vnoise(d.xz * 7.5 + windDir * uTime * 0.008));
+            float horizonFade = smoothstep(0.003, 0.045, y);
+            float bowLight = rainbow * horizonFade * curtain * mix(0.72, 1.08, cloudOpacity);
+            float alexander = smoothstep(0.6428, 0.665, anti) * (1.0 - smoothstep(0.714, 0.7373, anti));
+            sky *= 1.0 - alexander * bowLight * 0.035;
+            vec3 primaryColor = mix(vec3(0.76), rainbowSpectrum(primaryT * 0.76), 0.76);
+            vec3 secondaryColor = mix(vec3(0.72), rainbowSpectrum((1.0 - secondaryT) * 0.76), 0.7);
+            sky += primaryColor * primaryBand * bowLight * 0.24;
+            sky += secondaryColor * secondaryBand * bowLight * 0.055;
+          }
           // stars are sparse enough to read as points, not procedural noise. Cloud cover erases them first.
           if (y > 0.03) {
             vec2 starUv = d.xz / (abs(y) + 0.22);
@@ -151,6 +176,9 @@ export class Sky {
     this.mesh.renderOrder = 100;
     this.mesh.frustumCulled = false;
     this.mesh.name = 'sky';
+  }
+  resourceStats() {
+    return { objects: 1, geometries: 1, materials: 1, textures: 0, rainbow: this.uniforms.rainbow.value };
   }
   update(t, camPos) { this.uniforms.uTime.value = t; this.mesh.position.copy(camPos); }
 }

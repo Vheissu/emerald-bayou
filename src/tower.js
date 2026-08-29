@@ -96,7 +96,7 @@ export function buildTower() {
 
   const frameGeo = mergeGeometries(parts.map(g => g.toNonIndexed()), false);
   const plankGeo = mergeGeometries(plankParts.map(g => g.toNonIndexed()), false);
-  const woodTex = TEX.plank(); woodTex.repeat.set(1, 1);
+  const woodTex = TEX.plank();
   const frameMat = new THREE.MeshStandardMaterial({ color: 0x3a352f, roughness: 0.85, metalness: 0.1 });
   const plankMat = new THREE.MeshStandardMaterial({ map: woodTex, color: 0x9a8f80, roughness: 0.9 });
   const group = new THREE.Group();
@@ -111,7 +111,7 @@ let sharedDockMaterials = null;
 
 function dockMaterials() {
   if (sharedDockMaterials) return sharedDockMaterials;
-  const woodTex = sharedResource(TEX.plank()); woodTex.repeat.set(1, 4);
+  const woodTex = sharedResource(TEX.plank());
   sharedDockMaterials = {
     frameMat: sharedResource(new THREE.MeshStandardMaterial({ color: 0x3a352f, roughness: 0.85 })),
     plankMat: sharedResource(new THREE.MeshStandardMaterial({ map: woodTex, color: 0x9a8f80, roughness: 0.9 })),
@@ -135,7 +135,7 @@ function dockResources(length, width) {
     parts.push(box(0.06, 0.06, length, sx * width / 2, 1.75, -length / 2));
   }
   const frameGeo = sharedResource(mergeGeometries(parts.map(g => g.toNonIndexed()), false));
-  const plankGeo = sharedResource(mergeGeometries(plankParts.map(g => g.toNonIndexed()), false));
+  const plankGeo = sharedResource(TEX.scaleTextureUvs(mergeGeometries(plankParts.map(g => g.toNonIndexed()), false), 1, 4));
   const { frameMat, plankMat } = dockMaterials();
   const resources = { frameGeo, plankGeo, frameMat, plankMat };
   dockCache.set(key, resources);

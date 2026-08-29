@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AdaptiveQualityController, gpuQualityCeiling, initialQualityLevel, msaaSamplesFor, pixelRatioFor, qualityProfile, webglRendererName } from '../src/renderquality.js';
+import { WAKE_SIZE, Water } from '../src/water.js';
 
 test('caps dense displays by drawing-pixel budget', () => {
   assert.equal(pixelRatioFor(1000, 1000, 2), Math.sqrt(3));
@@ -10,7 +11,9 @@ test('caps dense displays by drawing-pixel budget', () => {
 
 test('starts conservatively only when hardware signals justify it', () => {
   assert.equal(initialQualityLevel({ deviceMemory: 16, hardwareConcurrency: 12, maxTextureSize: 16384 }), 3);
-  assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 8, maxTextureSize: 16384 }), 3);
+  assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 12, maxTextureSize: 16384 }), 3);
+  assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 8, maxTextureSize: 16384 }), 2);
+  assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 8, maxTextureSize: 16384, gpuRenderer: 'ANGLE (NVIDIA, GeForce RTX 4070 Direct3D11)' }), 3);
   assert.equal(initialQualityLevel({ deviceMemory: 8, hardwareConcurrency: 6, maxTextureSize: 16384 }), 2);
   assert.equal(initialQualityLevel({ deviceMemory: 4, hardwareConcurrency: 8, maxTextureSize: 16384 }), 1);
   assert.equal(initialQualityLevel({ saveData: true }), 0);
@@ -35,6 +38,49 @@ test('removes multisample attachments on performance profiles', () => {
   assert.equal(msaaSamplesFor(1200, 800, 0), 0);
   assert.equal(msaaSamplesFor(1200, 800, 2), 2);
   assert.equal(msaaSamplesFor(2000, 1000, 4), 2);
+});
+
+test('scales wake simulation cost without shrinking its world-space footprint', () => {
+  const fallback = qualityProfile(0), performance = qualityProfile(1), balanced = qualityProfile(2), cinematic = qualityProfile(3);
+  assert.deepEqual(
+    [fallback.wakeResolution, performance.wakeResolution, balanced.wakeResolution, cinematic.wakeResolution],
+    [192, 256, 384, 512],
+  );
+  assert.deepEqual(
+    [fallback.wakeMaxStamps, performance.wakeMaxStamps, balanced.wakeMaxStamps, cinematic.wakeMaxStamps],
+    [10, 14, 18, 20],
+  );
+  assert.equal(WAKE_SIZE, 150);
+  assert.ok(fallback.wakeResolution ** 2 < cinematic.wakeResolution ** 2 * 0.15);
+});
+
+test('keeps the atmospheric mist shader off the two old-hardware profiles', () => {
+  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).surfaceMist), [0, 0, 0.65, 1]);
+});
+
+test('reserves procedural precipitation impacts for balanced and cinematic water', () => {
+  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).precipitationRipples), [0, 0, 0.62, 1]);
+});
+
+test('scales the nocturnal point draw down to zero on fallback hardware', () => {
+  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).fireflyPoints), [0, 72, 153, 243]);
+});
+
+test('passes rain and hail conditions into the existing water surface uniforms', () => {
+  const water = Object.create(Water.prototype);
+  Object.assign(water, { level: 0, seaState: 0, windAngle: 0, rain: 0, hail: 0, windSpeed: 0 });
+  water.uniforms = {
+    seaState: { value: 0 }, weatherWind: { value: { set(x, y) { this.x = x; this.y = y; } } },
+    rainAmount: { value: 0 }, hailAmount: { value: 0 },
+  };
+
+  water.setConditions({ level: 0.4, seaState: 0.9, windAngle: Math.PI / 2, rain: 0.78, hail: 1, wind: 20 });
+
+  assert.equal(water.level, 0.4);
+  assert.equal(water.uniforms.rainAmount.value, 0.78);
+  assert.equal(water.uniforms.hailAmount.value, 1);
+  assert.ok(Math.abs(water.uniforms.weatherWind.value.x) < 1e-12);
+  assert.equal(water.uniforms.weatherWind.value.y, 1);
 });
 
 test('steps down on sustained missed frames and ignores a background pause', () => {

@@ -83,7 +83,7 @@ export class RadioDirector {
     this.enabled = false; this.started = false; this.lastAmbient = '';
     this.lastWeather = this.environment.key; this.lastRegion = null;
     this.lastEncounter = null; this.lastEncounterKnown = false; this.lastEncounterState = '';
-    this.lastLawBand = 0; this.lastPursuit = false; this.lastPursuitUnits = 0; this.lastCargo = false; this.lastDisabled = false;
+    this.lastLawBand = 0; this.lastPursuit = false; this.lastPursuitUnits = 0; this.lastPursuitAviation = false; this.lastPursuitAviationVisual = false; this.lastCargo = false; this.lastDisabled = false;
   }
 
   intro() {
@@ -151,6 +151,10 @@ export class RadioDirector {
     if (memory.outcome === 'salvage-spill') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Sheen position is logged. Response boat is carrying pads and boom. Keep traffic out of that cut.' };
     if (memory.outcome === 'net-evidence') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Monofilament, floats and two fish logged into evidence. That cut is open again.' };
     if (memory.outcome === 'net-removed') return { channel: 'CH 72', speaker: 'CAL ROOK · LOST KEY', text: 'Net boat is clear. No floats left in the cut. Leave it that way.' };
+    if (memory.outcome === 'fuel-theft-stopped') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Black johnboat is tied at the ramp. The work crew kept its fuel because Tower Boat held the moving position.' };
+    if (memory.outcome === 'fuel-theft-driven-off') return { channel: 'CH 68', speaker: 'WORK SKIFF', text: 'Tower Boat, those cans got us home. The rub rail can be fixed. We will remember the hull that stayed.' };
+    if (memory.outcome === 'fuel-theft-aided') return { channel: 'FWC TAC', speaker: 'FWC DISPATCH', text: 'Work crew confirmed the tower airboat helped take two fuel cans. Keep that hull on the call sheet.' };
+    if (memory.outcome === 'fuel-theft-missed') return { channel: 'CH 68', speaker: 'LEON DOSS · OLD MILL', text: 'Disabled work skiff made the dock under tow. Both fuel cans are still missing.' };
     return null;
   }
 
@@ -299,6 +303,10 @@ export class RadioDirector {
       else if (pursuitUnits >= 2) this.transmit({ channel: 'FWC TAC', speaker: 'MARINE 12', text: 'Twenty-seven, Marine Twelve entering the next cut. I have the bow.', priority: 4, key: 'law:backup:2', cooldown: 35 });
     }
     this.lastPursuitUnits = pursuitUnits;
+    const pursuitAviation = Boolean(e?.type === 'patrol' && e.state === 'pursuit' && e.aviationActive), aviationVisual = pursuitAviation && Boolean(e.aviationVisual);
+    if (pursuitAviation && !this.lastPursuitAviation) this.transmit({ channel: 'FWC TAC', speaker: 'FWC AIR 2', text: 'Twenty-seven, Air Two has the tower hull. I will hold the next cut and call the turns.', priority: 4, key: 'law:aviation:arrived', cooldown: 60 });
+    else if (pursuitAviation && this.lastPursuitAviation && this.lastPursuitAviationVisual && !aviationVisual) this.transmit({ channel: 'FWC TAC', speaker: 'FWC AIR 2', text: 'Twenty-seven, Air Two lost the hull under the canopy. Orbiting the last fix.', priority: 4, key: 'law:aviation:lost', cooldown: 45 });
+    this.lastPursuitAviation = pursuitAviation; this.lastPursuitAviationVisual = aviationVisual;
 
     if (cargoFresh) this.transmit({ channel: 'CH 72', speaker: 'CAL ROOK · LOST KEY', text: 'Keep that package off sixteen. Too many uniforms have their radios open.', priority: 3, key: 'cargo:hot', cooldown: 90 });
     this.lastCargo = cargo;
@@ -320,6 +328,7 @@ export class RadioDirector {
       this.enabled = true; this.lastWeather = this.environment.key; this.lastRegion = this.regions.current ? this.regions.current.id : null;
       this.lastLawBand = this.law.attention > 0.04 ? Math.ceil(this.law.attention) : 0; this.lastPursuit = this.law.pursuit;
       const e = this.encounters.active; this.lastPursuitUnits = e?.type === 'patrol' && e.state === 'pursuit' ? Math.max(1, Number(e.units) || 1) : 0;
+      this.lastPursuitAviation = Boolean(e?.type === 'patrol' && e.state === 'pursuit' && e.aviationActive); this.lastPursuitAviationVisual = this.lastPursuitAviation && Boolean(e.aviationVisual);
       this.lastCargo = this.law.hasContraband(); this.lastDisabled = this.condition.needsTow();
     }
     this.clock += dt; this.observe();

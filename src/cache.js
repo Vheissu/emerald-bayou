@@ -25,3 +25,15 @@ export function cachedResource(cache, key, create) {
   if (!resource) { resource = sharedResource(create()); cache.set(key, resource); }
   return resource;
 }
+
+const attributeRanges = new WeakMap();
+
+// Three.js clears updateRanges after each upload. Reuse one retained range object per attribute so dynamic effects
+// transfer only their live packed prefix without allocating fresh range objects every frame.
+export function updateAttributePrefix(attribute, componentCount) {
+  if (!attribute || componentCount <= 0) return;
+  let range = attributeRanges.get(attribute);
+  if (!range) { range = { start: 0, count: 0 }; attributeRanges.set(attribute, range); }
+  range.count = Math.min(attribute.array.length, Math.ceil(componentCount));
+  attribute.clearUpdateRanges(); attribute.updateRanges.push(range); attribute.needsUpdate = true;
+}
