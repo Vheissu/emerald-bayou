@@ -31,6 +31,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Download production models
+        env:
+          MODEL_ARCHIVE: ${{ runner.temp }}/emerald-bayou-models.zip
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/Vheissu/emerald-bayou/releases/download/v0.1.0/emerald-bayou-models.zip \
+            --output "$MODEL_ARCHIVE"
+          echo "60e5617bbda40b7e9641f53da86edf90b404926fd3cf75859470eadc9359d10b  $MODEL_ARCHIVE" | sha256sum --check
+          mkdir -p public/models
+          unzip -q "$MODEL_ARCHIVE" -d public/models
+
       - name: Build game
         run: npm run build
 

@@ -4,6 +4,8 @@
 
 An airboat game set in the south Florida backcountry. Runs in a browser, built on three.js and Vite, with no game engine underneath it. You get a 16 mile square of streamed swamp, thirteen jobs, a radio that talks back, and weather that will ruin your afternoon.
 
+[Play Emerald Bayou](https://vheissu.github.io/emerald-bayou/)
+
 Everything you see is generated at runtime except a handful of GLB props. The terrain, the rivers, the sawgrass prairie, the cypress, the fish camps and the people standing on their docks are all seeded from world coordinates, so the map is the same every time you load it and none of it is stored on disk.
 
 <table>
@@ -40,6 +42,8 @@ unzip models.zip -d public/models
 ```
 
 The game runs without them. `src/models.js` catches the failed loads and falls back to procedural stand-ins, so you get a playable but noticeably worse looking swamp.
+
+The GitHub Pages workflow downloads and verifies this archive before it builds the public game.
 
 ## Controls
 
