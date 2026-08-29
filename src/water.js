@@ -18,6 +18,7 @@ export class Water {
     this.rain = 0;
     this.hail = 0;
     this.windSpeed = 0;
+    this.dormant = false;
 
     // ---- reflection ----
     this.reflRT = new THREE.WebGLRenderTarget(Math.max(1, Math.floor(this.size.x * this.reflectionScale)), Math.max(1, Math.floor(this.size.y * this.reflectionScale)), {
@@ -318,7 +319,7 @@ export class Water {
     this.wakeMaxStamps = Math.max(1, Math.min(MAX_WAKE_STAMPS, Math.round(quality.wakeMaxStamps ?? MAX_WAKE_STAMPS)));
     this.simMat.uniforms.stampCount.value = this.wakeMaxStamps;
     this.uniforms.precipitationRipples.value = Math.max(0, Math.min(1, quality.precipitationRipples ?? 1));
-    if (wakeResolution !== this.wakeResolution) {
+    if (wakeResolution !== this.wakeResolution || this.wakeA.width !== wakeResolution || this.wakeA.height !== wakeResolution) {
       this.wakeResolution = wakeResolution;
       this.wakeCell = WAKE_SIZE / wakeResolution;
       this.simMat.uniforms.texel.value = 1 / wakeResolution;
@@ -327,6 +328,19 @@ export class Water {
       this.wakeB.setSize(wakeResolution, wakeResolution);
       this.wakeNeedsClear = true;
     }
+  }
+
+  hibernate() {
+    if (this.dormant) return false;
+    this.reflRT.setSize(1, 1); this.wakeA.setSize(1, 1); this.wakeB.setSize(1, 1); this.wakeNeedsClear = true; this.dormant = true;
+    return true;
+  }
+
+  resume() {
+    if (!this.dormant) return false;
+    this.dormant = false;
+    this.wakeA.setSize(this.wakeResolution, this.wakeResolution); this.wakeB.setSize(this.wakeResolution, this.wakeResolution); this.wakeNeedsClear = true;
+    return true;
   }
 
   resize(w, h) {
@@ -338,10 +352,10 @@ export class Water {
     const width = this.reflRT.width, height = this.reflRT.height, pixels = width * height;
     const colorBytes = pixels * 8 * (this.reflectionMipmaps ? 4 / 3 : 1), depthBytes = pixels * 4;
     const reflectionAttachmentBytes = Math.round(colorBytes + depthBytes);
-    const wakeAttachmentBytes = this.wakeResolution * this.wakeResolution * 8 * 2;
+    const wakeWidth = this.wakeA.width, wakeHeight = this.wakeA.height, wakeAttachmentBytes = wakeWidth * wakeHeight * 8 * 2;
     return {
-      width, height, pixels, mipmaps: this.reflectionMipmaps, reflectionAttachmentBytes,
-      wakeResolution: this.wakeResolution, wakeMaxStamps: this.wakeMaxStamps, wakeAttachmentBytes,
+      width, height, pixels, dormant: this.dormant, mipmaps: this.reflectionMipmaps, reflectionAttachmentBytes,
+      wakeResolution: this.wakeResolution, wakeWidth, wakeHeight, wakeMaxStamps: this.wakeMaxStamps, wakeAttachmentBytes,
       precipitationRipples: this.uniforms.precipitationRipples.value,
       estimatedAttachmentBytes: reflectionAttachmentBytes + wakeAttachmentBytes,
     };

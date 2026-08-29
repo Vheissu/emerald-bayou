@@ -83,6 +83,28 @@ test('passes rain and hail conditions into the existing water surface uniforms',
   assert.equal(water.uniforms.weatherWind.value.y, 1);
 });
 
+test('background hibernation releases reflection and wake targets without changing world scale', () => {
+  const renderer = { getDrawingBufferSize: target => target.set(1920, 1080) };
+  const profile = qualityProfile(3), water = new Water(renderer, { clone: () => ({ normalize() { return this; } }) }, profile);
+  const active = water.memoryStats();
+
+  assert.equal(water.hibernate(), true);
+  assert.equal(water.hibernate(), false);
+  const dormant = water.memoryStats();
+  assert.equal(dormant.dormant, true);
+  assert.deepEqual([dormant.width, dormant.height, dormant.wakeWidth, dormant.wakeHeight], [1, 1, 1, 1]);
+  assert.equal(dormant.wakeResolution, profile.wakeResolution);
+  assert.ok(dormant.estimatedAttachmentBytes < active.estimatedAttachmentBytes * 0.001);
+
+  assert.equal(water.resume(), true);
+  assert.equal(water.resume(), false);
+  water.resize(1920, 1080);
+  const restored = water.memoryStats();
+  assert.equal(restored.dormant, false);
+  assert.equal(restored.estimatedAttachmentBytes, active.estimatedAttachmentBytes);
+  assert.equal(WAKE_SIZE, 150);
+});
+
 test('steps down on sustained missed frames and ignores a background pause', () => {
   const quality = new AdaptiveQualityController({ initialLevel: 3, sampleSeconds: 1 });
   let change = null;

@@ -31,7 +31,7 @@ function quadPass(material) {
 export class Pipeline {
   constructor(renderer, camera, quality = {}) {
     this.renderer = renderer; this.camera = camera;
-    this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false; this.lensWetness = 0;
+    this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false; this.lensWetness = 0; this.dormant = false;
     const size = new THREE.Vector2(); renderer.getDrawingBufferSize(size);
     this.size = size;
     const w = size.x, h = size.y;
@@ -236,6 +236,16 @@ export class Pipeline {
       this.grade.material.uniforms.lensQuality.value = quality.lensWater ?? 0;
     }
   }
+  hibernate() {
+    if (this.dormant) return false;
+    this.resize(1, 1); this.dormant = true;
+    return true;
+  }
+  resume() {
+    if (!this.dormant) return false;
+    this.dormant = false;
+    return true;
+  }
   updateLensWeather(time = 0, conditions = {}) {
     this.lensWetness = lensWetnessStep(this.lensWetness, conditions);
     const u = this.grade.material.uniforms;
@@ -264,7 +274,7 @@ export class Pipeline {
     const sceneBytes = pixels * 12 * (1 + samples);
     const compositeBytes = pixels * 12, postBytes = pixels * 4 + (this.finalEnabled ? pixels * 4 : 4);
     const bloomBytes = this.bloomEnabled ? Math.floor(width / 4) * Math.floor(height / 4) * 16 : 16;
-    return { width, height, pixels, samples, bloom: this.bloomEnabled, finalPass: this.finalEnabled, surfaceMist: this.grade.material.uniforms.mistQuality.value, lensWater: this.grade.material.uniforms.lensQuality.value, lensWetness: this.lensWetness, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
+    return { width, height, pixels, samples, dormant: this.dormant, bloom: this.bloomEnabled, finalPass: this.finalEnabled, surfaceMist: this.grade.material.uniforms.mistQuality.value, lensWater: this.grade.material.uniforms.lensQuality.value, lensWetness: this.lensWetness, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
   }
   // scene: opaque world. overlays: array of scenes rendered on top (water, fx)
   render(scene, camera, overlays, mode = 'full') {

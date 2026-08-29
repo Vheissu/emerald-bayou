@@ -100,6 +100,16 @@ export class EngineAudio {
     // sfx bus
     this.sfx = ctx.createGain(); this.sfx.gain.value = 0.9; this.sfx.connect(master);
   }
+  async suspend() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state === 'closed' || ctx.state === 'suspended' || typeof ctx.suspend !== 'function') return false;
+    try { await ctx.suspend(); return true; } catch (error) { return false; }
+  }
+  async resume() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state === 'closed' || ctx.state !== 'suspended' || typeof ctx.resume !== 'function') return false;
+    try { await ctx.resume(); return true; } catch (error) { return false; }
+  }
   // ---- one-shot effects ----
   splash(intensity = 1, heavy = false) {
     if (!this.ctx) return; const ctx = this.ctx, now = ctx.currentTime;
