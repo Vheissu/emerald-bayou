@@ -129,6 +129,7 @@ export class RadioDirector {
     const place = memory.place || 'the berth';
     if (memory.outcome === 'distress-repaired') return { channel: 'CH 68', speaker: 'ELI · SKIFF 6', text: 'Tower Boat, Eli. Fuel line stayed clear all the way home. I owe you a dry one.' };
     if (memory.outcome === 'distress-berth') return { channel: 'CH 68', speaker: 'ELI · SKIFF 6', text: `${place} has me dry. Camp boat is going for my skiff at first light. I owe you.` };
+    if (memory.outcome === 'surge-evacuation') return { channel: 'CH 68', speaker: 'MARA KEENE · TOWER', text: `Transfer from ${place} is logged clear. The resident is dry. Nobody goes back until the surge falls.` };
     if (memory.outcome === 'grounding-towed') return { channel: 'CH 68', speaker: 'LEON DOSS · OLD MILL', text: 'That skiff came home clean underneath. No cut in the bank where she sat. Good pull.' };
     if (memory.outcome === 'grounding-wait') return { channel: 'FWC TAC', speaker: 'FWC SHALLOW WATER', text: 'Grounded skiff floated on the flood. Lower unit is clean and the bank was not scarred.' };
     if (memory.outcome === 'grounding-scarred') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Fresh trench confirmed on the grounding bank. Coordinates and tower hull are in the habitat report.' };
@@ -240,7 +241,14 @@ export class RadioDirector {
   }
 
   encounterCall(e) {
-    if (e.type === 'distress') this.transmit({ channel: 'CH 16', speaker: e.recognized ? 'ELI · SKIFF 6' : 'DISTRESS SKIFF', text: e.recognized ? 'Tower Boat, if that is you by the flare, I have a dead motor and I am drifting.' : 'Any vessel near the flare, dead motor and no steerage. One person aboard.', priority: 3, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
+    if (e.type === 'distress') {
+      const evacuation = e.variant === 'surge-evacuation';
+      this.transmit({
+        channel: 'CH 16', speaker: evacuation ? `${e.campName} · CAMP RADIO` : e.recognized ? 'ELI · SKIFF 6' : 'DISTRESS SKIFF',
+        text: evacuation ? `Tower Boat, water is across the low bank at ${e.campName}. I have one person on the dock. Get them to the ${e.drop?.name || 'high ground'} before the wind comes around.` : e.recognized ? 'Tower Boat, if that is you by the flare, I have a dead motor and I am drifting.' : 'Any vessel near the flare, dead motor and no steerage. One person aboard.',
+        priority: evacuation ? 4 : 3, key: `encounter:${e.type}:${evacuation ? 'surge' : Math.floor(e.t)}`, cooldown: 20,
+      });
+    }
     else if (e.type === 'airrescue') this.transmit({ channel: 'CH 16', speaker: 'SECTOR KEY WEST', text: 'Rescue 6507 is working parallel tracks for one person in the water. Tower Boat, check the marked sector and report an exact position.', priority: 4, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
     else if (e.type === 'grounding') this.transmit({ channel: 'CH 16', speaker: e.recognized ? 'LEON DOSS · OLD MILL' : 'GROUNDED SKIFF', text: e.falling ? 'Hard aground on a falling tide. Motor is up. I need a slow stern pull or I wait for the flood.' : 'Hard aground on the bank. Motor is up and I am staying off the throttle.', priority: 3, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
     else if (e.type === 'fire') this.transmit({ channel: 'CH 16', speaker: 'BURNING SKIFF', text: 'Mayday, mayday. Outboard and portable tank are burning. One person pinned forward. Any vessel close, come in from the bow.', priority: 4, key: `encounter:${e.type}:${Math.floor(e.t)}`, cooldown: 20 });
@@ -259,7 +267,7 @@ export class RadioDirector {
     else if (e.type === 'race' && state === 'running') this.transmit({ channel: 'CH 72', speaker: 'MUD HEN', text: 'Horn. Run it.', priority: 3, key: 'race:running', cooldown: 40 });
     else if (e.type === 'smuggler' && state === 'chase') this.transmit({ channel: 'CH 72', speaker: 'UNKNOWN SKIFF', text: 'You picked up the wrong parcel. Put it in the water and turn away.', priority: 4, key: 'runners:chase', cooldown: 50 });
     else if (e.type === 'distress' && state === 'repair') this.transmit({ channel: 'CH 16', speaker: 'ELI · SKIFF 6', text: 'Hold her steady there. Fuel line is fouled; I need half a minute.', priority: 2, key: 'distress:repair', cooldown: 40 });
-    else if (e.type === 'distress' && state === 'aboard') this.transmit({ channel: 'CH 16', speaker: 'ELI · SKIFF 6', text: `I am aboard Tower Boat. We are running for ${e.drop?.name || 'a safe berth'}; the skiff is staying on the flare.`, priority: 3, key: 'distress:aboard', cooldown: 40 });
+    else if (e.type === 'distress' && state === 'aboard') this.transmit({ channel: 'CH 16', speaker: e.variant === 'surge-evacuation' ? `${e.campName} · CAMP RADIO` : 'ELI · SKIFF 6', text: e.variant === 'surge-evacuation' ? `Tower Boat has them. Dock is clear. They are bound for the ${e.drop?.name || 'high ground'}.` : `I am aboard Tower Boat. We are running for ${e.drop?.name || 'a safe berth'}; the skiff is staying on the flare.`, priority: e.variant === 'surge-evacuation' ? 4 : 3, key: e.variant === 'surge-evacuation' ? 'distress:surge-aboard' : 'distress:aboard', cooldown: 40 });
     else if (e.type === 'grounding' && state === 'tow') this.transmit({ channel: 'CH 16', speaker: 'GROUNDED SKIFF', text: 'Stern line is fast. Keep the pull straight and slow. My outboard stays trimmed until the hull floats.', priority: 3, key: 'grounding:tow', cooldown: 40 });
     else if (e.type === 'grounding' && state === 'secured') this.transmit({ channel: 'FWC TAC', speaker: 'FWC SHALLOW WATER', text: 'Position copied. Leave the motor up and stay aboard. We will work the skiff on the flood.', priority: 3, key: 'grounding:secured', cooldown: 40 });
     else if (e.type === 'grounding' && state === 'depart') this.transmit({ channel: 'CH 16', speaker: 'GROUNDED SKIFF', text: 'Hull is floating. Line is clear and the outboard is down. I am opening the gap.', priority: 2, key: 'grounding:depart', cooldown: 40 });

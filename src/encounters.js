@@ -15,6 +15,9 @@ import {
   pursuitVisualHeld, wantedLevel,
 } from './pursuit.js';
 import { emitWakeStamp } from './wakestamps.js';
+import {
+  pickStormEvacuationCamp, stormEvacuationLeadSeconds, stormEvacuationWindow,
+} from './stormevacuation.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -283,6 +286,8 @@ export class EncounterDirector {
     this.game.save.encounterMemorySeq = Math.max(0, Number(this.game.save.encounterMemorySeq) || 0);
     this.distressEcho = null; this.patrolAlert = 0;
     this._f = new THREE.Vector2(); this._r = new THREE.Vector2(); this._flow = new THREE.Vector2(); this._personBoat = { x: 0, z: 0, speed: 0 };
+    this.stormEvacuationUsed = false; this.stormEvacuationWeather = this.environment.key;
+    this.stormEvacuationContext = { weather: '', phase: '', progress: 0, surge: 0, surgeRate: 0, duration: 0, playerX: 0, playerZ: 0, waterLevel: 0, leadSeconds: 0 };
     this.airWashStamp = { x: 0, z: 0, radius: 8.5, height: -0.82, foam: 2.2, foamRadius: 9.5 };
   }
 
@@ -350,6 +355,30 @@ export class EncounterDirector {
     });
   }
 
+  syncStormEvacuationPassage() {
+    const weather = this.environment.key;
+    if (weather !== this.stormEvacuationWeather) { this.stormEvacuationWeather = weather; this.stormEvacuationUsed = false; }
+  }
+
+  stormEvacuationCamp() {
+    this.syncStormEvacuationPassage();
+    if (this.stormEvacuationUsed || !this.world?.liveCamps?.size) return null;
+    const E = this.environment, H = E.hurricane || {}, c = this.stormEvacuationContext;
+    c.weather = E.key; c.phase = H.phase || ''; c.progress = H.progress || 0; c.surge = E.values?.surge || 0; c.surgeRate = E.surgeRate || 0; c.duration = E.weatherDuration || 0;
+    if (!stormEvacuationWindow(c)) return null;
+    c.playerX = this.phys.pos.x; c.playerZ = this.phys.pos.y; c.waterLevel = E.waterLevel || 0; c.leadSeconds = stormEvacuationLeadSeconds(c);
+    return pickStormEvacuationCamp(this.world.liveCamps.values(), c);
+  }
+
+  stormEvacuationAt(camp) {
+    const dx = camp.tie.x - camp.bank.x, dz = camp.tie.z - camp.bank.z, length = Math.hypot(dx, dz) || 1;
+    const outwardX = dx / length, outwardZ = dz / length, sideX = -outwardZ, sideZ = outwardX;
+    const moored = this.world.liveCamps.get(camp.key)?.userData?.skiffWater;
+    const occupiedSide = moored ? (moored.x - camp.tie.x) * sideX + (moored.z - camp.tie.z) * sideZ : 0;
+    const side = occupiedSide >= 0 ? -1 : 1;
+    return { x: camp.tie.x + outwardX * 0.8 + sideX * side * 2.8, z: camp.tie.z + outwardZ * 0.8 + sideZ * side * 2.8, heading: Math.atan2(dx, dz) };
+  }
+
   pickType() {
     const weather = this.environment.key, night = this.environment.hour < 5.5 || this.environment.hour > 20.5;
     const heat = this.law ? this.law.attention : 0;
@@ -381,8 +410,10 @@ export class EncounterDirector {
 
   start(type = this.pickType(), nearby = false) {
     if (this.active) this.finish(false, true);
-    const at = type === 'grounding' ? this.groundingSpot(nearby) : nearby ? this.spot(42, 62, 38) : this.spot(); if (!at) { this.next = 20; return false; }
-    if (type === 'distress') this.startDistress(at);
+    const evacuationCamp = type === 'distress' ? this.stormEvacuationCamp() : null;
+    const at = evacuationCamp ? this.stormEvacuationAt(evacuationCamp) : type === 'grounding' ? this.groundingSpot(nearby) : nearby ? this.spot(42, 62, 38) : this.spot(); if (!at) { this.next = 20; return false; }
+    if (evacuationCamp) this.startStormEvacuation(evacuationCamp, at);
+    else if (type === 'distress') this.startDistress(at);
     else if (type === 'airrescue') this.startAirRescue(at);
     else if (type === 'grounding') this.startGrounding(at);
     else if (type === 'fire') this.startFire(at);
@@ -430,31 +461,61 @@ export class EncounterDirector {
     this.active = { type: 'distress', x: at.x, z: at.z, heading: at.heading, state: 'waiting', t: 0, hold: 0, known: false, leave: 0, recognized: Boolean(this.reputation && this.reputation.score('locals') >= 3) };
   }
 
-  distressDrop(x, z) {
-    const options = [], berth = (baseX, baseZ, name, preferred = 0) => {
-      for (let i = 0; i < 16; i++) {
-        const a = preferred + (i ? Math.ceil(i / 2) * (i % 2 ? 1 : -1) * Math.PI / 8 : 0), r = 21 + (i % 3) * 3;
-        const px = baseX + Math.cos(a) * r, pz = baseZ + Math.sin(a) * r;
-        if (this.terrain.heightAt(px, pz) < -0.72 && !this.world.blockedAt(px, pz)) return { x: px, z: pz, name };
-      }
-      return { x: baseX, z: baseZ, name };
+  startStormEvacuation(camp, at) {
+    this.clearDistressEcho();
+    const R = this.rigs.distress; R.boat.visible = true; R.survivor.visible = true; R.passenger.visible = false; R.flare.group.visible = true;
+    R.boat.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) - 0.05, at.z); R.boat.rotation.y = at.heading; wave(R.survivor);
+    const drop = this.stormEvacuationDrop(at.x, at.z);
+    this.active = {
+      type: 'distress', variant: 'surge-evacuation', x: at.x, z: at.z, heading: at.heading,
+      state: 'waiting', t: 0, hold: 0, known: true, leave: 0, recognized: true,
+      campKey: camp.key, campName: camp.name, bankClearance: camp.bank.h - this.environment.waterLevel, drop,
     };
+    this.stormEvacuationUsed = true;
+    this.game.toast('Surge evacuation', `Water is across the low bank at ${camp.name}. One resident needs the ${drop.name} before the backside hits.`, 4.2);
+  }
+
+  distressBerth(baseX, baseZ, name, preferred = 0) {
+    for (let i = 0; i < 16; i++) {
+      const a = preferred + (i ? Math.ceil(i / 2) * (i % 2 ? 1 : -1) * Math.PI / 8 : 0), r = 21 + (i % 3) * 3;
+      const x = baseX + Math.cos(a) * r, z = baseZ + Math.sin(a) * r;
+      if (this.terrain.heightAt(x, z) < -0.72 && !this.world.blockedAt(x, z)) return { x, z, name };
+    }
+    return { x: baseX, z: baseZ, name };
+  }
+
+  distressDrop(x, z) {
+    const options = [];
     const nc = this.world.nearestCamp(x, z, 4200);
     if (nc) {
       const c = nc.camp, dx = c.tie.x - c.bank.x, dz = c.tie.z - c.bank.z;
-      options.push(berth(c.tie.x, c.tie.z, c.name, Math.atan2(dz, dx)));
+      options.push(this.distressBerth(c.tie.x, c.tie.z, c.name, Math.atan2(dz, dx)));
     }
     const home = this.game.dockTie;
-    options.push(berth(home.x, home.z, 'tower dock', Math.atan2(home.z - z, home.x - x)));
+    options.push(this.distressBerth(home.x, home.z, 'tower dock', Math.atan2(home.z - z, home.x - x)));
     options.sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z));
     return options[0];
   }
 
+  stormEvacuationDrop(x, z) {
+    const home = this.game.dockTie;
+    let best = this.distressBerth(home.x, home.z, 'tower dock', Math.atan2(home.z - z, home.x - x));
+    let bestDistance = Math.hypot(best.x - x, best.z - z);
+    for (const site of this.world.sitesNear(x, z, 2400)) {
+      if (site.kind !== 'ramp' || site.hTop < this.environment.waterLevel + 0.75) continue;
+      const berth = this.distressBerth(site.x, site.z, 'public boat ramp', site.ang);
+      const distance = Math.hypot(berth.x - x, berth.z - z);
+      if (distance < bestDistance) { best = berth; bestDistance = distance; }
+    }
+    return best;
+  }
+
   boardDistress(e) {
     if (e.state !== 'waiting') return;
-    const R = this.rigs.distress; e.state = 'aboard'; e.drop = this.distressDrop(e.x, e.z); e.boardedAt = e.t;
+    const evacuation = e.variant === 'surge-evacuation';
+    const R = this.rigs.distress; e.state = 'aboard'; e.drop ||= evacuation ? this.stormEvacuationDrop(e.x, e.z) : this.distressDrop(e.x, e.z); e.boardedAt = e.t;
     R.survivor.visible = false; R.passenger.visible = true; this.clearPrompt(); this.audio.checkpoint();
-    this.game.toast('Operator aboard', `Run him to ${e.drop.name}. Keep the front bench dry.`, 3.2);
+    this.game.toast(evacuation ? 'Resident aboard' : 'Operator aboard', evacuation ? `Run for ${e.drop.name}. The backside wind is still coming.` : `Run him to ${e.drop.name}. Keep the front bench dry.`, 3.2);
   }
 
   startGrounding(at) {
@@ -1464,7 +1525,7 @@ export class EncounterDirector {
   }
 
   beginDistressEcho(e) {
-    if (e.type !== 'distress' || (e.state !== 'repair' && e.state !== 'aboard')) return false;
+    if (e.type !== 'distress' || e.variant === 'surge-evacuation' || (e.state !== 'repair' && e.state !== 'aboard')) return false;
     const R = this.rigs.distress, mode = e.state === 'repair' ? 'depart' : 'adrift';
     const heading = mode === 'depart' ? this.departureHeading(e.x, e.z, e.heading) : e.heading;
     this.distressEcho = { mode, x: e.x, z: e.z, heading, t: mode === 'depart' ? 34 : 80, ph: e.t || 0 };
@@ -1585,8 +1646,8 @@ export class EncounterDirector {
   }
 
   updateDistress(e, dt, t) {
-    const R = this.rigs.distress;
-    if (this.currents && e.state !== 'repair') { const f = this.currents.flowAt(e.x, e.z, this._flow); e.x += f.x * dt * 0.58; e.z += f.y * dt * 0.58; }
+    const R = this.rigs.distress, evacuation = e.variant === 'surge-evacuation';
+    if (this.currents && !evacuation && e.state !== 'repair') { const f = this.currents.flowAt(e.x, e.z, this._flow); e.x += f.x * dt * 0.58; e.z += f.y * dt * 0.58; }
     const d = Math.hypot(e.x - this.phys.pos.x, e.z - this.phys.pos.y);
     R.boat.position.x = e.x; R.boat.position.z = e.z;
     R.boat.position.y = this.water.waveHeight(e.x, e.z, t) - 0.05; R.boat.rotation.z = Math.sin(t * 0.8) * 0.025;
@@ -1594,13 +1655,23 @@ export class EncounterDirector {
     if (R.passenger.visible) animatePerson(R.passenger, t, dt);
     if (R.survivor.userData.waveT <= 0 && d < 130) wave(R.survivor);
     const pulse = 0.5 + 0.5 * Math.sin(t * 7); R.flare.light.intensity = 50 + pulse * 95; R.flare.bulb.scale.setScalar(0.7 + pulse * 0.8);
-    if (d < 120) this.known(e, 'Distress flare', e.recognized ? 'He knows the hull and is waving you in.' : 'A skiff is dead in the water ahead.');
-    if (e.known && e.state !== 'aboard') this.point(e.x, e.z, 'distress flare', '#ff5a36');
+    if (d < 120) this.known(e, evacuation ? 'Surge pickup' : 'Distress flare', evacuation ? `${e.campName} has one resident waiting at the dock.` : e.recognized ? 'He knows the hull and is waving you in.' : 'A skiff is dead in the water ahead.');
+    if (e.known && e.state !== 'aboard') this.point(e.x, e.z, evacuation ? `${e.campName} pickup` : 'distress flare', '#ff5a36');
     if (d < 70 && R.boat.visible) { const o = this.boatObs; o.ax = e.x - Math.sin(e.heading) * 2; o.az = e.z - Math.cos(e.heading) * 2; o.bx = e.x + Math.sin(e.heading) * 2; o.bz = e.z + Math.cos(e.heading) * 2; o.tag = 'boat'; this.obs.push(o); }
+    if (evacuation && e.state === 'waiting') {
+      const phase = this.environment.hurricane?.phase;
+      if (this.environment.key !== 'hurricane' || phase === 'back-eyewall' || phase === 'trailing-bands') {
+        this.game.toast('Pickup window closed', this.environment.key === 'hurricane' ? `They have gone back inside at ${e.campName}. Backside wind has closed the dock.` : `Water is falling. ${e.campName} has cancelled the pickup.`, 3.8);
+        this.finish(false); return;
+      }
+    }
     if (e.state === 'waiting' && d < 13 && this.phys.speed * MPH < 6 && this.canInteract()) {
-      this.setPrompt('hold steady for a fuel-line repair <i>· F bring the operator aboard</i>');
-      if (this.interact) { e.state = 'repair'; this.clearPrompt(); this.game.toast('Hold her steady', 'He is clearing the fuel line.', 2.4); }
-      else if (this.alternate) this.boardDistress(e);
+      this.setPrompt(evacuation ? `bring the ${e.campName} resident aboard` : 'hold steady for a fuel-line repair <i>· F bring the operator aboard</i>');
+      if (this.interact) {
+        if (evacuation) this.boardDistress(e);
+        else { e.state = 'repair'; this.clearPrompt(); this.game.toast('Hold her steady', 'He is clearing the fuel line.', 2.4); }
+      }
+      else if (!evacuation && this.alternate) this.boardDistress(e);
     }
     if (e.state === 'repair') {
       if (d < 15 && this.phys.speed * MPH < 7) e.hold += dt; else e.hold = Math.max(0, e.hold - dt * 1.5);
@@ -1610,10 +1681,11 @@ export class EncounterDirector {
       const q = e.drop, dd = Math.hypot(q.x - this.phys.pos.x, q.z - this.phys.pos.y);
       this.point(q.x, q.z, q.name, '#7be08a');
       if (dd < 13 && this.phys.speed * MPH < 5 && !this.game.dockJob && !this.game.atBoard) {
-        this.setPrompt(`put the operator ashore at ${q.name}`);
+        this.setPrompt(`put the ${evacuation ? 'resident' : 'operator'} ashore at ${q.name}`);
         if (this.interact) {
           if (this.law) this.law.cool(0.3);
-          this.complete('Safe berth reached', `${q.name} took him in. His skiff can wait for daylight.`, 275, 1.25, 'You carried a stranded operator to a safe berth.', 'distress-berth', q.name);
+          if (evacuation) this.complete('Surge evacuation complete', `The resident from ${e.campName} is ashore at ${q.name}. Nobody goes back until the water drops.`, 420, 2, `You evacuated a resident from ${e.campName} ahead of the backside surge.`, 'surge-evacuation', `${e.campName} to ${q.name}`);
+          else this.complete('Safe berth reached', `${q.name} took him in. His skiff can wait for daylight.`, 275, 1.25, 'You carried a stranded operator to a safe berth.', 'distress-berth', q.name);
         }
       }
     }
@@ -2378,7 +2450,7 @@ export class EncounterDirector {
   canInteract() { return !this.game.dockCamp && !this.game.dockJob && !this.game.atBoard; }
 
   update(dt, t, enabled = true) {
-    this.enabled = enabled; this.obs.length = 0;
+    this.enabled = enabled; this.obs.length = 0; this.syncStormEvacuationPassage();
     this.audio.helicopter(0);
     this.audio.patrolSiren(0);
     this.updateSpills(this.game.paused ? 0 : dt);
