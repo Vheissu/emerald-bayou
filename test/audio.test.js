@@ -65,6 +65,15 @@ test('a multi-blast fog signal shares one spatial output and releases it after t
   assert.equal(audio.spatialStats().transientActive, 0);
 });
 
+test('a Rule 34 danger signal uses five rapid blasts on one spatial output', () => {
+  const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx; audio.sfx = {};
+  audio.setListener(0, 0, 0, -1); audio.maneuverHorn(5, 0.4, -18, 0);
+  assert.equal(ctx.allocations.panners.length, 1); assert.equal(ctx.allocations.panners[0].pan.value, -0.92);
+  assert.equal(ctx.allocations.oscillators.length, 10); assert.equal(audio.spatialStats().transientActive, 1);
+  ctx.allocations.oscillators.at(-1).finish();
+  assert.equal(ctx.allocations.panners[0].disconnected, true); assert.equal(audio.spatialStats().transientActive, 0);
+});
+
 test('patrol siren is lazy and reuses one fixed audio graph throughout a chase', () => {
   const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx; audio.sfx = {};
   audio.patrolSiren(0);

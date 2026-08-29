@@ -12,7 +12,10 @@ import { cachedResource, sharedResource, trimOldest } from './cache.js';
 import { MAX_SHIFT_WAKE_COMPLAINTS, wakeConsequence, wakeSeverity } from './wakeconduct.js';
 import { hornYieldSpeedScale, hornYieldStrength, pursuitYieldSpeedScale, pursuitYieldStrength } from './trafficresponse.js';
 import { WakeStampPool } from './wakestamps.js';
-import { navigationLightVisibility } from './navigationrules.js';
+import {
+  NAVIGATION_ROLE, NAVIGATION_VESSEL, clearNavigationEncounter, createNavigationEncounter,
+  evaluateNavigationEncounter, navigationLightVisibility,
+} from './navigationrules.js';
 import { waterspoutAvoidanceStrength, waterspoutProbeScore, waterspoutReactionReady } from './waterspout.js';
 
 // The bayou's small life: mullet jumping, bait boiling away from the bow, deadhead logs and dead snags in the still
@@ -386,7 +389,8 @@ export class Traffic {
       record.wakeShiftKey = typeof record.wakeShiftKey === 'string' ? record.wakeShiftKey : ''; record.wakeShiftComplaints = Math.max(0, Math.min(MAX_SHIFT_WAKE_COMPLAINTS, Number(record.wakeShiftComplaints) || 0)); record.lastWakeSeverity = Math.max(0, Math.min(2, Number(record.lastWakeSeverity) || 0));
       const shelter = { active: false, arrived: false, kind: '', key: '', name: '', x: 0, z: 0, heading: 0, distance: 0 };
       const collision = { active: false, stage: '', t: 0, elapsed: 0, hold: 0, farT: 0, signalT: 0, impact: 0, distance: Infinity, prevState: 'transit', prevRetiring: false, prevLeg: 0, prevWorkT: 0, prevWorkRig: false, marker: { x: 0, z: 0, label: '', color: '#f06c38', trafficCollision: profile.id } };
-      Object.assign(b, { profile, record, shelter, collision, shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, fogHornT: 6 + i * 16, fogSignalIndex: i, signalYield: 0, signalT: 0, signalSide: -1, signalReplyT: 0, signalReplyLong: false, yellT: 0, ground: 0, shx: 0, shz: 0, pursuitYield: 0, pursuitNoticeT: 0, pursuitReactionDelay: 0.42 + this.rand() * 0.58, pursuitYieldSide: i & 1 ? 1 : -1, pursuitReacted: false, spoutAvoidance: 0, spoutDistance: Infinity, spoutNoticeT: 0, spoutReactionDelay: 0.65 + this.rand() * 1.1, spoutReacted: false });
+      const navigation = createNavigationEncounter();
+      Object.assign(b, { profile, record, shelter, collision, navigation, shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, fogHornT: 6 + i * 16, fogSignalIndex: i, signalYield: 0, signalT: 0, signalSide: -1, signalReplyT: 0, signalReplyLong: false, navEvalT: i * 0.014, navSignalT: 0, navSignalState: 0, yellT: 0, ground: 0, shx: 0, shz: 0, pursuitYield: 0, pursuitNoticeT: 0, pursuitReactionDelay: 0.42 + this.rand() * 0.58, pursuitYieldSide: i & 1 ? 1 : -1, pursuitReacted: false, spoutAvoidance: 0, spoutDistance: Infinity, spoutNoticeT: 0, spoutReactionDelay: 0.65 + this.rand() * 1.1, spoutReacted: false });
       this.addWorkingDetails(b, i);
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
       b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
@@ -665,6 +669,7 @@ export class Traffic {
     if (b.collision?.active) this.restoreAfterCollision(b);
     this.clearShelter(b); b.assisting = false; b.active = false; b.retiring = false; b.state = 'off'; b.mesh.visible = false; b.x = b.z = 1e9; b.speed = 0; b.spawnT = delay + this.rand() * delay;
     b.signalYield = 0; b.signalT = 0; b.signalReplyT = 0; b.signalReplyLong = false;
+    clearNavigationEncounter(b.navigation); b.navEvalT = 0; b.navSignalT = 0; b.navSignalState = 0;
     if (b.workRig) b.workRig.visible = false; if (b.navLights) b.navLights.visible = false; if (b.deckLight) b.deckLight.intensity = 0;
     if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; }
     if (b.beacon) b.beacon.visible = false; if (b.beaconBulbs) b.beaconBulbs.blueLight.intensity = b.beaconBulbs.redLight.intensity = 0;
@@ -679,7 +684,8 @@ export class Traffic {
       let best = null, bd = 0;
       for (let i = 0; i < 12; i++) { const h = i / 12 * 6.283; const d = -hf.compute(x - Math.sin(h) * 40, z - Math.cos(h) * 40) - hf.compute(x - Math.sin(h) * 80, z - Math.cos(h) * 80); if (d > bd) { bd = d; best = h; } }
       if (best === null || bd < 3) continue;
-      this.clearShelter(b); b.assisting = false; b.x = x; b.z = z; b.heading = best; b.speed = b.max * 0.45; b.mesh.visible = true; b.ground = 0; b.active = true; b.retiring = false; this.beginLeg(b, true);
+      this.clearShelter(b); b.assisting = false; b.x = x; b.z = z; b.heading = best; b.speed = b.max * 0.45; b.mesh.visible = true; b.ground = 0; b.active = true; b.retiring = false;
+      clearNavigationEncounter(b.navigation); b.navEvalT = 0; b.navSignalT = 0; b.navSignalState = 0; this.beginLeg(b, true);
       const key = this.shiftKey(b);
       if (b.record.lastShift !== key) { b.record.lastShift = key; b.record.shifts++; this.fx.game.persist(); }
       return true;
@@ -753,10 +759,11 @@ export class Traffic {
     if (!b.crew?.length) return;
     const P = this.phys, desired = Math.atan2(-(P.pos.x - b.x), -(P.pos.y - b.z));
     const relative = Math.atan2(Math.sin(desired - b.heading), Math.cos(desired - b.heading));
-    const pursuitYield = b.pursuitYield || 0, lookRange = pursuitYield > 0.04 ? 145 : b.signalT > 0 ? 120 : 46;
+    const pursuitYield = b.pursuitYield || 0, navigationRisk = b.navigation?.risk || 0;
+    const lookRange = pursuitYield > 0.04 ? 145 : navigationRisk > 0.04 ? 165 : b.signalT > 0 ? 120 : 46;
     const look = d < lookRange ? Math.max(-0.95, Math.min(0.95, relative)) : 0, k = 1 - Math.exp(-dt * 5.5);
     const working = b.state === 'work', stormBrace = b.shelter.active ? (this.environment?.values.sea || 0) * 0.12 : 0;
-    const brace = Math.min(0.32, Math.abs(playerWake) * 3.4 + stormBrace + pursuitYield * 0.14);
+    const brace = Math.min(0.32, Math.abs(playerWake) * 3.4 + stormBrace + pursuitYield * 0.14 + (b.navigation?.emergency ? 0.1 : 0));
     const scannedDriver = b.mesh.userData.driverModel;
     if (scannedDriver) {
       scannedDriver.rotation.y += ((scannedDriver.userData.baseYaw + look * 0.12) - scannedDriver.rotation.y) * k;
@@ -811,6 +818,33 @@ export class Traffic {
     if (aware && !b.spoutReacted) { b.spoutReacted = true; if (b.state === 'work') this.beginLeg(b); }
     if (!active && b.spoutAvoidance < 0.015) { b.spoutNoticeT = 0; b.spoutReacted = false; }
     return b.spoutAvoidance;
+  }
+  updateNavigationResponse(b, d, dt, blocked) {
+    const nav = b.navigation;
+    b.navSignalT = Math.max(0, b.navSignalT - dt);
+    if (blocked || b.kind === 'canoe' || d > 220) {
+      clearNavigationEncounter(nav); b.navEvalT = 0; b.navSignalState = 0; return nav;
+    }
+    b.navEvalT -= dt;
+    if (b.navEvalT > 0) return nav;
+    b.navEvalT = Math.max(0.02, b.navEvalT + 0.1); // staggered 10 Hz appraisal; steering still consumes the retained result every frame
+    const P = this.phys, velocity = P.vel;
+    const playerVelocityX = Number.isFinite(velocity?.x) ? velocity.x : -Math.sin(P.heading) * P.speed;
+    const playerVelocityZ = Number.isFinite(velocity?.y) ? velocity.y : -Math.cos(P.heading) * P.speed;
+    const vessel = b.profile.id === 'net-nine' && b.state === 'work' ? NAVIGATION_VESSEL.FISHING : NAVIGATION_VESSEL.POWER;
+    evaluateNavigationEncounter(
+      b.x, b.z, b.heading, b.speed, P.pos.x, P.pos.y, P.heading, P.speed,
+      playerVelocityX, playerVelocityZ, vessel, nav,
+    );
+    const signal = nav.signalBlasts;
+    if (!signal) { b.navSignalState = 0; return nav; }
+    if (signal !== b.navSignalState && b.navSignalT <= 0 && d < 160 && nav.risk > 0.18) {
+      const rangeGain = Math.max(0.25, 1 - d / 210), volume = Math.min(0.44, (0.2 + nav.risk * 0.26) * rangeGain);
+      this.fx.audio.maneuverHorn?.(signal, volume, b.x, b.z);
+      b.hornT = Math.max(b.hornT, signal >= 5 ? 7 : 5); b.navSignalT = signal >= 5 ? 8 : 14;
+    }
+    b.navSignalState = signal;
+    return nav;
   }
   signalPlayerHorn(prolonged = false) {
     const P = this.phys, pf = P.forward(this._pf), replyReach = prolonged ? 300 : 185; let reply = null, replyDistance = Infinity, responses = 0;
@@ -867,7 +901,7 @@ export class Traffic {
     return wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, 0.22, x, z, t);
   }
   snapshot() {
-    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, weatherSpeedScale: b.weatherSpeedScale, pursuitYield: b.pursuitYield, waterspoutAvoidance: b.spoutAvoidance, waterspoutDistance: b.spoutDistance, hornYield: b.signalYield, hornReplyIn: b.signalReplyT, fogSignalIn: b.fogHornT, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled, wakeComplaints: b.record.wakeComplaints, wakeReports: b.record.wakeReports, shiftWakeComplaints: b.record.wakeShiftComplaints }));
+    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, weatherSpeedScale: b.weatherSpeedScale, pursuitYield: b.pursuitYield, waterspoutAvoidance: b.spoutAvoidance, waterspoutDistance: b.spoutDistance, hornYield: b.signalYield, hornReplyIn: b.signalReplyT, fogSignalIn: b.fogHornT, navigation: b.navigation.role === NAVIGATION_ROLE.CLEAR ? null : { kind: b.navigation.kind, role: b.navigation.role, risk: b.navigation.risk, emergency: b.navigation.emergency, closestApproach: b.navigation.closestApproach, timeToClosest: b.navigation.timeToClosest, signalBlasts: b.navigation.signalBlasts }, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled, wakeComplaints: b.record.wakeComplaints, wakeReports: b.record.wakeReports, shiftWakeComplaints: b.record.wakeShiftComplaints }));
   }
   // ---- anglers ----
   anglerAt(ci, cj) {
@@ -957,6 +991,11 @@ export class Traffic {
       const spout = this.hazards?.spout, spoutAvoidance = this.updateWaterspoutResponse(b, dt, b.collision.active || assisting || b.state === 'sheltered');
       const signalYield = maneuverBlocked ? 0 : b.signalYield, maneuverYield = Math.max(pursuitYield, signalYield);
       const maneuverSide = pursuitYield >= signalYield ? b.pursuitYieldSide : b.signalSide;
+      // Ordinary skippers apply the Inland meeting/crossing/overtaking hierarchy. Active emergencies and severe fog
+      // retain priority; in restricted visibility the existing Rule 19 safe-speed and Rule 35 sound logic takes over.
+      const navigationBlocked = maneuverBlocked || pursuitYield > 0.08 || spoutAvoidance > 0.08 || P.airborne || P.wipeT > 0 || (fogRisk > 0.75 && d > 55);
+      const navigation = this.updateNavigationResponse(b, d, dt, navigationBlocked);
+      const navigationActive = navigation.role !== NAVIGATION_ROLE.CLEAR;
       // steer: probe five headings 24 m out and prefer deep water straight ahead; back off from the player and each other
       let best = 0, bs = b.collision.active ? 2 : -1e9;
       if (!b.collision.active) for (const da of STEER_PROBES) {
@@ -967,6 +1006,14 @@ export class Traffic {
         if (depth < 0.62) sc -= 14 + (0.62 - depth) * 18; if (depth2 < 0.48) sc -= 7 + (0.48 - depth2) * 10;
         const dp = Math.hypot(px - bx, pz - bz), playerClear = 22 + fogRisk * 22; if (!assisting && dp < playerClear) sc -= (playerClear - dp) * (0.5 + fogRisk * 0.24);
         if (maneuverYield > 0.01) { sc -= Math.abs(da - maneuverSide * 0.7) * maneuverYield * 3.1; sc += (dp - d) * maneuverYield * 0.32; }
+        if (navigationActive) {
+          if (navigation.holdCourse) sc -= Math.abs(da) * navigation.risk * 5.8;
+          else {
+            const ruleWeight = navigation.emergency ? 7.2 : 5.1;
+            sc -= Math.abs(da - navigation.turn * 0.7) * navigation.risk * ruleWeight;
+            sc += (dp - d) * navigation.risk * (navigation.emergency ? 0.52 : 0.36);
+          }
+        }
         if (b.state === 'tow-response') {
           const A = this.assist, pd = Math.hypot(px - A.targetX, pz - A.targetZ), desired = Math.atan2(-(A.targetX - b.x), -(A.targetZ - b.z));
           sc += (A.distance - pd) * 0.34 - Math.abs(wrapAngle(h - desired)) * 2.1;
@@ -988,9 +1035,11 @@ export class Traffic {
       b.weatherSpeedScale = seaScale * (1 - fogRisk * (b.kind === 'canoe' ? 0.2 : 0.44));
       let cruise = (b.collision.active || b.state === 'tow-alongside' || b.state === 'sheltered' ? 0 : b.state === 'tow-response' ? b.max * 0.82 : b.state === 'shelter-run' ? b.max * (b.kind === 'canoe' ? 0.72 : 0.82) : b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise) * b.weatherSpeedScale;
       const playerAheadRange = 30 + fogRisk * 32;
-      let want = cruise * (bs < 1.5 ? 0.45 : 1); if (d < playerAheadRange && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5 - fogRisk * 0.14; // slow for the player ahead
+      const holdingCourse = navigation.role === NAVIGATION_ROLE.STAND_ON && navigation.holdCourse;
+      let want = cruise * (bs < 1.5 ? 0.45 : 1); if (!holdingCourse && d < playerAheadRange && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5 - fogRisk * 0.14; // slow for the player ahead unless this is a stand-on passage
       want *= pursuitYieldSpeedScale(pursuitYield, b.kind);
       want *= hornYieldSpeedScale(signalYield, b.kind);
+      if (navigationActive) want *= navigation.speedScale;
       if (spoutAvoidance > 0.01) want = Math.max(want, b.max * b.weatherSpeedScale * (b.kind === 'canoe' ? 0.38 + spoutAvoidance * 0.2 : 0.48 + spoutAvoidance * 0.3));
       if (b.state === 'shelter-run') { const desired = Math.atan2(-(b.shelter.x - b.x), -(b.shelter.z - b.z)), alignment = 1 - Math.min(1, Math.abs(wrapAngle(desired - b.heading)) / 1.25); want *= 0.04 + alignment * 0.96; }
       const playerWake = d < 100 ? wakeSampleAt(bx, bz, P.heading, P.speed, 18, 0.2, b.x, b.z, t) : 0;
@@ -1044,8 +1093,8 @@ export class Traffic {
         b.fogHornT = 108 + this.rand() * 11; const volume = 0.5 * fogRisk * Math.max(0.08, 1 - d / 360);
         if (fogFishing) this.fx.audio.fogHornFishing(volume, b.x, b.z); else this.fx.audio.fogHorn(volume, b.x, b.z);
       }
-      // horn at a boat coming straight at them
-      if (!assisting && b.kind !== 'canoe' && d < 50 && b.hornT <= 0 && P.speed > 6) { const dd = d || 1, cx = (b.x - bx) / dd, cz = (b.z - bz) / dd; if (pf.x * cx + pf.y * cz > 0.9) { b.hornT = 12; this.fx.audio.horn(0.35 * (1 - d / 60), b.x, b.z); } }
+      // Fallback warning for a close approach that the course classifier cannot resolve (for example, a drifting hull).
+      if (!navigationActive && !assisting && b.kind !== 'canoe' && d < 50 && b.hornT <= 0 && P.speed > 6) { const dd = d || 1, cx = (b.x - bx) / dd, cz = (b.z - bz) / dd; if (pf.x * cx + pf.y * cz > 0.9) { b.hornT = 12; this.fx.audio.horn(0.35 * (1 - d / 60), b.x, b.z); } }
       if (d < 70) { b.obs.ax = b.x + fx * 2.2; b.obs.az = b.z + fz * 2.2; b.obs.bx = b.x - fx * 2.2; b.obs.bz = b.z - fz * 2.2; this.obs.push(b.obs); }
       // wake and spray
       if (b.kind === 'canoe') { if (d < 60 && b.speed > 0.5) this.fx.emitStamp(b.x, b.z, 0.8, 0.08, 0.15, 0.5); }

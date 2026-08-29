@@ -1,4 +1,13 @@
 const clampAudio = value => Math.max(0, Math.min(1, Number(value) || 0));
+const MANEUVER_ONE_SHORT = Object.freeze([Object.freeze([0.9, 0, 1])]);
+const MANEUVER_TWO_SHORT = Object.freeze([Object.freeze([0.9, 0, 1]), Object.freeze([0.9, 1.9, 1])]);
+const MANEUVER_DANGER = Object.freeze([
+  Object.freeze([0.45, 0, 1]), Object.freeze([0.45, 0.68, 1]), Object.freeze([0.45, 1.36, 1]),
+  Object.freeze([0.45, 2.04, 1]), Object.freeze([0.45, 2.72, 1]),
+]);
+const CLOSE_WARNING = Object.freeze([Object.freeze([0.55, 0, 1])]);
+const FOG_POWER = Object.freeze([Object.freeze([4.5, 0, 1])]);
+const FOG_FISHING = Object.freeze([Object.freeze([4.5, 0, 1]), Object.freeze([1, 5.5, 0.9]), Object.freeze([1, 7.5, 0.9])]);
 
 // Convert a world-space emitter into camera-relative stereo. Keeping this as plain arithmetic makes listener
 // updates allocation-free and lets the audio system degrade cleanly on browsers without StereoPannerNode.
@@ -240,11 +249,17 @@ export class EngineAudio {
     this.releaseSpatialDestination(destination, tail); return tail;
   }
   // another boat's close-quarters warning: two-tone, a touch flat
-  horn(vol = 0.3, x, z) { return this.hornPattern([[0.55, 0, 1]], vol, x, z); }
+  horn(vol = 0.3, x, z) { return this.hornPattern(CLOSE_WARNING, vol, x, z); }
+  // Inland Rule 34: one/two short passing-intent blasts, or at least five rapid blasts for danger or doubt.
+  // The fixed patterns are shared by every boat, so only the Web Audio voices for an audible signal are transient.
+  maneuverHorn(blasts = 1, vol = 0.3, x, z) {
+    const pattern = blasts >= 5 ? MANEUVER_DANGER : blasts >= 2 ? MANEUVER_TWO_SHORT : MANEUVER_ONE_SHORT;
+    return this.hornPattern(pattern, vol, x, z);
+  }
   // Rule 32 prolonged blast: held inside the four-to-six-second window.
-  fogHorn(vol = 0.3, x, z) { return this.hornPattern([[4.5, 0, 1]], vol, x, z); }
+  fogHorn(vol = 0.3, x, z) { return this.hornPattern(FOG_POWER, vol, x, z); }
   // Rule 35(c): a vessel engaged in fishing sounds one prolonged followed by two short blasts.
-  fogHornFishing(vol = 0.3, x, z) { return this.hornPattern([[4.5, 0, 1], [1, 5.5, 0.9], [1, 7.5, 0.9]], vol, x, z); }
+  fogHornFishing(vol = 0.3, x, z) { return this.hornPattern(FOG_FISHING, vol, x, z); }
   // osprey: a run of thin descending whistles
   osprey(vol = 0.18, x, z) {
     if (!this.ctx || vol < 0.02) return; const ctx = this.ctx;
