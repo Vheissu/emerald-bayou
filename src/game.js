@@ -3,6 +3,7 @@ import { Beacon, crabFloat, kayak, fuelDrum, raceCase, wreck, shack } from './ma
 import { mulberry32 } from './noise.js';
 import { WORLD_HALF } from './heightfield.js';
 import { cargoEjectionReason, rampPoint, splitRemaining } from './raceformats.js';
+import { emitMapMarker, MapMarkerPool } from './mapmarkers.js';
 
 const SAVE_KEY = 'emeraldBayou.save.v2';
 const fmtT = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60), r = s - m * 60; return `${m}:${r < 10 ? '0' : ''}${r.toFixed(1)}`; };
@@ -40,7 +41,7 @@ export class Game {
     this.nearCamp = null; this.nearTraps = []; this.scanT = 0; this.dockCamp = null; this.mapOpen = false; this.map = null;
     this.noWakeScan = { key: '', label: '', kind: '', d: Infinity, radius: 0, limit: 8, priority: 0, animal: null };
     this.noWakeOverT = 0; this.noWakeCooldown = 0; this.manateeWarnCooldown = 0; this.noWakeHudKey = '';
-    this.toastT = 0; this.bountyT = 0; this.shake = 0; this.wpTarget = null; this.mapMarkers = [];
+    this.toastT = 0; this.bountyT = 0; this.shake = 0; this.wpTarget = null; this.mapMarkers = []; this.mapMarkerPool = new MapMarkerPool();
     this.missions = buildMissions(this);
     this.jobs = this.buildJobs();
     this.bounties = new Bounties(this);
@@ -541,7 +542,7 @@ export class Game {
     if (this.toastT > 0) { this.toastT -= dt; if (this.toastT <= 0) this.el.toast.classList.remove('on'); }
     if (this.bountyT > 0) { this.bountyT -= dt; if (this.bountyT <= 0) this.el.bounty.classList.remove('on'); }
     this.beacon.update(t); this.beacon2.update(t);
-    this.mapMarkers.length = 0;
+    this.mapMarkers.length = 0; this.mapMarkerPool.reset();
     const p = this.phys;
     if (p.impact > 2.5) this.shake = Math.min(1, this.shake + p.impact * 0.08);
     if (p.hit > 3) this.shake = Math.min(1, this.shake + p.hit * 0.05);
@@ -638,27 +639,27 @@ export class Game {
   // everything the radar shows: the objective (pinned to the edge when off the radar), job posts, camps, homesteads,
   // ramps, other boats, anglers, the bull, traps close by, home
   collectMarkers(t) {
-    const M = this.mapMarkers, p = this.phys, px = p.pos.x, pz = p.pos.y, wp = this.wpTarget;
+    const p = this.phys, px = p.pos.x, pz = p.pos.y, wp = this.wpTarget;
     const nearWp = (x, z) => wp && Math.hypot(x - wp.x, z - wp.z) < 3;
     if (this.state) {
       const mm = []; this.state.m.markers && this.state.m.markers(this.state, this, mm);
-      for (const k of mm) M.push({ ...k, kind: nearWp(k.x, k.z) ? 'objective' : (k.r >= 5 ? 'objective' : 'dot'), clamp: nearWp(k.x, k.z) });
-      if (wp && !mm.some(k => nearWp(k.x, k.z))) M.push({ x: wp.x, z: wp.z, kind: 'objective', color: '#f07a2e', clamp: true });
+      for (const k of mm) { const current = nearWp(k.x, k.z); emitMapMarker(this, k.x, k.z, current || k.r >= 5 ? 'objective' : 'dot', k.color, k.heading, current, k.glyph, k.locked, k.done, k.known, k.soft, k.r); }
+      if (wp && !mm.some(k => nearWp(k.x, k.z))) emitMapMarker(this, wp.x, wp.z, 'objective', '#f07a2e', 0, true);
     } else {
-      for (const j of this.jobs) { const d = Math.hypot(j.x - px, j.z - pz); const on = d < 420; if (on) j.beacon.set(j.x, j.y, j.z, this.unlocked(j.i) ? j.hex : 0x4a5550, false); else j.beacon.hide(); j.beacon.update(t); if (d < 1200) M.push({ x: j.x, z: j.z, kind: 'job', glyph: j.glyph, color: j.color, locked: !this.unlocked(j.i), done: this.save.done.includes(j.m.id) }); }
-      if (wp && !wp.story) M.push({ x: wp.x, z: wp.z, kind: 'objective', color: wp.color || '#7be08a', clamp: true, soft: true });
+      for (const j of this.jobs) { const d = Math.hypot(j.x - px, j.z - pz); const unlocked = this.unlocked(j.i), on = d < 420; if (on) j.beacon.set(j.x, j.y, j.z, unlocked ? j.hex : 0x4a5550, false); else j.beacon.hide(); j.beacon.update(t); if (d < 1200) emitMapMarker(this, j.x, j.z, 'job', j.color, 0, false, j.glyph, !unlocked, this.save.done.includes(j.m.id)); }
+      if (wp && !wp.story) emitMapMarker(this, wp.x, wp.z, 'objective', wp.color || '#7be08a', 0, true, '', false, false, false, true);
     }
     if (this.state) for (const j of this.jobs) j.beacon.hide();
-    M.push({ x: this.dockTie.x, z: this.dockTie.z, kind: 'home' });
+    emitMapMarker(this, this.dockTie.x, this.dockTie.z, 'home');
     if (this.world) {
-      for (const c of this.world.campsNear(px, pz, 900)) { const known = this.save.camps.includes(c.key); if (!known && !this.save.seen.includes(c.key)) continue; M.push({ x: c.tie.x, z: c.tie.z, kind: 'camp', known }); }
-      for (const l of this.world.liveSites.values()) M.push({ x: l.site.x, z: l.site.z, kind: l.site.kind });
-      for (const tr of this.world.trapsNear(px, pz, 170)) M.push({ x: tr.x, z: tr.z, kind: 'trap' });
+      for (const c of this.world.campsNear(px, pz, 900)) { const known = this.save.camps.includes(c.key); if (!known && !this.save.seen.includes(c.key)) continue; emitMapMarker(this, c.tie.x, c.tie.z, 'camp', '', 0, false, '', false, false, known); }
+      for (const l of this.world.liveSites.values()) emitMapMarker(this, l.site.x, l.site.z, l.site.kind);
+      for (const tr of this.world.trapsNear(px, pz, 170)) emitMapMarker(this, tr.x, tr.z, 'trap');
     }
-    if (this.gators) { this.gators.calm = !!this.state; for (const g of this.gators.list) if (g.surfaced && g.big) M.push({ x: g.pos.x, z: g.pos.z, kind: 'gator' }); }
+    if (this.gators) { this.gators.calm = !!this.state; for (const g of this.gators.list) if (g.surfaced && g.big) emitMapMarker(this, g.pos.x, g.pos.z, 'gator'); }
     if (this.life) {
-      for (const b of this.life.traffic.boats) if (b.active) M.push({ x: b.x, z: b.z, kind: 'boat', heading: b.heading, color: b.profile?.color || (b.kind === 'canoe' ? 'rgba(225,205,150,0.95)' : b.kind === 'air' ? 'rgba(240,235,220,0.95)' : 'rgba(125,175,235,0.95)') });
-      for (const { a } of this.life.traffic.liveAnglers.values()) M.push({ x: a.x, z: a.z, kind: 'angler' });
+      for (const b of this.life.traffic.boats) if (b.active) emitMapMarker(this, b.x, b.z, 'boat', b.profile?.color || (b.kind === 'canoe' ? 'rgba(225,205,150,0.95)' : b.kind === 'air' ? 'rgba(240,235,220,0.95)' : 'rgba(125,175,235,0.95)'), b.heading);
+      for (const { a } of this.life.traffic.liveAnglers.values()) emitMapMarker(this, a.x, a.z, 'angler');
     }
   }
   renderHud(light = false) {

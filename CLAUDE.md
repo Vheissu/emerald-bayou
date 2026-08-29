@@ -22,8 +22,9 @@ Rendering / world (the hot path):
   Level-0 chunks keep their height grid after build (physics samples it); higher levels drop theirs.
 - `vegetation.js` — per-chunk instanced foliage, built by a generator that yields per 100 m cell.
   Instances are compact attributes (float3 position, snorm16 quaternion, half-float scale/colour/crown).
-- `water.js` — reflection pass, wake heightfield sim (ping-pong 512² RT), murk map, tide. `waveHeight(x,z,t)`
-  is the one analytic surface: renderer, boat physics and every floating prop read the same function.
+- `water.js` — reflection pass, wake heightfield sim (ping-pong RT, resolution set by the quality profile),
+  murk map, tide. `waveHeight(x,z,t)` is the one analytic surface: renderer, boat physics and every floating
+  prop read the same function.
 - `sky.js`, `environment.js` — procedural sky; clock, weather, lunar/tide state (persisted in the save).
 - `post.js` — HDR pipeline: MSAA scene RT → composite (+water/fx overlays) → bloom → grade (fog/ACES) →
   FXAA → DoF+sharpen; bloom and the final pass switch off at the lower quality tiers (`setQuality`).
@@ -64,9 +65,9 @@ finds), `navigationaids.js` (channel markers) + `navigationrules.js` (sound-sign
 - **Frustum culling**: every instanced mesh gets an explicit `boundingSphere`. `frustumCulled = false` on a
   per-chunk mesh once cost the project 40 fps; don't do it again.
 - **Wake stamps**: systems push plain `{x, z, radius, height, foam, foamRadius}` objects into the shared
-  `stamps` array each frame; `water.simulate` consumes **at most 20** and the array is cleared next frame.
-  Stamp heights/foam are per-second rates (the sim scales by dt). Don't retain references — the player's
-  stamps come from a pool.
+  `stamps` array each frame; `water.simulate` consumes at most the quality profile's `wakeMaxStamps`
+  (20 at cinematic) and the array is cleared next frame. Stamp heights/foam are per-second rates (the sim
+  scales by dt). Don't retain references — the player's stamps come from a pool.
 - **Chunk lifecycle**: `terrain.onReady` (vegetation generator, may span frames) → `onDone` (colliders
   registered) → `onDispose` (vegetation + colliders must release). Vegetation geometry shares base
   attributes across chunks — `disposeChunk` detaches them before `dispose()` so the shared buffers survive.

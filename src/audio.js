@@ -1,4 +1,13 @@
 const clampAudio = value => Math.max(0, Math.min(1, Number(value) || 0));
+const MANEUVER_ONE_SHORT = Object.freeze([Object.freeze([0.9, 0, 1])]);
+const MANEUVER_TWO_SHORT = Object.freeze([Object.freeze([0.9, 0, 1]), Object.freeze([0.9, 1.9, 1])]);
+const MANEUVER_DANGER = Object.freeze([
+  Object.freeze([0.45, 0, 1]), Object.freeze([0.45, 0.68, 1]), Object.freeze([0.45, 1.36, 1]),
+  Object.freeze([0.45, 2.04, 1]), Object.freeze([0.45, 2.72, 1]),
+]);
+const CLOSE_WARNING = Object.freeze([Object.freeze([0.55, 0, 1])]);
+const FOG_POWER = Object.freeze([Object.freeze([4.5, 0, 1])]);
+const FOG_FISHING = Object.freeze([Object.freeze([4.5, 0, 1]), Object.freeze([1, 5.5, 0.9]), Object.freeze([1, 7.5, 0.9])]);
 
 // Convert a world-space emitter into camera-relative stereo. Keeping this as plain arithmetic makes listener
 // updates allocation-free and lets the audio system degrade cleanly on browsers without StereoPannerNode.
@@ -153,6 +162,23 @@ export class EngineAudio {
     reel.gain.gain.setTargetAtTime(active * (0.022 + strain * 0.026), now, active ? 0.035 : 0.09);
     reel.ratchet.frequency.setTargetAtTime(72 + strain * 76, now, 0.045); reel.bp.frequency.setTargetAtTime(760 + strain * 720, now, 0.08);
   }
+  // A mature funnel reuses the engine's retained ambient noise source. The two filters and their spatial output are
+  // created only when a waterspout first comes within earshot, then faded and reused for every later event.
+  waterspout(level = 0, x, z) {
+    if (!this.ctx || (!this.spoutAudio && level <= 0.001)) return; const ctx = this.ctx, now = ctx.currentTime;
+    if (!this.spoutAudio) {
+      const panner = this.persistentSpatialOutput(), destination = panner || this.sfx;
+      const roar = ctx.createBiquadFilter(); roar.type = 'bandpass'; roar.frequency.value = 185; roar.Q.value = 0.52;
+      const spray = ctx.createBiquadFilter(); spray.type = 'bandpass'; spray.frequency.value = 1380; spray.Q.value = 0.4;
+      const roarGain = ctx.createGain(); roarGain.gain.value = 0; const sprayGain = ctx.createGain(); sprayGain.gain.value = 0;
+      this.amb.connect(roar); this.amb.connect(spray); roar.connect(roarGain); spray.connect(sprayGain); roarGain.connect(destination); sprayGain.connect(destination);
+      this.spoutAudio = { panner, roar, spray, roarGain, sprayGain };
+    }
+    const graph = this.spoutAudio, audible = clampAudio(level);
+    graph.roarGain.gain.setTargetAtTime(audible * 0.19, now, audible ? 0.14 : 0.4); graph.sprayGain.gain.setTargetAtTime(audible * 0.12, now, audible ? 0.11 : 0.34);
+    graph.roar.frequency.setTargetAtTime(155 + audible * 105, now, 0.22); graph.spray.frequency.setTargetAtTime(1120 + audible * 760, now, 0.18);
+    this.setPersistentPan(graph.panner, x, z, 0.96);
+  }
   // A VHF carrier opening or dropping: filtered static and the small relay click from the set in the boat.
   // Dialogue stays legible as captions; this cue makes it feel like radio traffic without synthetic speech.
   radio(open = true, priority = 1) {
@@ -223,11 +249,17 @@ export class EngineAudio {
     this.releaseSpatialDestination(destination, tail); return tail;
   }
   // another boat's close-quarters warning: two-tone, a touch flat
-  horn(vol = 0.3, x, z) { return this.hornPattern([[0.55, 0, 1]], vol, x, z); }
+  horn(vol = 0.3, x, z) { return this.hornPattern(CLOSE_WARNING, vol, x, z); }
+  // Inland Rule 34: one/two short passing-intent blasts, or at least five rapid blasts for danger or doubt.
+  // The fixed patterns are shared by every boat, so only the Web Audio voices for an audible signal are transient.
+  maneuverHorn(blasts = 1, vol = 0.3, x, z) {
+    const pattern = blasts >= 5 ? MANEUVER_DANGER : blasts >= 2 ? MANEUVER_TWO_SHORT : MANEUVER_ONE_SHORT;
+    return this.hornPattern(pattern, vol, x, z);
+  }
   // Rule 32 prolonged blast: held inside the four-to-six-second window.
-  fogHorn(vol = 0.3, x, z) { return this.hornPattern([[4.5, 0, 1]], vol, x, z); }
+  fogHorn(vol = 0.3, x, z) { return this.hornPattern(FOG_POWER, vol, x, z); }
   // Rule 35(c): a vessel engaged in fishing sounds one prolonged followed by two short blasts.
-  fogHornFishing(vol = 0.3, x, z) { return this.hornPattern([[4.5, 0, 1], [1, 5.5, 0.9], [1, 7.5, 0.9]], vol, x, z); }
+  fogHornFishing(vol = 0.3, x, z) { return this.hornPattern(FOG_FISHING, vol, x, z); }
   // osprey: a run of thin descending whistles
   osprey(vol = 0.18, x, z) {
     if (!this.ctx || vol < 0.02) return; const ctx = this.ctx;

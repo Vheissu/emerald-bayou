@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { loadDriver } from './airboat.js';
 import { person } from './folk.js';
 import { mulberry32 } from './noise.js';
+import { emitWakeStamp } from './wakestamps.js';
 
 function skiffHullGeometry() {
   const stations = [
@@ -104,7 +105,7 @@ export class SkiffAI {
     this.pos = new THREE.Vector2(); this.vel = new THREE.Vector2(); this.heading = 0; this.speed = 0;
     this.maxSpeed = 11.6; this.path = []; this.i = 0; this.active = false; this.done = false; this.waveFn = waveFn;
     this.roll = 0; this.pitch = 0; this.dist = 0;
-    this.lookAhead = 14; this._flow = new THREE.Vector2();
+    this.lookAhead = 14; this._flow = new THREE.Vector2(); this._forward = new THREE.Vector2();
   }
   start(path, speed) {
     this.path = path; this.i = 0; this.maxSpeed = speed || 11.6;
@@ -127,7 +128,7 @@ export class SkiffAI {
     const bend = Math.min(1, Math.abs(dh) / 0.8);
     const tgtSpeed = this.maxSpeed * (1 - bend * 0.3) * (1 - hold * 0.8);
     this.speed += (tgtSpeed - this.speed) * (1 - Math.exp(-dt * (tgtSpeed > this.speed ? 0.6 : 2.0)));
-    const f = this.forward();
+    const f = this.forward(this._forward);
     this.vel.set(f.x * this.speed, f.y * this.speed);
     if (this.currents) this.vel.add(this.currents.flowAt(this.pos.x, this.pos.y, this._flow));
     this.pos.addScaledVector(this.vel, dt); this.dist += this.speed * dt;
@@ -142,8 +143,8 @@ export class SkiffAI {
   // wake stamps for the water sim (only worth pushing when inside the sim window)
   stamps(out) {
     if (!this.active || this.speed < 2) return;
-    const f = this.forward(); const sp = Math.min(1, this.speed / 11);
-    out.push({ x: this.pos.x - f.x * 1.8, z: this.pos.y - f.y * 1.8, radius: 1.1, height: 0.5 * sp, foam: 1.6 * sp, foamRadius: 1.0 });
-    out.push({ x: this.pos.x + f.x * 1.8, z: this.pos.y + f.y * 1.8, radius: 1.0, height: -0.7 * sp, foam: 0.1 * sp, foamRadius: 0.7 });
+    const f = this.forward(this._forward); const sp = Math.min(1, this.speed / 11);
+    emitWakeStamp(out, this.pos.x - f.x * 1.8, this.pos.y - f.y * 1.8, 1.1, 0.5 * sp, 1.6 * sp, 1.0);
+    emitWakeStamp(out, this.pos.x + f.x * 1.8, this.pos.y + f.y * 1.8, 1.0, -0.7 * sp, 0.1 * sp, 0.7);
   }
 }

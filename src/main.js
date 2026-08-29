@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Terrain, WORLD_HALF } from './terrain.js';
 import { Sky } from './sky.js';
-import { Water } from './water.js';
+import { MAX_WAKE_STAMPS, Water } from './water.js';
 import { Vegetation } from './vegetation.js';
 import { buildTower, buildDock } from './tower.js';
 import { airboatSprayExposure, buildAirboat, AirboatPhysics, loadDriver, updateAirboatWetness } from './airboat.js';
@@ -43,6 +43,7 @@ import { NavigationAids } from './navigationaids.js';
 import { DolphinPod } from './dolphins.js';
 import { Fishing } from './fishing.js';
 import { NocturnalWetland } from './nocturnal.js';
+import { WakeStampPool } from './wakestamps.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -234,9 +235,12 @@ async function init() {
   law.onAttention = attention => { encounters.requestPatrol(attention); };
   const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
+  life.traffic.hazards = hazards;
   environment.onLightning = strike => hazards.lightning(strike);
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio, currents, phys, terrain });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
+  environment.radio = radio;
+  hazards.radio = radio;
   ecology.radio = radio;
   condition.radio = radio; life.traffic.radio = radio;
   const incidents = new WorldIncidents({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition, encounters });
@@ -309,9 +313,11 @@ async function init() {
       hail: { active: environment.precip.hail.geo.drawRange.count, capacity: environment.precip.hail.count },
       stormHazards: hazards.resourceStats(),
       wakeStamps: {
+        frame: { active: stamps.count, capacity: stamps.capacity, droppedFrame: stamps.droppedFrame, droppedTotal: stamps.droppedTotal },
         life: { active: life.stampPool.count, capacity: life.stampPool.capacity, droppedFrame: life.stampPool.droppedFrame, droppedTotal: life.stampPool.droppedTotal },
         world: { active: world.stampPool.count, capacity: world.stampPool.capacity, droppedFrame: world.stampPool.droppedFrame, droppedTotal: world.stampPool.droppedTotal },
       },
+      mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
   window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
@@ -440,25 +446,21 @@ async function init() {
   const camPos = new THREE.Vector3(startX, 4, startZ + 10);
   const camTarget = new THREE.Vector3(startX, 1, startZ);
   const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3(), audioForward = new THREE.Vector3();
-  const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2();
+  const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2(), skiffForward = new THREE.Vector2();
   const input = { throttle: 0, steer: 0, pitch: 0 };
   const boatWetnessConditions = { dt: 0, rain: 0, spray: 0, splash: 0, wind: 0, speed: 0, daylight: 0, windScreen: 0 };
   const clock = new THREE.Timer(); clock.connect(document);
   let time = 0, splashStamp = 0, slowT = 0, slowK = 1, fovKick = 0, airCam = 0, frameNo = 0;
-  const stamps = [];
+  const stamps = new WakeStampPool(MAX_WAKE_STAMPS);
   const hullPoint = { x: 0, z: 0 };
   const splashPts = [{ x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }];
-  const playerStampPool = Array.from({ length: 10 }, () => ({ x: 0, z: 0, radius: 0, height: 0, foam: 0, foamRadius: 0 }));
-  let playerStampCount = 0;
   const hullPt = (px, pz, out = hullPoint) => {
     out.x = phys.pos.x + rgt2.x * px + fwd2.x * -pz;
     out.z = phys.pos.y + rgt2.y * px + fwd2.y * -pz;
     return out;
   };
   const addPlayerStamp = (p, radius, height, foam = 0, foamRadius = 0) => {
-    const s = playerStampPool[playerStampCount++];
-    s.x = p.x; s.z = p.z; s.radius = radius; s.height = height; s.foam = foam; s.foamRadius = foamRadius;
-    stamps.push(s);
+    stamps.emit(p.x, p.z, radius, height, foam, foamRadius);
   };
   // landing splash: the hull slaps a hull-shaped hole in the water; two sheets peel off the chines, a crown lifts at the bow,
   // and a stuffed bow throws a wall of water forward over the deck
@@ -655,7 +657,7 @@ async function init() {
     const sp = phys.speed * wet, rpm = phys.rpm, thr = Math.max(0, phys.throttle) * wet;
     const spF = Math.min(sp / 12, 1);
     if (started && !game.paused) {
-      stamps.length = 0; playerStampCount = 0;
+      stamps.reset();
       if (splashStamp > 0) { for (const p of splashPts) addPlayerStamp(p, 1.6 + splashStamp * 0.45, -2.2 * splashStamp, 2.4 * splashStamp, 2.2 + splashStamp * 0.6); splashStamp = 0; }
       // rates are per second (simulate() scales by dt)
       let pt = hullPt(0, -2.7); addPlayerStamp(pt, 1.3, -1.4 * spF, 0.12 * spF, 0.9);
@@ -728,7 +730,7 @@ async function init() {
     }
     // (e) the poachers' outboard throws its own small rooster tail
     if (skiff.active && skiff.speed > 3) {
-      const sf = skiff.forward(); const n = Math.floor(90 * dt * Math.min(1, skiff.speed / 11) + Math.random());
+      const sf = skiff.forward(skiffForward); const n = Math.floor(90 * dt * Math.min(1, skiff.speed / 11) + Math.random());
       for (let i = 0; i < n; i++) plume.emit(skiff.pos.x + sf.x * 2.4 + jitter() * 0.6, 0.1, skiff.pos.y + sf.y * 2.4 + jitter() * 0.6, sf.x * (1 + Math.random()) + jitter(), 0.8 + Math.random() * 1.6, sf.y * (1 + Math.random()) + jitter(), 0.25 + Math.random() * 0.3, 0.9, 0.6 + Math.random() * 0.5, 0.3);
       for (let i = 0; i < n * 6; i++) spray.emit(skiff.pos.x + sf.x * 2.2 + jitter() * 0.8, 0.05, skiff.pos.y + sf.y * 2.2 + jitter() * 0.8, sf.x * (1 + Math.random() * 3) + jitter() * 1.5, 0.5 + Math.random() * 2, sf.y * (1 + Math.random() * 3) + jitter() * 1.5, 0.012 + Math.random() * 0.03, 0.4 + Math.random() * 0.5, 0.5);
     }

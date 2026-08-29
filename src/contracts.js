@@ -4,6 +4,8 @@ import { mulberry32 } from './noise.js';
 import { WORLD_HALF } from './heightfield.js';
 import { regionAt } from './regions.js';
 import { fmtDist } from './game.js';
+import { emitWakeStamp } from './wakestamps.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const RESIDENTS = ['leon', 'june', 'cal'];
@@ -569,7 +571,7 @@ export class ResidentContracts {
       this.incidents.updateAgent(A, dt, t, a.departX, a.departZ, 10.5, 4); this.updatePatrolLights(t, false);
       if (Math.hypot(A.x - a.departX, A.z - a.departZ) < 8 || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 900) { A.active = false; A.mesh.visible = false; this.rigs.blue.light.intensity = this.rigs.red.light.intensity = this.rigs.search.intensity = 0; }
     }
-    if (A.active) { this.addBoatObstacle(A, this.patrolObs, A.x, A.z, A.heading); this.game.mapMarkers.push({ x: A.x, z: A.z, kind: 'boat', heading: A.heading, color: '#5aa7ff' }); }
+    if (A.active) { this.addBoatObstacle(A, this.patrolObs, A.x, A.z, A.heading); emitMapMarker(this.game, A.x, A.z, 'boat', '#5aa7ff', A.heading); }
   }
 
   updateCal(a, dt, t) {
@@ -695,8 +697,8 @@ export class ResidentContracts {
     for (const A of [this.rigs.patrolAgent, this.rigs.receiverAgent]) {
       if (!A.active || A.speed < 2 || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 95) continue;
       const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), sp = Math.min(1, A.speed / 11);
-      out.push({ x: A.x - fx * 1.8, z: A.z - fz * 1.8, radius: 1.1, height: 0.5 * sp, foam: 1.55 * sp, foamRadius: 1 });
-      out.push({ x: A.x + fx * 1.8, z: A.z + fz * 1.8, radius: 1, height: -0.65 * sp, foam: 0.1 * sp, foamRadius: 0.7 });
+      emitWakeStamp(out, A.x - fx * 1.8, A.z - fz * 1.8, 1.1, 0.5 * sp, 1.55 * sp, 1);
+      emitWakeStamp(out, A.x + fx * 1.8, A.z + fz * 1.8, 1, -0.65 * sp, 0.1 * sp, 0.7);
     }
   }
 

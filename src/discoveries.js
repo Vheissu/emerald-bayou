@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { wreck } from './markers.js';
 import { regionAt } from './regions.js';
 import { WORLD_HALF } from './heightfield.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const clamp = (value, low = 0, high = 1) => Math.max(low, Math.min(high, value));
@@ -410,7 +411,7 @@ export class FieldDiscoveryDirector {
         this.clearPrompt(this.game.dockCamp || this.game.dockJob || this.game.atBoard);
       }
       const active = this.active;
-      if (active?.known && Math.hypot(active.x - this.phys.pos.x, active.z - this.phys.pos.y) < 900) this.game.mapMarkers.push({ x: active.x, z: active.z, kind: 'dot', color: active.definition.color });
+      if (active?.known && Math.hypot(active.x - this.phys.pos.x, active.z - this.phys.pos.y) < 900) emitMapMarker(this.game, active.x, active.z, 'dot', active.definition.color);
       this.interact = false; return;
     }
     if (this.busy()) return;

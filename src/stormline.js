@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { buildSkiff } from './npc.js';
 import { regionAt } from './regions.js';
+import { emitWakeStamp } from './wakestamps.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -312,7 +314,7 @@ export class StormLine {
     }
     if (this.state.chaseLife <= 0 || this.lostT > 7.5) { this.clearChase('weather'); return; }
     this.state.chaserX = A.x; this.state.chaserZ = A.z; this.state.chaserHeading = A.heading;
-    this.P.game.mapMarkers.push({ x: A.x, z: A.z, kind: 'hazard', color: patrol ? '#5b8fff' : '#e0523e', clamp: d > 155 });
+    emitMapMarker(this.P.game, A.x, A.z, 'hazard', patrol ? '#5b8fff' : '#e0523e', 0, d > 155);
   }
 
   updateRendezvous(t) {
@@ -493,9 +495,9 @@ export class StormLine {
   }
 
   pushMarkers() {
-    if (this.state.stage === 'escort' && this.convoy.active) this.P.game.mapMarkers.push({ x: this.convoy.x, z: this.convoy.z, kind: 'boat', heading: this.convoy.heading, color: this.state.branch === 'runner' ? '#cf7e43' : '#79a9b8' });
+    if (this.state.stage === 'escort' && this.convoy.active) emitMapMarker(this.P.game, this.convoy.x, this.convoy.z, 'boat', this.state.branch === 'runner' ? '#cf7e43' : '#79a9b8', this.convoy.heading);
     const permanent = this.permanentMarker();
-    if (permanent && Math.hypot(permanent.x - this.P.phys.pos.x, permanent.z - this.P.phys.pos.y) < 900) this.P.game.mapMarkers.push({ x: permanent.x, z: permanent.z, kind: 'dot', color: permanent.color });
+    if (permanent && Math.hypot(permanent.x - this.P.phys.pos.x, permanent.z - this.P.phys.pos.y) < 900) emitMapMarker(this.P.game, permanent.x, permanent.z, 'dot', permanent.color);
   }
 
   updateAudio() {
@@ -511,8 +513,8 @@ export class StormLine {
     for (const A of [this.convoy, this.chaser]) {
       if (!A.active || A.backing || A.speed < 2 || Math.hypot(A.x - this.P.phys.pos.x, A.z - this.P.phys.pos.y) > 95) continue;
       const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), sp = Math.min(1, A.speed / 11);
-      out.push({ x: A.x - fx * 1.8, z: A.z - fz * 1.8, radius: 1.1, height: 0.54 * sp, foam: 1.7 * sp, foamRadius: 1 });
-      out.push({ x: A.x + fx * 1.8, z: A.z + fz * 1.8, radius: 1, height: -0.68 * sp, foam: 0.1 * sp, foamRadius: 0.7 });
+      emitWakeStamp(out, A.x - fx * 1.8, A.z - fz * 1.8, 1.1, 0.54 * sp, 1.7 * sp, 1);
+      emitWakeStamp(out, A.x + fx * 1.8, A.z + fz * 1.8, 1, -0.68 * sp, 0.1 * sp, 0.7);
     }
   }
 

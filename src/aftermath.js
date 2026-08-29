@@ -5,6 +5,8 @@ import { mulberry32 } from './noise.js';
 import { regionAt } from './regions.js';
 import { WORLD_HALF } from './heightfield.js';
 import { cachedResource, sharedResource } from './cache.js';
+import { emitWakeStamp } from './wakestamps.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -616,12 +618,12 @@ export class StormRecovery {
   pushMarkers() {
     for (const mark of this.markers()) {
       const d = Math.hypot(mark.x - this.phys.pos.x, mark.z - this.phys.pos.y); if (d > 1450 && !this.blocking()) continue;
-      this.game.mapMarkers.push({ x: mark.x, z: mark.z, kind: mark.color === '#f07a2e' ? 'hazard' : 'dot', color: mark.color, clamp: this.blocking() });
+      emitMapMarker(this.game, mark.x, mark.z, mark.color === '#f07a2e' ? 'hazard' : 'dot', mark.color, 0, this.blocking());
     }
     for (const site of this.sites) {
       if (site.type !== 'blockage' || site.stage !== 'marked') continue;
       const A = this.rigs.get(site.id).agent;
-      if (A.active) this.game.mapMarkers.push({ x: A.x, z: A.z, kind: 'boat', heading: A.heading, color: '#5aa7ff' });
+      if (A.active) emitMapMarker(this.game, A.x, A.z, 'boat', '#5aa7ff', A.heading);
     }
     if (this.towSite) this.game.wpTarget = { x: this.towSite.clearX, z: this.towSite.clearZ, label: 'clear-water pocket', color: '#f07a2e', recovery: true };
     else if (this.passengerSite) this.game.wpTarget = { x: this.passengerSite.destX, z: this.passengerSite.destZ, label: 'FWC recovery', color: '#79d6a0', recovery: true };
@@ -669,13 +671,13 @@ export class StormRecovery {
 
   stamps(out) {
     for (const site of this.sites) {
-      if (site.type === 'blockage' && OPEN_STAGES.has(site.stage) && Math.hypot(site.x - this.phys.pos.x, site.z - this.phys.pos.y) < 95 && Math.hypot(site.vx, site.vz) > 0.18) out.push({ x: site.x, z: site.z, radius: 2.4, height: -0.2, foam: 0.32, foamRadius: 2.2 });
+      if (site.type === 'blockage' && OPEN_STAGES.has(site.stage) && Math.hypot(site.x - this.phys.pos.x, site.z - this.phys.pos.y) < 95 && Math.hypot(site.vx, site.vz) > 0.18) emitWakeStamp(out, site.x, site.z, 2.4, -0.2, 0.32, 2.2);
       const movingWorkboat = site.type === 'blockage' && site.stage === 'marked';
       const movingRecovery = site.type === 'survivor' && site.stage === 'reported';
       if (!movingWorkboat && !movingRecovery) continue;
       const A = this.rigs.get(site.id).agent; if (!A.active || A.speed < 2 || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 95) continue;
       const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), sp = Math.min(1, A.speed / 9);
-      out.push({ x: A.x - fx * 1.8, z: A.z - fz * 1.8, radius: 1.1, height: 0.5 * sp, foam: 1.4 * sp, foamRadius: 1 });
+      emitWakeStamp(out, A.x - fx * 1.8, A.z - fz * 1.8, 1.1, 0.5 * sp, 1.4 * sp, 1);
     }
   }
 
