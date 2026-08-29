@@ -384,7 +384,9 @@ export class Traffic {
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
       b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
         b.shx += -nx * into * 0.5; b.shz += -nz * into * 0.5; b.speed *= 0.5;
-        if (b.yellT <= 0 && into > 2.5) { b.yellT = 8; b.record.collisions++; fx.game.boatHit(b, into); fx.game.persist(); }
+        let pursuit = false;
+        if (b.yellT <= 0 && into > 2.5) { b.yellT = 8; b.record.collisions++; pursuit = fx.game.boatHit(b, into); fx.game.persist(); }
+        if (pursuit) { this.retire(b, 90); return; }
         if (into >= 6) this.beginCollisionAftermath(b, into);
       } };
     }

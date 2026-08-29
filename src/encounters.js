@@ -9,6 +9,7 @@ import { findGroundingSite } from './grounding.js';
 import { makeAirRescueRig, updateAirRescueAircraft, updateAirRescueBeam } from './airrescue.js';
 import { WORLD_HALF } from './heightfield.js';
 import { buildRaceCourse } from './racecourse.js';
+import { canEscapePursuit, pursuitLostDistance, pursuitSpeed, wantedLevel } from './pursuit.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -231,6 +232,7 @@ export class EncounterDirector {
       this.game.shake = Math.max(this.game.shake, Math.min(0.3, into * 0.032)); this.audio.warn();
       this.game.toast('Rub rails hit', e.rams > 1 ? 'That is not a clean race anymore.' : 'The johnboat crew is keeping count.', 2.4);
     } };
+    this.patrolObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.08, tag: 'FWC patrol', onHit: (into, nx, nz) => this.hitPatrol(into, nx, nz) };
     this.raceMarker = { x: 0, z: 0, kind: 'boat', heading: 0, color: '#f07a2e' };
     this.manateeObs = { x: 0, z: 0, r: 2.15, tag: 'entangled manatee', onHit: into => this.hitEntangledManatee(into) };
     this.manateeLineObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.16, tag: 'crab trap line', onHit: into => this.hitManateeLine(into) };
@@ -259,7 +261,7 @@ export class EncounterDirector {
     if (!Array.isArray(this.game.save.encounterMemory)) this.game.save.encounterMemory = [];
     else if (this.game.save.encounterMemory.length > ENCOUNTER_MEMORY_LIMIT) this.game.save.encounterMemory.splice(0, this.game.save.encounterMemory.length - ENCOUNTER_MEMORY_LIMIT);
     this.game.save.encounterMemorySeq = Math.max(0, Number(this.game.save.encounterMemorySeq) || 0);
-    this.distressEcho = null;
+    this.distressEcho = null; this.patrolAlert = 0;
     this._f = new THREE.Vector2(); this._r = new THREE.Vector2(); this._flow = new THREE.Vector2(); this._personBoat = { x: 0, z: 0, speed: 0 };
     this.airWashStamp = { x: 0, z: 0, radius: 8.5, height: -0.82, foam: 2.2, foamRadius: 9.5 };
   }
@@ -1084,15 +1086,54 @@ export class EncounterDirector {
     } else if (['resolved', 'aborted', 'declined'].includes(e.state)) e.resolveT = 0.01;
   }
 
-  startPatrol(at) {
-    const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: 4, want: 8, active: true });
+  requestPatrol(attention = 0) {
+    if (this.active?.type === 'patrol') return;
+    this.patrolAlert = Math.max(this.patrolAlert, Number(attention) || 0);
+    this.next = Math.min(this.next, this.patrolAlert >= 3 ? 1.5 : this.patrolAlert >= 2 ? 3 : 8);
+  }
+
+  forcePatrolPursuit(source, impact = 0) {
+    if (!source || !Number.isFinite(source.x) || !Number.isFinite(source.z)) return false;
+    this.patrolAlert = 0;
+    if (this.active?.type === 'patrol') this.beginPatrolPursuit(this.active, 'rammed FWC patrol', false);
+    else {
+      if (this.active) this.finish(false, true);
+      this.startPatrol({ x: source.x, z: source.z, heading: Number(source.heading) || 0 }, { pursuit: true, speed: Math.max(4, Number(source.speed) || 0), impact });
+    }
+    return Boolean(this.active?.type === 'patrol' && this.active.state === 'pursuit');
+  }
+
+  beginPatrolPursuit(e, reason = 'failure to stop', addViolation = true) {
+    if (!e || e.type !== 'patrol') return false;
+    const fresh = e.state !== 'pursuit'; e.state = 'pursuit'; e.wanted = true; e.lostT = 0; e.surrender = 0;
+    if (fresh) { e.pursuit = 0; e.tacticT = 0; e.tacticSide = Math.random() < 0.5 ? -1 : 1; }
+    if (this.law) {
+      if (addViolation) { this.law.stats.failureToStop = (this.law.stats.failureToStop || 0) + 1; this.law.add(0.65, reason, false); }
+      this.law.setPursuit(true);
+    }
+    return fresh;
+  }
+
+  hitPatrol(into) {
+    const e = this.active; if (!e || e.type !== 'patrol' || e.ramCd > 0 || into < 1.6) return;
+    e.ramCd = 2.2; e.ramHits++; this.rigs.patrol.agent.speed *= clamp(1 - into * 0.025, 0.66, 0.9);
+    if (this.law) { this.law.stats.patrolRams = (this.law.stats.patrolRams || 0) + 1; this.law.add(1.45 + Math.min(0.9, into * 0.08), 'rammed FWC patrol boat', true); }
+    if (this.reputation) this.reputation.change('fwc', -Math.min(0.8, 0.32 + into * 0.04), 'patrol-ram', 'FWC logged the tower airboat striking a patrol hull.', false);
+    this.beginPatrolPursuit(e, 'rammed FWC patrol', false); this.audio.warn(); this.game.shake = Math.max(this.game.shake, Math.min(0.42, into * 0.045));
+    this.game.toast('FWC pursuit', 'You hit the patrol boat. They are staying on the hull.', 3.2);
+  }
+
+  startPatrol(at, options = {}) {
+    const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: Number(options.speed) || 4, want: 8, turn: 0, active: true });
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading;
     A.mesh.visible = true;
     const goodwill = Number(this.game.save.goodwill) || 0, fwcStanding = this.reputation ? this.reputation.score('fwc') : 0;
     this.active = {
-      type: 'patrol', x: at.x, z: at.z, state: 'approach', t: 0, comply: 0, warned: false, pursuit: 0, known: false,
-      wanted: Boolean((this.law && this.law.attention >= 1.2) || fwcStanding <= -4), recognized: fwcStanding >= 2 || goodwill >= 4,
+      type: 'patrol', x: at.x, z: at.z, state: options.pursuit ? 'pursuit' : 'approach', t: 0, comply: 0, warned: false, pursuit: 0, known: Boolean(options.pursuit),
+      wanted: Boolean(options.pursuit || (this.law && this.law.attention >= 1.2) || fwcStanding <= -4), recognized: fwcStanding >= 2 || goodwill >= 4,
+      lostT: 0, surrender: 0, tacticT: 0, tacticSide: Math.random() < 0.5 ? -1 : 1, contactCd: 0, ramCd: 0, ramHits: options.impact ? 1 : 0,
     };
+    if (options.pursuit) { this.beginPatrolPursuit(this.active, 'rammed FWC patrol', false); this.audio.warn(); this.game.toast('Wanted', 'FWC is in pursuit. Break visual or idle and hold position.', 3.2); }
   }
 
   startSmuggler(at) {
@@ -1316,7 +1357,9 @@ export class EncounterDirector {
     if (e.type === 'airrescue') this.audio.helicopter(0);
     if (this.law) this.law.setPursuit(false);
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
-    this.active = null; this.next = success ? 100 + Math.random() * 110 : silent ? 60 : 75 + Math.random() * 90;
+    this.active = null;
+    const normalDelay = success ? 100 + Math.random() * 110 : silent ? 60 : 75 + Math.random() * 90;
+    this.next = this.patrolAlert > 0 ? Math.min(normalDelay, this.patrolAlert >= 3 ? 1.5 : this.patrolAlert >= 2 ? 3 : 8) : normalDelay;
   }
 
   updateAgent(A, dt, t, targetX, targetZ, maxSpeed, holdRadius = 0) {
@@ -1350,6 +1393,12 @@ export class EncounterDirector {
     if (!A.active || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 70) return;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading);
     const o = slot ? this.boatObs2 : this.boatObs; o.ax = A.x + fx * 2; o.az = A.z + fz * 2; o.bx = A.x - fx * 2; o.bz = A.z - fz * 2; o.tag = tag; this.obs.push(o);
+  }
+
+  addPatrolObstacle(A) {
+    if (!A.active || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 70) return;
+    const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), o = this.patrolObs;
+    o.ax = A.x + fx * 2; o.az = A.z + fz * 2; o.bx = A.x - fx * 2; o.bz = A.z - fz * 2; this.obs.push(o);
   }
 
   addRaceObstacle(A) {
@@ -1844,10 +1893,35 @@ export class EncounterDirector {
     else this.finish(false, e.state === 'aborted');
   }
 
+  resolvePatrolStop(e) {
+    const heat = this.law?.attention || 0, cargo = Boolean(this.law?.hasContraband());
+    const fine = Math.round((125 + heat * 58 + e.ramHits * 70) * (this.reputation ? this.reputation.fineFactor() : 1));
+    let seized = false;
+    if (this.law) {
+      seized = cargo && this.law.confiscate(); if (!seized) this.law.cited();
+      this.law.stats.pursuitStops = (this.law.stats.pursuitStops || 0) + 1; this.law.cool(Math.max(0.8, heat * 0.62));
+    }
+    this.pay(-fine, seized ? 'FWC seizure and fine' : 'FWC pursuit fine'); this.audio.fail();
+    this.game.toast(seized ? 'FWC boxed you in' : 'Patrol stop', seized ? 'The package is aboard twenty-seven. The citation stays with the hull.' : 'Engine at idle. Soto wrote the citation on the water.', 3.8);
+    this.game.save.encounters.patrol = (this.game.save.encounters.patrol || 0) + 1; this.remember(seized ? 'patrol-seizure' : 'patrol-cited'); this.game.persist(); this.finish(true);
+  }
+
   updatePatrol(e, dt, t) {
-    const A = this.rigs.patrol.agent, p = this.phys, d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y);
-    const lead = 1.5, tx = p.pos.x + p.vel.x * lead, tz = p.pos.y + p.vel.y * lead;
-    this.updateAgent(A, dt, t, tx, tz, e.state === 'pursuit' ? 11.5 : 8.4, e.state === 'check' ? 24 : 0); this.addBoatObstacle(A, 'patrol');
+    const A = this.rigs.patrol.agent, p = this.phys; let d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y);
+    e.contactCd = Math.max(0, e.contactCd - dt); e.ramCd = Math.max(0, e.ramCd - dt);
+    const heat = this.law?.attention || (e.wanted ? 1.2 : 0), stars = wantedLevel(heat);
+    let tx = p.pos.x + p.vel.x * 1.5, tz = p.pos.y + p.vel.y * 1.5, maxSpeed = 8.4, holdRadius = e.state === 'check' ? 24 : 0;
+    if (e.state === 'pursuit') {
+      e.pursuit += dt; e.tacticT -= dt;
+      if (e.tacticT <= 0) { e.tacticT = 4.5 + Math.random() * 3.5; e.tacticSide *= -1; }
+      const pfx = -Math.sin(p.heading), pfz = -Math.cos(p.heading), prx = Math.cos(p.heading), prz = -Math.sin(p.heading);
+      const aggressive = stars >= 2, lead = d > 65 ? 1.25 : d > 24 ? 0.58 : 0.12;
+      const side = aggressive ? e.tacticSide * (d < 16 ? 1.4 : 4.8) : e.tacticSide * (d < 24 ? 6.5 : 1.5);
+      const fore = aggressive ? (d < 16 ? -0.4 : 7.5) : (d < 24 ? 8 : 2.5);
+      tx = p.pos.x + p.vel.x * lead + pfx * fore + prx * side; tz = p.pos.y + p.vel.y * lead + pfz * fore + prz * side;
+      maxSpeed = pursuitSpeed(heat, p.speed); holdRadius = 0;
+    }
+    this.updateAgent(A, dt, t, tx, tz, maxSpeed, holdRadius); d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y); this.addPatrolObstacle(A);
     const blink = Math.floor(t * 5) % 2; this.rigs.patrol.blue.light.intensity = blink ? 80 : 5; this.rigs.patrol.red.light.intensity = blink ? 5 : 80;
     if (d < 150) this.known(e, e.wanted ? 'FWC intercept' : 'FWC patrol', e.wanted ? 'They matched the hull. Idle and let them come alongside.' : 'Blue lights. They want the prop at idle.');
     if (e.known) this.point(A.x, A.z, 'FWC patrol', '#5aa7ff');
@@ -1858,11 +1932,7 @@ export class EncounterDirector {
       let checkTime = e.recognized ? 2.8 : goodwill <= -2 ? 6 : 4.5;
       if (this.reputation) checkTime = this.reputation.patrolCheckTime(checkTime);
       if (p.speed * MPH > (e.wanted ? 10 : 16) && d < 42) {
-        e.state = 'pursuit'; e.pursuit = 24 + (this.law ? this.law.attention * 7 : 0);
-        const fine = Math.round((100 + (this.law ? this.law.attention * 35 : 0)) * (this.reputation ? this.reputation.fineFactor() : 1));
-        this.pay(-fine, 'FWC citation');
-        if (this.law) { this.law.add(0.65, 'failure to stop', false); this.law.cited(); this.law.setPursuit(true); }
-        this.game.toast('Failure to idle', 'The patrol is staying on you.', 3);
+        this.beginPatrolPursuit(e, 'failure to stop', true); this.audio.warn(); this.game.toast('Failure to idle', 'Wanted level raised. Twenty-seven is staying on the hull.', 3);
       } else if (e.comply > checkTime) {
         this.audio.checkpoint();
         if (this.law && this.law.confiscate()) {
@@ -1876,10 +1946,27 @@ export class EncounterDirector {
       }
     } else if (e.state === 'pursuit') {
       if (this.law) this.law.setPursuit(true);
-      e.pursuit -= dt;
-      if (e.pursuit <= 0 || d > 360) {
+      if (stars >= 2 && d < 6.4 && e.contactCd <= 0 && A.speed > 5) {
+        const dx = p.pos.x - A.x, dz = p.pos.y - A.z, dd = Math.hypot(dx, dz) || 1, nx = dx / dd, nz = dz / dd;
+        const afx = -Math.sin(A.heading), afz = -Math.cos(A.heading), closing = afx * nx + afz * nz;
+        if (closing > 0.28) {
+          const force = 1.65 + stars * 0.42; e.contactCd = Math.max(2.2, 4.1 - stars * 0.3); A.speed *= 0.68;
+          p.vel.x += nx * force + afx * 0.75; p.vel.y += nz * force + afz * 0.75; p.hit = Math.max(p.hit, 4.1 + stars * 0.52); p.hitNormal.set(nx, nz); p.hitTag = 'boat';
+          p.angVel += e.tacticSide * (1.25 + stars * 0.25); p.rollVel += e.tacticSide * (1.4 + stars * 0.24); this.game.shake = Math.max(this.game.shake, 0.3 + stars * 0.04);
+          if (this.condition) this.condition.damage(0.35 + stars * 0.16, 0.06);
+          if (this.law) this.law.stats.patrolContacts = (this.law.stats.patrolContacts || 0) + 1;
+          this.audio.thud(0.75 + stars * 0.08); this.game.toast('Patrol ram', stars >= 4 ? 'Twenty-seven drove into the quarter. Hold it or break their line.' : 'Twenty-seven is trying to turn the hull.', 2.4);
+        }
+      }
+      const stopped = d < 17 && p.speed * MPH < 4.5 && !p.airborne && p.wipeT <= 0;
+      e.surrender = stopped ? e.surrender + dt : Math.max(0, e.surrender - dt * 1.4);
+      if (stopped) this.setPrompt(`hold idle <i>· patrol alongside · ${Math.max(0, 4 - e.surrender).toFixed(1)}s</i>`, 'STOP');
+      if (e.surrender >= 4) { this.resolvePatrolStop(e); return; }
+      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0);
+      e.lostT = d > lostDistance ? e.lostT + dt : Math.max(0, e.lostT - dt * 2.2);
+      if (canEscapePursuit(heat, e.pursuit, e.lostT, this.environment.restrictedVisibility || 0)) {
         if (this.law) this.law.escaped();
-        this.complete('Patrol broke off', 'The citation still stands. Their radio does not forget the hull.', 0, 0, '', 'patrol-escaped');
+        this.complete('Visual broken', 'Twenty-seven lost the hull, but FWC kept the wanted report open.', 0, 0, '', 'patrol-escaped');
         return;
       }
     }
@@ -2054,10 +2141,15 @@ export class EncounterDirector {
     this.audio.helicopter(0);
     this.updateSpills(this.game.paused ? 0 : dt);
     if (!enabled) { if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
-    if (this.game.state) { if (this.active) this.finish(false, true); if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
+    const missionPursuit = this.game.state && this.active?.type === 'patrol' && this.active.state === 'pursuit';
+    if (this.game.state && !missionPursuit) { if (this.active) this.finish(false, true); if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
     if (this.game.paused) { this.interact = false; this.alternate = false; return; }
     this.updateDistressEcho(dt, t);
-    if (!this.active) { this.next -= dt; if (this.next <= 0) this.start(); this.interact = false; this.alternate = false; return; }
+    if (!this.active) {
+      this.next -= dt;
+      if (this.next <= 0) { const called = this.patrolAlert > 0; if (this.start(called ? 'patrol' : undefined, called)) this.patrolAlert = 0; }
+      this.interact = false; this.alternate = false; return;
+    }
     const e = this.active; e.t += dt; this.clearPrompt();
     if (e.type === 'distress') this.updateDistress(e, dt, t);
     else if (e.type === 'airrescue') this.updateAirRescue(e, dt, t);
@@ -2072,7 +2164,8 @@ export class EncounterDirector {
     else this.updateSalvage(e, dt, t);
     const carryingDistress = e.type === 'distress' && e.state === 'aboard', carryingFire = e.type === 'fire' && e.aboard;
     const focus = e.type === 'patrol' ? this.rigs.patrol.agent : e.type === 'race' || e.type === 'spotlight' || (e.type === 'smuggler' && e.state === 'chase') ? this.rigs.smuggler.agent : e;
-    if (this.active && ((!carryingDistress && !carryingFire && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) || ((carryingDistress || carryingFire) && e.t > 600))) this.finish(false);
+    const activePursuit = e.type === 'patrol' && e.state === 'pursuit';
+    if (this.active && !activePursuit && ((!carryingDistress && !carryingFire && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) || ((carryingDistress || carryingFire) && e.t > 600))) this.finish(false);
     this.interact = false; this.alternate = false;
   }
 

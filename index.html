@@ -62,9 +62,12 @@
   #lawState { position:absolute; right:32px; top:165px; min-width:170px; text-align:right; text-transform:uppercase; letter-spacing:0.14em; opacity:0; transform:translateX(8px); transition:opacity .25s,transform .25s; }
   #lawState.on { opacity:0.92; transform:none; }
   #lawState > span { display:block; color:#8fb8d8; font-size:10px; font-weight:600; }
-  #lawState > b { display:flex; justify-content:flex-end; gap:4px; margin-top:5px; }
-  #lawState > b i { width:15px; height:3px; background:rgba(143,184,216,0.2); transform:skewX(-24deg); }
-  #lawState > b i.lit { background:#8fb8d8; box-shadow:0 0 8px rgba(85,155,230,0.58); }
+  #lawState > b { display:flex; justify-content:flex-end; gap:3px; margin-top:3px; }
+  #lawState > b i { width:17px; color:rgba(143,184,216,0.2); font-size:17px; font-style:normal; line-height:1; text-align:center; text-shadow:none; }
+  #lawState > b i.lit { color:#a8d5f5; text-shadow:0 0 9px rgba(85,155,230,0.76); }
+  #lawState.pursuit > span,#lawState.pursuit > b i.lit { color:#f0f6fa; }
+  #lawState.pursuit > b i.lit { animation:wantedPulse .55s steps(2,end) infinite; text-shadow:0 0 12px rgba(70,145,255,0.95),0 0 4px rgba(255,55,45,0.72); }
+  @keyframes wantedPulse { 50% { opacity:.58; } }
   #lawState small { display:block; margin-top:5px; max-width:240px; color:var(--foam); font-size:9px; opacity:0.68; letter-spacing:0.09em; }
   #hazardState { position:absolute; right:32px; top:230px; min-width:190px; text-align:right; text-transform:uppercase; letter-spacing:0.14em; opacity:0; transform:translateX(8px); transition:opacity .2s,transform .2s; }
   #hazardState.on { opacity:0.96; transform:none; }

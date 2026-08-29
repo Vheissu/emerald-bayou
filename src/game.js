@@ -306,8 +306,14 @@ export class Game {
     const P = b.profile, name = P ? `${P.callsign} · ${P.operator}` : 'another boat';
     this.toast(`“${lines[Math.floor(Math.random() * lines.length)]}”`, into > 6 ? `${name} · hard collision` : `${name} · hull contact`, 2.4);
     this.tricks.bust('BOAT');
-    if (this.law && into > 3.5) this.law.violation((P?.id === 'fwc-27' ? 0.8 : 0.35) + Math.min(0.7, into * 0.06), P?.id === 'fwc-27' ? 'collision with FWC patrol' : `${P?.callsign || 'boat'} collision reported`);
+    if (P?.id === 'fwc-27' && into > 2.5) {
+      if (this.law) { this.law.stats.patrolRams = (this.law.stats.patrolRams || 0) + 1; this.law.add(1.75 + Math.min(1.1, into * 0.1), 'rammed FWC patrol boat', true); }
+      if (this.reputation) this.reputation.change('fwc', -Math.min(0.9, 0.38 + into * 0.045), 'patrol-ram', 'FWC logged the tower airboat striking twenty-seven.', false);
+      return Boolean(this.encounters?.forcePatrolPursuit?.(b, into));
+    }
+    if (this.law && into > 3.5) this.law.violation(0.35 + Math.min(0.7, into * 0.06), `${P?.callsign || 'boat'} collision reported`);
     if (P && this.reputation && into > 3.5) this.reputation.change(P.faction, -Math.min(0.45, 0.12 + into * 0.025), 'working-boat-collision', `${P.callsign} logged the collision against the tower airboat.`, false);
+    return false;
   }
   anglerSay(a, line, angry = false) {
     this.toast(`“${line}”`, angry ? 'You rocked his boat. Idle past anglers.' : 'The angler in the johnboat', 2.4);
