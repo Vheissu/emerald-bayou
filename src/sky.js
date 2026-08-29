@@ -33,13 +33,16 @@ export class Sky {
       uniforms: this.uniforms,
       side: THREE.BackSide,
       depthWrite: false,
-      depthTest: false,
+      depthTest: true,
       vertexShader: `
         varying vec3 vDir;
         void main() {
           vDir = normalize((modelMatrix * vec4(position, 1.0)).xyz - cameraPosition);
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mv;
+          // pin the dome to the far plane: with LEqual depth it only survives where nothing wrote depth,
+          // so the cloud fbm stack (the most expensive fragment work in the frame) never runs behind terrain
+          gl_Position.z = gl_Position.w;
         }`,
       fragmentShader: `
         varying vec3 vDir; uniform vec3 sunDir, moonDir, lightDir; uniform vec2 windDir; uniform float windSpeed, uTime, cover, daylight, storm, flash;
@@ -143,7 +146,9 @@ export class Sky {
     });
     const geo = new THREE.SphereGeometry(3000, 48, 24);
     this.mesh = new THREE.Mesh(geo, mat);
-    this.mesh.renderOrder = -1000;
+    // drawn after the other opaques (early-z rejects everything the world already covered) and, being
+    // opaque, still before every transparent object, which keeps beams / spray / rain compositing on top
+    this.mesh.renderOrder = 100;
     this.mesh.frustumCulled = false;
     this.mesh.name = 'sky';
   }

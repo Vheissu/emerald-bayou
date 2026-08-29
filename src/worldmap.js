@@ -64,7 +64,7 @@ export class WorldMap {
     this.T.tile(i * COARSE, j * COARSE, COARSE, COARSE_PX, 'chart').then(rgba => {
       this.inFlight--; const c = document.createElement('canvas'); c.width = COARSE_PX; c.height = COARSE_PX;
       c.getContext('2d').putImageData(new ImageData(rgba, COARSE_PX, COARSE_PX), 0, 0); t.canvas = c; if (this.open) this.render();
-    });
+    }).catch(() => { this.inFlight--; this.tiles.delete(key); }); // a failed tile must give its slot back or the chart stops filling in
     return null;
   }
   render() {

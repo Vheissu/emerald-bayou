@@ -22,20 +22,39 @@ const L0 = SIZE(0);
 
 class WorkerPool {
   constructor(seed) {
+    this.seed = seed;
     const n = Math.min(4, Math.max(1, (navigator.hardwareConcurrency || 4) - 2));
-    this.workers = []; this.pending = new Map(); this.id = 0; this.rr = 0; this.inFlight = 0;
-    for (let i = 0; i < n; i++) {
-      const w = new Worker(new URL('./terrain.worker.js', import.meta.url), { type: 'module' });
-      w.postMessage({ kind: 'init', seed });
-      w.onmessage = (e) => { const p = this.pending.get(e.data.id); if (p) { this.pending.delete(e.data.id); this.inFlight--; p(e.data); } };
-      this.workers.push(w);
-    }
+    this.workers = []; this.pending = new Map(); this.id = 0; this.rr = 0; this.inFlight = 0; this.respawns = 0;
+    for (let i = 0; i < n; i++) this.workers.push(this.spawn(i));
     this.capacity = n * 2;
   }
+  spawn(slot) {
+    const w = new Worker(new URL('./terrain.worker.js', import.meta.url), { type: 'module' });
+    w.postMessage({ kind: 'init', seed: this.seed });
+    w.onmessage = (e) => { const job = this.pending.get(e.data.id); if (job) { this.pending.delete(e.data.id); this.inFlight--; job.resolve(e.data); } };
+    // A worker that dies (OOM, killed tab process) would otherwise strand its in-flight grids and stall
+    // streaming for the rest of the session. Replace it and re-post what it was holding; if replacements
+    // keep failing (the script itself is broken), fail the jobs instead so callers can re-queue or skip.
+    w.onerror = w.onmessageerror = (err) => {
+      console.error('terrain worker error', err && (err.message || err.type) || err);
+      const jobs = [...this.pending.values()].filter(job => job.worker === w);
+      if (!jobs.length) return;
+      if (this.respawns < 8) {
+        this.respawns++; w.terminate();
+        const fresh = this.workers[slot] = this.spawn(slot);
+        for (const job of jobs) { job.worker = fresh; fresh.postMessage(job.msg); }
+      } else {
+        for (const job of jobs) { this.pending.delete(job.msg.id); this.inFlight--; job.reject(new Error('terrain worker unavailable')); }
+      }
+    };
+    return w;
+  }
   request(msg) {
-    return new Promise((resolve) => {
-      const id = ++this.id; this.pending.set(id, resolve); this.inFlight++;
-      this.workers[this.rr++ % this.workers.length].postMessage({ ...msg, id });
+    return new Promise((resolve, reject) => {
+      const worker = this.workers[this.rr++ % this.workers.length];
+      const job = { msg: { ...msg, id: ++this.id }, resolve, reject, worker };
+      this.pending.set(job.msg.id, job); this.inFlight++;
+      worker.postMessage(job.msg);
     });
   }
 }
@@ -287,7 +306,7 @@ export class Terrain {
         if (c.disposed) return;
         c.h = m.h; c.nrm = m.nrm; c.bio = m.bio; c.minH = m.minH; c.maxH = m.maxH;
         this.finalize.push(c);
-      });
+      }).catch(() => { if (!c.disposed) c.requested = false; }); // let a later stream pass re-queue the chunk
     }
   }
   update(t, camera) {

@@ -441,6 +441,7 @@ export class Environment {
     const tideFt = this.waterLevel * FT, tide = `${this.tideRate >= 0 ? 'Rising' : 'Falling'} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
     const lunarRange = this.tideRange > 0.94 ? ' · spring tide' : this.tideRange < 0.76 ? ' · neap tide' : '';
     const current = this.currentField ? ` · ${this.currentField.hud()}` : '';
-    this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${WEATHER[this.key].label}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${current}</div>`;
+    const html = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${WEATHER[this.key].label}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${current}</div>`;
+    if (html !== this.hudHtml) { this.hudHtml = html; this.el.innerHTML = html; } // skip the DOM re-parse when nothing on the panel changed
   }
 }

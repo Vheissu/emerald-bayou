@@ -582,7 +582,8 @@ async function init() {
     }
     audio.truck(world.truckLevel);
     water.updateMurk(terrain, camera.position);
-    if (worldMap.open && (frameNo++ & 3) === 0) worldMap.render();
+    frameNo++; // cadence divider for the canvas HUDs (radar every 2nd frame, open chart every 4th)
+    if (worldMap.open && (frameNo & 3) === 0) worldMap.render();
     water.update(time);
     water.mesh.position.set(Math.round(camera.position.x / 50) * 50, water.level, Math.round(camera.position.z / 50) * 50);
 
@@ -670,7 +671,7 @@ async function init() {
     plume.update(dt, time);
 
     audio.update(started ? phys.rpm : 0, started ? Math.max(0, phys.throttle) : 0, started ? phys.speed : 0, time);
-    minimap.update(phys, yaw, game.mapMarkers);
+    if ((frameNo & 1) === 0) minimap.update(phys, yaw, game.mapMarkers); // a radar reads fine at 30 Hz; the full-canvas redraw is real CPU on old machines
     game.projectMarker(camera, window.innerWidth, window.innerHeight);
 
     // render

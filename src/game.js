@@ -14,6 +14,10 @@ const MENU_TABS = ['jobs', 'world', 'records', 'system'];
 const esc = value => String(value ?? '').replace(/[&<>"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
 // Florida measures in feet and miles: under about a fifth of a mile in feet, then miles
 export const fmtDist = (m) => m < 300 ? `${Math.round(m * FT / 10) * 10} ft` : m < 16090 ? `${(m * MI).toFixed(m < 3219 ? 2 : 1)} mi` : `${Math.round(m * MI)} mi`;
+// The HUD is rebuilt every frame but its markup rarely changes; assigning identical innerHTML still re-parses
+// and re-lays-out, which is a real per-frame CPU cost on old machines. Write only when the string differs.
+const setHTML = (el, html) => { if (el.__html !== html) { el.__html = html; el.innerHTML = html; } };
+const setText = (el, text) => { if (el.__text !== text) { el.__text = text; el.textContent = text; } };
 const MEDALS = ['BRONZE', 'SILVER', 'GOLD'];
 
 export class Game {
@@ -549,7 +553,7 @@ export class Game {
         }
       }
     }
-    this.el.air.textContent = p.airborne && p.airTime > 0.25 ? `AIR ${p.airTime.toFixed(2)}s · ${Math.max(0, p.y * FT).toFixed(0)} ft` : '';
+    setText(this.el.air, p.airborne && p.airTime > 0.25 ? `AIR ${p.airTime.toFixed(2)}s · ${Math.max(0, p.y * FT).toFixed(0)} ft` : '');
     // beached against something with the throttle pinned: nudge the player toward reverse
     if (p.landFac > 0.5 && p.speed < 0.6 && p.throttle > 0.7 && !this.paused) { this.stuckT = (this.stuckT || 0) + dt; if (this.stuckT > 1.6) { this.toast('Hung up', 'Back off with S and pick another line', 2.2); this.stuckT = -4; } }
     else if (this.stuckT > 0) this.stuckT = 0; else if (this.stuckT < 0) this.stuckT = Math.min(0, this.stuckT + dt);
@@ -605,9 +609,9 @@ export class Game {
       this.dockJob = null; if (freeRide && slow) { let bd = 14; for (const j of this.jobs) { const d = this.dist(j.x, j.z); if (d < bd) { bd = d; this.dockJob = j; } } }
       this.atBoard = freeRide && slow && !this.dockJob && this.dist(this.dockTie.x, this.dockTie.z) < 18;
       this.el.prompt.classList.toggle('on', !!(this.dockCamp || this.dockJob || this.atBoard));
-      if (this.dockJob) { const m = this.dockJob.m, lock = !this.unlocked(this.dockJob.i); const goal = m.gold ? `gold ${fmtT(m.gold)}` : m.scoreMedal ? `gold ${m.scoreMedal[0].toLocaleString()}` : m.timeLimit ? `${fmtT(m.timeLimit)} limit` : fmtCash(m.reward); this.el.prompt.innerHTML = lock ? `<b>E</b> ${m.title} <i>· locked · finish ${this.missions[this.dockJob.i - 1].title}</i>` : `<b>E</b> ${m.title} <i>· ${goal}</i>`; }
-      else if (this.dockCamp) this.el.prompt.innerHTML = `<b>E</b> take a run from ${this.dockCamp.name}`;
-      else if (this.atBoard) this.el.prompt.innerHTML = `<b>E</b> jobs board`;
+      if (this.dockJob) { const m = this.dockJob.m, lock = !this.unlocked(this.dockJob.i); const goal = m.gold ? `gold ${fmtT(m.gold)}` : m.scoreMedal ? `gold ${m.scoreMedal[0].toLocaleString()}` : m.timeLimit ? `${fmtT(m.timeLimit)} limit` : fmtCash(m.reward); setHTML(this.el.prompt, lock ? `<b>E</b> ${m.title} <i>· locked · finish ${this.missions[this.dockJob.i - 1].title}</i>` : `<b>E</b> ${m.title} <i>· ${goal}</i>`); }
+      else if (this.dockCamp) setHTML(this.el.prompt, `<b>E</b> take a run from ${this.dockCamp.name}`);
+      else if (this.atBoard) setHTML(this.el.prompt, `<b>E</b> jobs board`);
     }
     const s = this.state;
     if (s && !this.paused) {
@@ -654,47 +658,47 @@ export class Game {
     const s = this.state, e = this.el;
     if (s) {
       const h = s.m.hud(s, this);
-      e.mission.innerHTML = `<div class="title">${s.m.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
+      setHTML(e.mission, `<div class="title">${s.m.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`);
       let tm = '';
       const limit = s.limitOverride || s.m.timeLimit;
       if (limit) { const left = limit - (s.t - (s.limitStart || 0)); tm = `${fmtT(left)}<small>remaining</small>`; e.timer.classList.toggle('warn', left < 20); }
       else if (s.m.gold) { tm = `${fmtT(s.t)}<small>gold ${fmtT(s.m.gold)}</small>`; e.timer.classList.remove('warn'); }
       else { tm = `${fmtT(s.t)}<small>elapsed</small>`; e.timer.classList.remove('warn'); }
-      e.timer.innerHTML = tm;
-      e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '';
+      setHTML(e.timer, tm);
+      setHTML(e.wp, this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '');
     } else if (this.story?.hud()) {
       const h = this.story.hud();
-      e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
-      e.timer.innerHTML = ''; e.timer.classList.remove('warn');
-      e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '';
+      setHTML(e.mission, `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`);
+      setHTML(e.timer, ''); e.timer.classList.remove('warn');
+      setHTML(e.wp, this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '');
     } else if (this.aftermath?.hud()) {
       const h = this.aftermath.hud();
-      e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
-      e.timer.innerHTML = ''; e.timer.classList.remove('warn');
-      e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '';
+      setHTML(e.mission, `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`);
+      setHTML(e.timer, ''); e.timer.classList.remove('warn');
+      setHTML(e.wp, this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '');
     } else if (this.discoveries?.hud()) {
       const h = this.discoveries.hud();
-      e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
-      e.timer.innerHTML = ''; e.timer.classList.remove('warn'); e.wp.innerHTML = '';
+      setHTML(e.mission, `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`);
+      setHTML(e.timer, ''); e.timer.classList.remove('warn'); setHTML(e.wp, '');
     } else if (this.life?.traffic?.activeCollision()) {
       const b = this.life.traffic.activeCollision(), c = b.collision, checking = c.stage === 'disabled', restarting = c.stage === 'restart';
-      e.mission.innerHTML = `<div class="title">Collision aftermath</div><div class="obj">${checking ? `Idle below 5.5 mph and hold alongside ${b.profile.callsign}` : restarting ? `${b.profile.callsign} is restarting` : `${b.profile.callsign} reported the collision`}</div><div class="sub">${checking ? 'Stay until the crew accounts for everyone' : restarting ? 'The collision stays on the log, but you did not leave them' : 'FWC has your hull and direction'}</div>`;
-      e.timer.innerHTML = checking ? `${Math.max(0, 7 - c.hold).toFixed(1)}<small>seconds alongside</small>` : restarting ? `${Math.max(0, 4.5 - c.t).toFixed(1)}<small>engine restart</small>` : '';
-      e.timer.classList.toggle('warn', checking && c.distance > 80); e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label} <b>${fmtDist(c.distance)}</b>` : '';
+      setHTML(e.mission, `<div class="title">Collision aftermath</div><div class="obj">${checking ? `Idle below 5.5 mph and hold alongside ${b.profile.callsign}` : restarting ? `${b.profile.callsign} is restarting` : `${b.profile.callsign} reported the collision`}</div><div class="sub">${checking ? 'Stay until the crew accounts for everyone' : restarting ? 'The collision stays on the log, but you did not leave them' : 'FWC has your hull and direction'}</div>`);
+      setHTML(e.timer, checking ? `${Math.max(0, 7 - c.hold).toFixed(1)}<small>seconds alongside</small>` : restarting ? `${Math.max(0, 4.5 - c.t).toFixed(1)}<small>engine restart</small>` : '');
+      e.timer.classList.toggle('warn', checking && c.distance > 80); setHTML(e.wp, this.wpTarget ? `${this.wpTarget.label} <b>${fmtDist(c.distance)}</b>` : '');
     } else {
       const b = this.bounties.today().filter(x => !x.done)[0];
       const nc = this.nearCamp; const known = nc && this.save.camps.includes(nc.camp.key);
       const campLine = nc ? `<div class="obj">${known ? nc.camp.name : 'Unknown camp'} · ${fmtDist(nc.d)}</div>` : '';
-      e.mission.innerHTML = `<div class="title">Free ride</div>${campLine}<div class="hint">M · jobs board &nbsp; Tab · chart</div>${b ? `<div class="sub">Bounty · ${b.text} · ${fmtCash(b.pay)}</div>` : ''}`;
-      e.timer.innerHTML = ''; e.wp.innerHTML = '';
+      setHTML(e.mission, `<div class="title">Free ride</div>${campLine}<div class="hint">M · jobs board &nbsp; Tab · chart</div>${b ? `<div class="sub">Bounty · ${b.text} · ${fmtCash(b.pay)}</div>` : ''}`);
+      setHTML(e.timer, ''); setHTML(e.wp, '');
       this.wpTarget = (nc && nc.d > 60 && nc.d < 5000) ? { x: nc.camp.tie.x, z: nc.camp.tie.z, label: known ? nc.camp.name : 'camp' } : null;
     }
-    e.cash.innerHTML = `${fmtCash(this.save.cash)}<b>${this.tricks.total.toLocaleString()} <span style="font-size:14px;letter-spacing:0.1em">pts</span></b>`;
+    setHTML(e.cash, `${fmtCash(this.save.cash)}<b>${this.tricks.total.toLocaleString()} <span style="font-size:14px;letter-spacing:0.1em">pts</span></b>`);
     // trick feed
     const tr = this.tricks;
     const evs = tr.events.slice(-5).map(ev => `<div class="ev ${ev.bust ? 'bust' : ''}" style="opacity:${Math.max(0, 1 - (ev.t - 1.6) / 0.8).toFixed(2)}">${ev.text}${ev.points ? `<span>+${ev.points}</span>` : ''}</div>`).join('');
     const chain = tr.chain.length ? `<div class="chain">${tr.chain.length} trick chain <b>×${tr.mult}</b> ${Math.round(tr.chainPts * tr.mult)}</div>` : '';
-    e.tricks.innerHTML = evs + chain;
+    setHTML(e.tricks, evs + chain);
   }
   // screen-space arrow to the current objective when it is off screen
   projectMarker(camera, w, h) {
