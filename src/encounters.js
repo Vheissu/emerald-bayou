@@ -7,6 +7,8 @@ import { mulberry32 } from './noise.js';
 import { fmtDist } from './game.js';
 import { findGroundingSite } from './grounding.js';
 import { makeAirRescueRig, updateAirRescueAircraft, updateAirRescueBeam } from './airrescue.js';
+import { WORLD_HALF } from './heightfield.js';
+import { buildRaceCourse } from './racecourse.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -14,7 +16,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
 const MANATEE_PROBES = [0, -0.42, 0.42, -0.86, 0.86, -1.32, 1.32];
-const DEBUG_ORDER = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'smuggler', 'salvage', 'netline'];
+const DEBUG_ORDER = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'race', 'patrol', 'smuggler', 'salvage', 'netline'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
 const SPILL_POOL_SIZE = 3;
 
@@ -223,6 +225,13 @@ export class EncounterDirector {
       e.hitCd = 2.8; e.scour += into * 0.18; this.game.shake = Math.max(this.game.shake, Math.min(0.28, into * 0.03));
       this.game.toast('Contact with the grounded skiff', 'Back into the deep water and pass the line at idle.', 2.8);
     } };
+    this.raceObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'racing johnboat', onHit: (into) => {
+      const e = this.active; if (!e || e.type !== 'race' || (e.state !== 'countdown' && e.state !== 'running') || e.hitCd > 0 || into < 2.2) return;
+      e.hitCd = 1.8; e.rams++; e.dirty = true; this.rigs.smuggler.agent.speed *= clamp(1 - into * 0.025, 0.68, 0.92);
+      this.game.shake = Math.max(this.game.shake, Math.min(0.3, into * 0.032)); this.audio.warn();
+      this.game.toast('Rub rails hit', e.rams > 1 ? 'That is not a clean race anymore.' : 'The johnboat crew is keeping count.', 2.4);
+    } };
+    this.raceMarker = { x: 0, z: 0, kind: 'boat', heading: 0, color: '#f07a2e' };
     this.manateeObs = { x: 0, z: 0, r: 2.15, tag: 'entangled manatee', onHit: into => this.hitEntangledManatee(into) };
     this.manateeLineObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.16, tag: 'crab trap line', onHit: into => this.hitManateeLine(into) };
     this.phys.addObs('encounters', this.obs);
@@ -241,6 +250,7 @@ export class EncounterDirector {
         else if (this.active.type === 'spotlight') { e.preventDefault(); this.debugAdvanceSpotlight(); }
         else if (this.active.type === 'grounding') { e.preventDefault(); this.debugAdvanceGrounding(); }
         else if (this.active.type === 'airrescue') { e.preventDefault(); this.debugAdvanceAirRescue(); }
+        else if (this.active.type === 'race') { e.preventDefault(); this.debugAdvanceRace(); }
       }
     };
     window.addEventListener('keydown', this.keyHandler);
@@ -306,12 +316,19 @@ export class EncounterDirector {
     });
   }
 
+  raceCourse(at, gateCount = 6) {
+    return buildRaceCourse({
+      at, gateCount, waterLevel: this.environment.waterLevel,
+      heightAt: (x, z) => this.terrain.heightAt(x, z), isBlocked: (x, z) => Boolean(this.world?.blockedAt(x, z)),
+    });
+  }
+
   pickType() {
     const weather = this.environment.key, night = this.environment.hour < 5.5 || this.environment.hour > 20.5;
     const heat = this.law ? this.law.attention : 0;
     const runners = this.reputation ? this.reputation.score('runners') : 0, fwc = this.reputation ? this.reputation.score('fwc') : 0;
     const region = this.regions && this.regions.current ? this.regions.current.encounters : {};
-    const weights = { distress: 0.24, airrescue: 0.065, grounding: 0.1, fire: 0.1, manatee: 0.1, spotlight: 0.08, patrol: 0.2, salvage: 0.1, smuggler: 0.1, netline: 0.07 };
+    const weights = { distress: 0.24, airrescue: 0.065, grounding: 0.1, fire: 0.1, manatee: 0.1, spotlight: 0.08, race: 0.105, patrol: 0.2, salvage: 0.1, smuggler: 0.1, netline: 0.07 };
     weights.patrol *= (region.law ?? 1) * (1 + heat * 1.75) * (1 + Math.max(0, -fwc) * 0.16);
     weights.smuggler *= (region.runners ?? 1) * (night ? 1.9 : 1) * (1 + Math.max(0, -runners) * 0.2);
     weights.netline *= (0.72 + (region.runners ?? 1) * 0.38) * (night ? 1.24 : 1);
@@ -322,15 +339,16 @@ export class EncounterDirector {
     weights.fire *= (region.danger ?? 1) * (0.82 + Math.min(1.25, (this.environment.values.wind || 0) * 0.045));
     weights.manatee *= (night ? 0.42 : 1) * (1 - clamp((this.environment.values.storm || 0) - 0.45, 0, 0.86));
     weights.spotlight *= (region.runners ?? 1) * (night ? 1.9 : 0) * (1 + Math.max(0, -runners) * 0.12) * (1 - clamp((this.environment.values.storm || 0) - 0.34, 0, 0.94));
+    weights.race *= (region.runners ?? 1) * (night ? 0.7 : 1) * (1 + Math.max(0, runners) * 0.045) * (1 - clamp(((this.environment.values.storm || 0) - 0.12) / 0.76));
     weights.salvage *= 0.7 + (region.danger ?? 1) * 0.45;
     if (weather === 'hurricane' || weather === 'tropical' || weather === 'thunderstorm') {
-      weights.distress *= 1.8; weights.airrescue *= 0.025; weights.grounding *= 0.12; weights.fire *= 1.35; weights.manatee *= 0.08; weights.spotlight *= 0.04; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
+      weights.distress *= 1.8; weights.airrescue *= 0.025; weights.grounding *= 0.12; weights.fire *= 1.35; weights.manatee *= 0.08; weights.spotlight *= 0.04; weights.race *= 0.01; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
     } else if (weather === 'squall' || weather === 'hail') {
-      weights.distress *= 1.4; weights.airrescue *= 0.32; weights.grounding *= 0.55; weights.fire *= 1.2; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
+      weights.distress *= 1.4; weights.airrescue *= 0.32; weights.grounding *= 0.55; weights.fire *= 1.2; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.race *= 0.12; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
     }
     if (heat >= 3) weights.patrol *= 2.1;
     let roll = Math.random() * Object.values(weights).reduce((a, n) => a + n, 0);
-    for (const type of ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
+    for (const type of ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'race', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
     return 'distress';
   }
 
@@ -343,6 +361,14 @@ export class EncounterDirector {
     else if (type === 'fire') this.startFire(at);
     else if (type === 'manatee') this.startManatee(at);
     else if (type === 'spotlight') this.startSpotlight(at);
+    else if (type === 'race') {
+      let raceAt = at, started = false;
+      for (let attempt = 0; attempt < 3 && raceAt; attempt++) {
+        if (this.startRace(raceAt)) { started = true; break; }
+        raceAt = nearby ? this.spot(42, 62, 38) : this.spot();
+      }
+      if (!started) { this.next = 20; return false; }
+    }
     else if (type === 'patrol') this.startPatrol(at);
     else if (type === 'smuggler') this.startSmuggler(at);
     else if (type === 'netline') this.startNetline(at);
@@ -976,6 +1002,88 @@ export class EncounterDirector {
     } else if (['warned', 'spooked', 'taken', 'seized', 'escaped'].includes(e.state)) e.resolveT = 0.1;
   }
 
+  startRace(at) {
+    const gates = this.raceCourse(at); if (!gates) return false;
+    const R = this.rigs.smuggler, A = R.agent, first = gates[0]; R.pack.visible = false;
+    const heading = Math.atan2(-(first.x - at.x), -(first.z - at.z));
+    Object.assign(A, { x: at.x, z: at.z, heading, speed: 1.8, want: 4.2, turn: 0, targetX: first.x, targetZ: first.z, decisionT: 0, active: true });
+    A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading; A.mesh.visible = true;
+    const last = gates[gates.length - 1], fx = -Math.sin(last.heading), fz = -Math.cos(last.heading);
+    this.active = {
+      type: 'race', x: at.x, z: at.z, heading, originX: at.x, originZ: at.z, state: 'challenge', t: 0, known: false,
+      gates, playerGate: 0, aiGate: 0, countdown: 0, countMark: 4, runT: 0, phase: Math.random() * Math.PI * 2,
+      playerStartX: 0, playerStartZ: 0, hitCd: 0, rams: 0, dirty: false, falseStart: false, severeT: 0,
+      stake: Number(this.game.save.cash) >= 100 ? 100 : 0, paidStake: false, stakeSettled: false, resolveT: 0,
+      departX: clamp(last.x + fx * 300, -WORLD_HALF + 160, WORLD_HALF - 160), departZ: clamp(last.z + fz * 300, -WORLD_HALF + 160, WORLD_HALF - 160),
+      payout: 0, resultTitle: '', resultLine: '', outcome: '', place: this.regions?.current?.name || '',
+    };
+    return true;
+  }
+
+  acceptRace(e) {
+    if (e.state !== 'challenge') return;
+    e.state = 'countdown'; e.countdown = 3.35; e.countMark = 4; e.playerStartX = this.phys.pos.x; e.playerStartZ = this.phys.pos.y;
+    e.stake = e.stake && Number(this.game.save.cash) >= 100 ? 100 : 0;
+    if (e.stake) { this.pay(-e.stake, 'Race stake'); e.paidStake = true; }
+    const g = e.gates[0]; this.rigs.smuggler.agent.heading = Math.atan2(-(g.x - e.x), -(g.z - e.z));
+    this.showRaceGate(e); this.clearPrompt(); this.audio.horn(0.24);
+    this.game.toast(e.stake ? '$100 cash sprint' : '$110 open purse', 'Six gates. Hold your line and go on the horn.', 3.2);
+  }
+
+  raceProgress(e, index, x, z) {
+    if (index >= e.gates.length) return e.gates[e.gates.length - 1].s;
+    const prev = index ? e.gates[index - 1] : null, next = e.gates[index], base = prev ? prev.s : 0;
+    const px = prev ? prev.x : e.originX, pz = prev ? prev.z : e.originZ;
+    const dx = next.x - px, dz = next.z - pz, length = Math.hypot(dx, dz) || 1;
+    return base + clamp(((x - px) * dx + (z - pz) * dz) / (length * length)) * length;
+  }
+
+  showRaceGate(e) {
+    const gate = e.gates[e.playerGate];
+    if (!gate) { this.game.beacon.hide(); this.game.beacon2.hide(); if (this.game.wpTarget?.encounter) this.game.wpTarget = null; return; }
+    const y = this.environment.waterLevel, last = e.playerGate === e.gates.length - 1;
+    this.game.beacon.set(gate.x, y, gate.z, last ? 0x7be08a : 0xf07a2e, true);
+    const next = e.gates[e.playerGate + 1]; if (next) this.game.beacon2.set(next.x, y, next.z, 0xf3ede0, true); else this.game.beacon2.hide();
+    this.point(gate.x, gate.z, `sprint gate ${e.playerGate + 1} / ${e.gates.length}`, last ? '#7be08a' : '#f07a2e');
+  }
+
+  abortRace(e) {
+    if (e.state === 'aborted' || e.state === 'resolved') return;
+    if (e.paidStake && !e.stakeSettled) { this.pay(e.stake, 'Race stake returned'); e.stakeSettled = true; }
+    e.state = 'aborted'; e.resolveT = 3.8; this.game.beacon.hide(); this.game.beacon2.hide();
+    if (this.game.wpTarget?.encounter) this.game.wpTarget = null;
+    this.audio.warn(); this.game.toast('Sprint called off', 'Weather closed the cut. Nobody keeps the stake.', 3.2);
+  }
+
+  resolveRace(e, won) {
+    if (e.state !== 'running') return;
+    e.state = 'resolved'; e.resolveT = 4.6; e.stakeSettled = true; this.game.beacon.hide(); this.game.beacon2.hide();
+    if (this.game.wpTarget?.encounter) this.game.wpTarget = null;
+    if (won) {
+      e.payout = e.stake ? (e.dirty ? 185 : 285) : (e.dirty ? 65 : 110); e.outcome = e.dirty ? 'race-dirty' : 'race-won';
+      e.resultTitle = e.dirty ? 'Rough sprint won' : 'Cash sprint won';
+      e.resultLine = e.dirty ? 'You crossed first, but the rub-rail money came out of the purse.' : 'Six clean gates. The johnboat crew pays on the water.';
+      if (this.reputation) this.reputation.change('runners', e.dirty ? 0.2 : 0.75, e.dirty ? 'race-dirty' : 'race-won', e.dirty ? 'You won the cut sprint after trading paint.' : 'You beat Mud Hen through six clean gates.', true);
+      this.audio.complete(); this.game.toast('You took the line', e.dirty ? 'First hull through, with paint missing from both boats.' : 'Mud Hen crossed behind you.', 3.4);
+    } else {
+      e.payout = 0; e.outcome = 'race-lost'; e.resultTitle = 'Cash sprint lost'; e.resultLine = e.stake ? 'Mud Hen crossed first and keeps the hundred.' : 'Mud Hen crossed first. No money changed hands.';
+      if (this.reputation && !e.dirty) this.reputation.change('runners', 0.1, 'race-finished', 'You ran all six marks and took the loss clean.', false);
+      this.audio.fail(); this.game.toast('Mud Hen took the line', e.stake ? 'The hundred stays in the johnboat.' : 'They point back at the first gate.', 3.4);
+    }
+    if (e.payout) this.pay(e.payout, e.resultTitle); else this.game.bountyToast(e.resultTitle);
+    this.game.save.encounters.race = (this.game.save.encounters.race || 0) + 1; this.remember(e.outcome, e.place); this.game.persist();
+  }
+
+  debugAdvanceRace() {
+    const e = this.active; if (!e || e.type !== 'race') return;
+    if (e.state === 'challenge') this.acceptRace(e);
+    else if (e.state === 'countdown') e.countdown = 0.01;
+    else if (e.state === 'running') {
+      const gate = e.gates[e.playerGate]; if (!gate) return;
+      this.phys.reset(gate.x, gate.z, gate.heading); this.phys.y = this.water.waveHeight(gate.x, gate.z, 0);
+    } else if (['resolved', 'aborted', 'declined'].includes(e.state)) e.resolveT = 0.01;
+  }
+
   startPatrol(at) {
     const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: 4, want: 8, active: true });
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading;
@@ -1100,11 +1208,12 @@ export class EncounterDirector {
     if (e.type === 'grounding') target = { x: e.approachX, z: e.approachZ };
     if (e.type === 'patrol') target = this.rigs.patrol.agent;
     else if (e.type === 'spotlight') target = this.rigs.smuggler.agent;
+    else if (e.type === 'race') target = e.state === 'challenge' ? this.rigs.smuggler.agent : e.gates[e.playerGate] || this.rigs.smuggler.agent;
     else if (e.type === 'smuggler' && e.state === 'chase') target = this.rigs.smuggler.agent;
     else if (e.type === 'salvage') target = e.pieces.find(q => !q.resolved) || e;
     else if (e.type === 'fire' && e.aboard && (e.fireOut || e.burned) && e.drop) target = e.drop;
     const dx = target.x - p.pos.x, dz = target.z - p.pos.y, d = Math.hypot(dx, dz) || 1;
-    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'airrescue' ? 20 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'manatee' ? (e.state === 'cutting' ? 5.5 : 19) : e.type === 'spotlight' ? 38 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
+    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'airrescue' ? 20 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'manatee' ? (e.state === 'cutting' ? 5.5 : 19) : e.type === 'spotlight' ? 38 : e.type === 'race' && e.state === 'challenge' ? 15 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
     const x = target.x - dx / d * gap, z = target.z - dz / d * gap;
     p.reset(x, z, p.heading); p.y = this.water.waveHeight(x, z, 0);
   }
@@ -1184,6 +1293,10 @@ export class EncounterDirector {
 
   finish(success = false, silent = false) {
     const e = this.active; if (!e) return;
+    if (e.type === 'race') {
+      if (e.paidStake && !e.stakeSettled) { this.game.addCash(e.stake); if (!silent) this.game.bountyToast(`Race stake returned <b>+$${e.stake}</b>`); }
+      if (!this.game.state) { this.game.beacon.hide(); this.game.beacon2.hide(); }
+    }
     this.clearPrompt(); this.obs.length = 0;
     if (e.type === 'distress') { if (!(success && this.beginDistressEcho(e))) this.clearDistressEcho(); }
     else if (!this.distressEcho) this.rigs.distress.boat.visible = false;
@@ -1215,7 +1328,7 @@ export class EncounterDirector {
       let best = 0, score = -1e9;
       for (const da of STEER_PROBES) {
         const h = A.heading + da, x = A.x - Math.sin(h) * 24, z = A.z - Math.cos(h) * 24;
-        const depth = -this.terrain.heightAt(x, z), toward = Math.hypot(targetX - x, targetZ - z);
+        const depth = this.environment.waterLevel - this.terrain.heightAt(x, z), toward = Math.hypot(targetX - x, targetZ - z);
         const s = Math.min(4, depth) - Math.abs(da) * 0.7 - toward * 0.006;
         if (depth > 0.55 && s > score) { score = s; best = da; }
       }
@@ -1237,6 +1350,16 @@ export class EncounterDirector {
     if (!A.active || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 70) return;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading);
     const o = slot ? this.boatObs2 : this.boatObs; o.ax = A.x + fx * 2; o.az = A.z + fz * 2; o.bx = A.x - fx * 2; o.bz = A.z - fz * 2; o.tag = tag; this.obs.push(o);
+  }
+
+  addRaceObstacle(A) {
+    if (!A.active || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 70) return;
+    const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), o = this.raceObs;
+    o.ax = A.x + fx * 2; o.az = A.z + fz * 2; o.bx = A.x - fx * 2; o.bz = A.z - fz * 2; this.obs.push(o);
+  }
+
+  markRaceBoat(A) {
+    const marker = this.raceMarker; marker.x = A.x; marker.z = A.z; marker.heading = A.heading; this.game.mapMarkers.push(marker);
   }
 
   updateDistress(e, dt, t) {
@@ -1639,6 +1762,88 @@ export class EncounterDirector {
     else if (e.state === 'taken') this.complete('Untagged take lost', 'FWC has a shot report and no hull number. The closed cut is quiet again.', 0, 0, '', 'spotlight-taken');
   }
 
+  updateRace(e, dt, t) {
+    const A = this.rigs.smuggler.agent, p = this.phys, V = this.environment.values;
+    e.hitCd = Math.max(0, e.hitCd - dt);
+    const unsafe = (V.storm || 0) > 0.88 || (V.sea || 0) > 1.28 || this.environment.key === 'hurricane' || this.environment.key === 'tropical';
+    e.severeT = unsafe ? e.severeT + dt : Math.max(0, e.severeT - dt * 0.5);
+    if (e.severeT > 1.6 && (e.state === 'challenge' || e.state === 'countdown' || e.state === 'running')) this.abortRace(e);
+
+    if (e.state === 'challenge') {
+      const tx = e.originX + Math.sin(t * 0.24 + e.phase) * 13, tz = e.originZ + Math.cos(t * 0.19 + e.phase) * 13;
+      this.updateAgent(A, dt, t, tx, tz, 3.8, 5); e.x = A.x; e.z = A.z; e.heading = A.heading; this.addRaceObstacle(A);
+      const d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y), mph = p.speed * MPH;
+      if (d < 135) this.known(e, 'Johnboat challenge', 'Two fingers, then a point down the cut. Mud Hen wants a six-mark sprint.');
+      if (e.known) {
+        this.point(A.x, A.z, 'cash sprint', '#f07a2e');
+        this.markRaceBoat(A);
+      }
+      if (d < 27 && this.canInteract()) {
+        if (mph < 8) {
+          this.setPrompt(`${e.stake ? 'put up $100 and run the cut' : 'take the $110 open sprint'} <i>· F wave them off</i>`);
+          if (this.interact) { this.acceptRace(e); return; }
+          if (this.alternate) {
+            e.state = 'declined'; e.resolveT = 3.8; this.clearPrompt(); this.audio.horn(0.12);
+            if (this.game.wpTarget?.encounter) this.game.wpTarget = null;
+            this.game.toast('Sprint declined', 'Mud Hen rolls back onto the throttle.', 2.6); return;
+          }
+        } else this.setPrompt(`idle alongside to answer the sprint <i>· ${Math.round(mph)} mph</i>`, 'IDLE');
+      }
+      return;
+    }
+
+    if (e.known) this.markRaceBoat(A);
+
+    if (e.state === 'countdown') {
+      A.speed *= Math.exp(-dt * 3.2);
+      if (this.currents) {
+        const flow = this.currents.flowAt(A.x, A.z, this._flow), nx = A.x + flow.x * dt * 0.42, nz = A.z + flow.y * dt * 0.42;
+        if (this.environment.waterLevel - this.terrain.heightAt(nx, nz) > 0.58 && !this.world?.blockedAt(nx, nz)) { A.x = nx; A.z = nz; }
+      }
+      A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, t) - 0.05, A.z); A.mesh.rotation.set(0, A.heading, 0); e.x = A.x; e.z = A.z; this.addRaceObstacle(A); this.showRaceGate(e);
+      if (!e.falseStart && Math.hypot(p.pos.x - e.playerStartX, p.pos.y - e.playerStartZ) > 11) {
+        e.falseStart = true; e.dirty = true; this.audio.warn(); this.game.toast('Jumped the horn', 'You can keep running, but the clean purse is gone.', 2.7);
+      }
+      e.countdown -= dt; const count = Math.max(0, Math.ceil(e.countdown));
+      if (count > 0 && count !== e.countMark) { e.countMark = count; this.audio.countdown(false); }
+      this.setPrompt(`${count || 1} <i>· hold for Mud Hen's horn${e.falseStart ? ' · false start logged' : ''}</i>`, 'READY');
+      if (e.countdown <= 0) {
+        e.state = 'running'; e.runT = 0; A.decisionT = 0; this.clearPrompt(); this.audio.countdown(true);
+        this.game.toast('Go', 'First hull through all six marks takes the purse.', 2.4);
+      }
+      return;
+    }
+
+    if (e.state === 'running') {
+      e.runT += dt;
+      const aiGate = e.gates[e.aiGate], seaPenalty = clamp(((V.sea || 0) - 0.28) / 1.25);
+      const raceSpeed = clamp(12.8 * (1 - seaPenalty * 0.14 - this.environment.restrictedVisibility * 0.12 - (V.storm || 0) * 0.08), 9.1, 12.8);
+      if (aiGate) this.updateAgent(A, dt, t, aiGate.x, aiGate.z, raceSpeed);
+      e.x = A.x; e.z = A.z; e.heading = A.heading; this.addRaceObstacle(A);
+      if (aiGate && Math.hypot(A.x - aiGate.x, A.z - aiGate.z) < aiGate.r) { e.aiGate++; A.decisionT = 0; }
+
+      const playerGate = e.gates[e.playerGate];
+      if (playerGate && Math.hypot(p.pos.x - playerGate.x, p.pos.y - playerGate.z) < playerGate.r) {
+        e.playerGate++; this.audio.checkpoint();
+        if (e.playerGate < e.gates.length) this.game.toast(`Gate ${e.playerGate} / ${e.gates.length}`, e.gates[e.playerGate].label, 1.1);
+      }
+      if (e.playerGate >= e.gates.length) { this.resolveRace(e, true); return; }
+      if (e.aiGate >= e.gates.length) { this.resolveRace(e, false); return; }
+
+      this.showRaceGate(e);
+      const playerProgress = this.raceProgress(e, e.playerGate, p.pos.x, p.pos.y), aiProgress = this.raceProgress(e, e.aiGate, A.x, A.z), gap = Math.round(Math.abs(playerProgress - aiProgress));
+      const position = gap < 5 ? 'side by side' : playerProgress > aiProgress ? `${gap} m ahead` : `${gap} m back`;
+      this.setPrompt(`${e.playerGate + 1} / ${e.gates.length} gates <i>· ${position}${e.dirty ? ' · rough line' : ''}</i>`, 'SPRINT');
+      if ((e.runT > 9 && Math.hypot(p.pos.x - e.gates[e.playerGate].x, p.pos.y - e.gates[e.playerGate].z) > 320) || e.runT > 92) this.resolveRace(e, false);
+      return;
+    }
+
+    this.updateAgent(A, dt, t, e.departX, e.departZ, e.state === 'resolved' ? 9.8 : 8.2); e.x = A.x; e.z = A.z; e.heading = A.heading; this.addRaceObstacle(A);
+    e.resolveT -= dt; if (e.resolveT > 0) return;
+    if (e.state === 'resolved') this.finish(true);
+    else this.finish(false, e.state === 'aborted');
+  }
+
   updatePatrol(e, dt, t) {
     const A = this.rigs.patrol.agent, p = this.phys, d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y);
     const lead = 1.5, tx = p.pos.x + p.vel.x * lead, tz = p.pos.y + p.vel.y * lead;
@@ -1860,12 +2065,13 @@ export class EncounterDirector {
     else if (e.type === 'fire') this.updateFire(e, dt, t);
     else if (e.type === 'manatee') this.updateManatee(e, dt, t);
     else if (e.type === 'spotlight') this.updateSpotlight(e, dt, t);
+    else if (e.type === 'race') this.updateRace(e, dt, t);
     else if (e.type === 'patrol') this.updatePatrol(e, dt, t);
     else if (e.type === 'smuggler') this.updateSmuggler(e, dt, t);
     else if (e.type === 'netline') this.updateNetline(e, dt, t);
     else this.updateSalvage(e, dt, t);
     const carryingDistress = e.type === 'distress' && e.state === 'aboard', carryingFire = e.type === 'fire' && e.aboard;
-    const focus = e.type === 'patrol' ? this.rigs.patrol.agent : e.type === 'spotlight' || (e.type === 'smuggler' && e.state === 'chase') ? this.rigs.smuggler.agent : e;
+    const focus = e.type === 'patrol' ? this.rigs.patrol.agent : e.type === 'race' || e.type === 'spotlight' || (e.type === 'smuggler' && e.state === 'chase') ? this.rigs.smuggler.agent : e;
     if (this.active && ((!carryingDistress && !carryingFire && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) || ((carryingDistress || carryingFire) && e.t > 600))) this.finish(false);
     this.interact = false; this.alternate = false;
   }

@@ -259,7 +259,7 @@ async function init() {
     }
     if (import.meta.env.DEV && e.code === 'F7' && !e.repeat) {
       e.preventDefault(); if (encounterStressRunning) return; encounterStressRunning = true;
-      const types = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats();
+      const types = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'race', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats();
       let iteration = 0, started = 0;
       const rotate = () => {
         const end = Math.min(6000, iteration + 240);
