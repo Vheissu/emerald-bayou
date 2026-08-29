@@ -78,7 +78,7 @@ export class RadioDirector {
     Object.assign(this, o); // game, audio, environment, regions, encounters, law, reputation, condition, phys
     this.el = document.getElementById('radioState');
     this.queue = []; this.current = null; this.history = []; this.recent = new Map();
-    this.clock = 0; this.airT = 0; this.gapT = 0; this.bootT = 2.3; this.ambientT = 15 + Math.random() * 8;
+    this.clock = 0; this.airT = 0; this.gapT = 0; this.bootT = 2.3; this.ambientT = 15 + Math.random() * 8; this.followupT = 22 + Math.random() * 16;
     this.enabled = false; this.started = false; this.lastAmbient = '';
     this.lastWeather = this.environment.key; this.lastRegion = null;
     this.lastEncounter = null; this.lastEncounterKnown = false; this.lastEncounterState = '';
@@ -111,6 +111,26 @@ export class RadioDirector {
     if (runners >= 3) pool.push(['CH 72', 'CAL ROOK · LOST KEY', 'Tower Boat, the back line is clear. You can answer on seventy-two.']);
     else if (runners <= -3) pool.push(['CH 72', 'CAL ROOK · LOST KEY', 'Tower Boat, this is not your channel anymore.']);
     return pool;
+  }
+
+  encounterFollowupMessage(memory) {
+    const place = memory.place || 'the berth';
+    if (memory.outcome === 'distress-repaired') return { channel: 'CH 68', speaker: 'ELI · SKIFF 6', text: 'Tower Boat, Eli. Fuel line stayed clear all the way home. I owe you a dry one.' };
+    if (memory.outcome === 'distress-berth') return { channel: 'CH 68', speaker: 'ELI · SKIFF 6', text: `${place} has me dry. Camp boat is going for my skiff at first light. I owe you.` };
+    if (memory.outcome === 'patrol-seizure') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Evidence bag from the tower airboat is aboard twenty-seven. Citation remains open.' };
+    if (memory.outcome === 'patrol-cleared') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Dispatch, twenty-seven. Tower airboat checked clean. Clear the stop.' };
+    if (memory.outcome === 'patrol-escaped') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Tower airboat got into the narrow water. Keep the hull on the call sheet.' };
+    if (memory.outcome === 'package-returned') return { channel: 'CH 72', speaker: 'CAL ROOK · LOST KEY', text: 'Parcel made it back unopened. Tower Boat kept their word.' };
+    if (memory.outcome === 'package-taken') return { channel: 'CH 72', speaker: 'UNKNOWN SKIFF', text: 'Parcel is gone. Tower hull has it. That does not close the account.' };
+    if (memory.outcome === 'salvage-cleared') return { channel: 'CH 68', speaker: 'JUNE BELL · SPLIT PINE', text: 'All three drums are on the rack at Split Pine. None split. Tower Boat got there in time.' };
+    if (memory.outcome === 'net-evidence') return { channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Monofilament, floats and two fish logged into evidence. That cut is open again.' };
+    if (memory.outcome === 'net-removed') return { channel: 'CH 72', speaker: 'CAL ROOK · LOST KEY', text: 'Net boat is clear. No floats left in the cut. Leave it that way.' };
+    return null;
+  }
+
+  encounterFollowup(memory) {
+    const msg = this.encounterFollowupMessage(memory); if (!msg) return false;
+    return this.transmit({ ...msg, priority: 1, key: `encounter-followup:${memory.id}`, cooldown: 99999 });
   }
 
   transmit({ channel = 'CH 16', speaker = 'RADIO', text, priority = 1, duration, key, cooldown = 45 } = {}) {
@@ -244,6 +264,14 @@ export class RadioDirector {
         this.started = true; const [channel, speaker, text] = this.intro();
         this.transmit({ channel, speaker, text, priority: 2, key: 'radio:intro', cooldown: 99999 });
       }
+    }
+
+    this.followupT -= dt;
+    if (this.followupT <= 0 && this.started && !this.current && !this.queue.length && !this.game.state && !this.encounters.active && !this.incidents?.active && !this.story?.busy()) {
+      const log = this.game.save.encounterMemory || [];
+      const memory = log.find(entry => !entry.followed && this.encounterFollowupMessage(entry));
+      if (memory && this.encounterFollowup(memory)) { memory.followed = true; memory.followedDay = this.environment.day; memory.followedHour = Math.round(this.environment.hour * 10) / 10; this.game.persist(); }
+      this.followupT = memory ? 38 + Math.random() * 24 : 20;
     }
 
     this.ambientT -= dt;

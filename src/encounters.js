@@ -10,6 +10,7 @@ const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
 const DEBUG_ORDER = ['distress', 'patrol', 'smuggler', 'salvage', 'netline'];
+const ENCOUNTER_MEMORY_LIMIT = 10;
 
 function recolor(group, color) {
   let first = true;
@@ -84,7 +85,7 @@ export class EncounterDirector {
   constructor(o) {
     Object.assign(this, o); // scene, terrain, world, water, phys, boat, game, audio, environment, plume, spray, law, reputation
     this.next = 48; this.active = null; this.seenT = 0; this.interact = false; this.alternate = false; this.enabled = false; this.debugIndex = 0;
-    this.obs = []; this.boatObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat' }; this.fixedObs = { x: 0, z: 0, r: 2.1, tag: 'wreck' };
+    this.obs = []; this.boatObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat' }; this.echoObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'skiff' }; this.fixedObs = { x: 0, z: 0, r: 2.1, tag: 'wreck' };
     this.netObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.32, tag: 'monofilament net', onHit: (into) => {
       const e = this.active; if (!e || e.type !== 'netline' || e.state === 'recovering' || e.state === 'secured' || e.hitCd > 0 || into < 1.8) return;
       e.hitCd = 3.5; e.snag = clamp((e.snag || 0) + into * 0.035, 0, 0.65);
@@ -92,7 +93,7 @@ export class EncounterDirector {
       if (into > 4.5) { this.audio.warn(); this.game.shake = Math.max(this.game.shake, 0.22); }
     } };
     this.phys.addObs('encounters', this.obs);
-    this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.smuggler.agent];
+    this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.smuggler.agent, this.rigs.distress.echoAgent];
     this.keyHandler = e => {
       if (e.code === 'KeyE' && !e.repeat) this.interact = true;
       if (e.code === 'KeyF' && !e.repeat) this.alternate = true;
@@ -102,7 +103,11 @@ export class EncounterDirector {
     window.addEventListener('keydown', this.keyHandler);
     this.game.save.encounters ??= {};
     this.game.save.goodwill ??= 0;
-    this._f = new THREE.Vector2(); this._r = new THREE.Vector2(); this._flow = new THREE.Vector2();
+    if (!Array.isArray(this.game.save.encounterMemory)) this.game.save.encounterMemory = [];
+    else if (this.game.save.encounterMemory.length > ENCOUNTER_MEMORY_LIMIT) this.game.save.encounterMemory.splice(0, this.game.save.encounterMemory.length - ENCOUNTER_MEMORY_LIMIT);
+    this.game.save.encounterMemorySeq = Math.max(0, Number(this.game.save.encounterMemorySeq) || 0);
+    this.distressEcho = null;
+    this._f = new THREE.Vector2(); this._r = new THREE.Vector2(); this._flow = new THREE.Vector2(); this._personBoat = { x: 0, z: 0, speed: 0 };
   }
 
   makeRigs() {
@@ -126,7 +131,7 @@ export class EncounterDirector {
 
     const netline = makeGillNet(); this.scene.add(netline);
 
-    return { distress: { boat: distressBoat, survivor, passenger, flare }, patrol, smuggler, salvage, netline };
+    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, patrol, smuggler, salvage, netline };
   }
 
   spot(min = 160, max = 300, sideMax = 170) {
@@ -174,8 +179,28 @@ export class EncounterDirector {
     return true;
   }
 
+  clearDistressEcho() {
+    const R = this.rigs.distress;
+    this.distressEcho = null; R.echoAgent.active = false; R.boat.visible = false; R.survivor.visible = true;
+    R.flare.group.visible = false; R.flare.light.intensity = 0; R.flare.bulb.scale.setScalar(1);
+  }
+
+  departureHeading(x, z, original) {
+    let best = original, bestDepth = -Infinity;
+    for (let i = 0; i < 16; i++) {
+      const h = original + (i ? Math.ceil(i / 2) * (i % 2 ? 1 : -1) * Math.PI / 8 : 0);
+      const fx = -Math.sin(h), fz = -Math.cos(h);
+      const near = -this.terrain.heightAt(x + fx * 34, z + fz * 34), far = -this.terrain.heightAt(x + fx * 72, z + fz * 72);
+      const depth = Math.min(near, far) - (this.world.blockedAt(x + fx * 34, z + fz * 34) ? 5 : 0);
+      if (depth > bestDepth) { bestDepth = depth; best = h; }
+    }
+    return best;
+  }
+
   startDistress(at) {
+    this.clearDistressEcho();
     const R = this.rigs.distress; R.boat.visible = true; R.survivor.visible = true; R.passenger.visible = false;
+    R.flare.group.visible = true;
     R.boat.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) - 0.05, at.z); R.boat.rotation.y = at.heading;
     wave(R.survivor);
     this.active = { type: 'distress', x: at.x, z: at.z, heading: at.heading, state: 'waiting', t: 0, hold: 0, known: false, leave: 0, recognized: Boolean(this.reputation && this.reputation.score('locals') >= 3) };
@@ -284,19 +309,62 @@ export class EncounterDirector {
     else { this.game.save.goodwill += n; this.game.persist(); }
   }
 
-  complete(title, line, amount = 0, goodwill = 0, deed = '') {
+  remember(outcome, place = '') {
+    if (!outcome) return null;
+    const save = this.game.save, log = save.encounterMemory;
+    const id = ++save.encounterMemorySeq;
+    const entry = { id, type: this.active?.type || '', outcome, place, day: this.environment.day, hour: Math.round(this.environment.hour * 10) / 10, followed: false };
+    log.push(entry); if (log.length > ENCOUNTER_MEMORY_LIMIT) log.splice(0, log.length - ENCOUNTER_MEMORY_LIMIT);
+    return entry;
+  }
+
+  complete(title, line, amount = 0, goodwill = 0, deed = '', outcome = '', place = '') {
     if (amount) this.pay(amount, title); else this.game.bountyToast(title);
     if (goodwill) this.goodwill(goodwill, deed || title);
     this.game.toast(title, line, 3.4);
-    const type = this.active.type; this.game.save.encounters[type] = (this.game.save.encounters[type] || 0) + 1; this.game.persist();
+    const type = this.active.type; this.game.save.encounters[type] = (this.game.save.encounters[type] || 0) + 1; this.remember(outcome, place); this.game.persist();
     this.finish(true);
+  }
+
+  beginDistressEcho(e) {
+    if (e.type !== 'distress' || (e.state !== 'repair' && e.state !== 'aboard')) return false;
+    const R = this.rigs.distress, mode = e.state === 'repair' ? 'depart' : 'adrift';
+    const heading = mode === 'depart' ? this.departureHeading(e.x, e.z, e.heading) : e.heading;
+    this.distressEcho = { mode, x: e.x, z: e.z, heading, t: mode === 'depart' ? 34 : 80, ph: e.t || 0 };
+    R.boat.position.set(e.x, this.water.waveHeight(e.x, e.z, 0) - 0.05, e.z); R.boat.rotation.set(0, heading, 0); R.boat.visible = true;
+    R.survivor.visible = mode === 'depart'; R.passenger.visible = false; R.flare.group.visible = mode === 'adrift';
+    const A = R.echoAgent;
+    if (mode === 'depart') Object.assign(A, { x: e.x, z: e.z, heading, speed: 0.8, want: 5.4, turn: 0, decisionT: 0, targetX: e.x - Math.sin(heading) * 420, targetZ: e.z - Math.cos(heading) * 420, active: true });
+    else A.active = false;
+    return true;
+  }
+
+  updateDistressEcho(dt, t) {
+    const E = this.distressEcho; if (!E) return;
+    const R = this.rigs.distress, A = R.echoAgent; E.t -= dt;
+    if (E.t <= 0) { this.clearDistressEcho(); return; }
+    if (E.mode === 'depart') {
+      this.updateAgent(A, dt, t, A.targetX, A.targetZ, 5.4); E.x = A.x; E.z = A.z; E.heading = A.heading;
+      R.flare.group.visible = false;
+    } else {
+      if (this.currents) { const f = this.currents.flowAt(E.x, E.z, this._flow); E.x += f.x * dt * 0.58; E.z += f.y * dt * 0.58; }
+      R.boat.position.set(E.x, this.water.waveHeight(E.x, E.z, t) - 0.05, E.z); R.boat.rotation.set(0, E.heading, Math.sin(t * 0.8 + E.ph) * 0.025, 'YXZ');
+      const pulse = 0.5 + 0.5 * Math.sin(t * 4.4); R.flare.group.visible = true; R.flare.light.intensity = 14 + pulse * 26; R.flare.bulb.scale.setScalar(0.55 + pulse * 0.45);
+    }
+    const d = Math.hypot(E.x - this.phys.pos.x, E.z - this.phys.pos.y); R.boat.visible = d < 650;
+    if (R.survivor.visible && d < 180) { const boat = this._personBoat; boat.x = this.phys.pos.x; boat.z = this.phys.pos.y; boat.speed = this.phys.speed; animatePerson(R.survivor, t, dt, boat); }
+    if (d < 70) {
+      const fx = -Math.sin(E.heading), fz = -Math.cos(E.heading), o = this.echoObs;
+      o.ax = E.x + fx * 2; o.az = E.z + fz * 2; o.bx = E.x - fx * 2; o.bz = E.z - fz * 2; o.tag = E.mode === 'depart' ? 'repaired skiff' : 'abandoned skiff'; this.obs.push(o);
+    }
   }
 
   finish(success = false, silent = false) {
     const e = this.active; if (!e) return;
     this.clearPrompt(); this.obs.length = 0;
-    this.rigs.distress.boat.visible = false;
-    this.rigs.distress.survivor.visible = true; this.rigs.distress.passenger.visible = false;
+    if (e.type === 'distress') { if (!(success && this.beginDistressEcho(e))) this.clearDistressEcho(); }
+    else if (!this.distressEcho) this.rigs.distress.boat.visible = false;
+    this.rigs.distress.passenger.visible = false;
     this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false;
     this.rigs.smuggler.boat.visible = false; this.rigs.smuggler.agent.active = false; this.rigs.smuggler.pack.visible = false;
     this.rigs.salvage.wreck.visible = false; for (const d of this.rigs.salvage.drums) d.visible = false;
@@ -345,7 +413,7 @@ export class EncounterDirector {
     const d = Math.hypot(e.x - this.phys.pos.x, e.z - this.phys.pos.y);
     R.boat.position.x = e.x; R.boat.position.z = e.z;
     R.boat.position.y = this.water.waveHeight(e.x, e.z, t) - 0.05; R.boat.rotation.z = Math.sin(t * 0.8) * 0.025;
-    animatePerson(R.survivor, t, dt, { x: this.phys.pos.x, z: this.phys.pos.y });
+    { const boat = this._personBoat; boat.x = this.phys.pos.x; boat.z = this.phys.pos.y; boat.speed = this.phys.speed; animatePerson(R.survivor, t, dt, boat); }
     if (R.passenger.visible) animatePerson(R.passenger, t, dt);
     if (R.survivor.userData.waveT <= 0 && d < 130) wave(R.survivor);
     const pulse = 0.5 + 0.5 * Math.sin(t * 7); R.flare.light.intensity = 50 + pulse * 95; R.flare.bulb.scale.setScalar(0.7 + pulse * 0.8);
@@ -359,7 +427,7 @@ export class EncounterDirector {
     }
     if (e.state === 'repair') {
       if (d < 15 && this.phys.speed * MPH < 7) e.hold += dt; else e.hold = Math.max(0, e.hold - dt * 1.5);
-      if (e.hold >= 6) { this.audio.checkpoint(); if (this.law) this.law.cool(0.2); this.complete('Stranger helped', e.recognized ? 'Motor caught. He says the camps will hear about it.' : 'Motor caught. He owes you one.', 180, 1, 'You pulled a stranded skiff clear.'); }
+      if (e.hold >= 6) { this.audio.checkpoint(); if (this.law) this.law.cool(0.2); this.complete('Stranger helped', e.recognized ? 'Motor caught. He says the camps will hear about it.' : 'Motor caught. He owes you one.', 180, 1, 'You pulled a stranded skiff clear.', 'distress-repaired'); }
     } else if (e.state === 'aboard') {
       if (d > 360) R.boat.visible = false;
       const q = e.drop, dd = Math.hypot(q.x - this.phys.pos.x, q.z - this.phys.pos.y);
@@ -368,7 +436,7 @@ export class EncounterDirector {
         this.setPrompt(`put the operator ashore at ${q.name}`);
         if (this.interact) {
           if (this.law) this.law.cool(0.3);
-          this.complete('Safe berth reached', `${q.name} took him in. His skiff can wait for daylight.`, 275, 1.25, 'You carried a stranded operator to a safe berth.');
+          this.complete('Safe berth reached', `${q.name} took him in. His skiff can wait for daylight.`, 275, 1.25, 'You carried a stranded operator to a safe berth.', 'distress-berth', q.name);
         }
       }
     }
@@ -397,10 +465,10 @@ export class EncounterDirector {
         this.audio.checkpoint();
         if (this.law && this.law.confiscate()) {
           this.pay(-Math.round(200 * (this.reputation ? this.reputation.fineFactor() : 1)), 'Cargo seizure');
-          this.complete('Cargo seized', 'FWC took the package and wrote the hull up.');
+          this.complete('Cargo seized', 'FWC took the package and wrote the hull up.', 0, 0, '', 'patrol-seizure');
         } else {
           if (this.law) this.law.cleanCheck();
-          this.complete('Patrol cleared you', e.recognized ? 'They know the hull. Keep it clean.' : 'Clean hull. Carry on.');
+          this.complete('Patrol cleared you', e.recognized ? 'They know the hull. Keep it clean.' : 'Clean hull. Carry on.', 0, 0, '', 'patrol-cleared');
         }
         return;
       }
@@ -409,7 +477,7 @@ export class EncounterDirector {
       e.pursuit -= dt;
       if (e.pursuit <= 0 || d > 360) {
         if (this.law) this.law.escaped();
-        this.complete('Patrol broke off', 'The citation still stands. Their radio does not forget the hull.');
+        this.complete('Patrol broke off', 'The citation still stands. Their radio does not forget the hull.', 0, 0, '', 'patrol-escaped');
         return;
       }
     }
@@ -431,7 +499,7 @@ export class EncounterDirector {
         this.clearPrompt(); R.pack.visible = false;
         if (this.reputation) this.reputation.change('runners', e.trusted ? 0.55 : 1, 'package-returned', 'You flagged the johnboat and left their package alone.', true);
         if (this.law) this.law.cool(0.2);
-        this.audio.horn(0.16); this.complete('Package returned', e.trusted ? 'They nod once. The line stays open.' : 'The johnboat crew pays a finder’s cut.', e.trusted ? 140 : 90); return;
+        this.audio.horn(0.16); this.complete('Package returned', e.trusted ? 'They nod once. The line stays open.' : 'The johnboat crew pays a finder’s cut.', e.trusted ? 140 : 90, 0, '', 'package-returned'); return;
       }
       if (this.interact) {
         this.clearPrompt(); R.pack.visible = false; e.state = 'chase'; e.chase = e.hostile ? 52 : e.trusted ? 46 : 38; this.pay(260, 'Package taken');
@@ -447,7 +515,7 @@ export class EncounterDirector {
       e.chase -= dt; const d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y), run = Math.hypot(p.pos.x - e.originX, p.pos.y - e.originZ);
       this.point(A.x, A.z, 'johnboat', '#f05a36');
       if (d < 16 && !e.yelled) { e.yelled = true; this.game.toast(e.hostile ? '“Knew you would take it.”' : '“Put it back!”', 'The men in the johnboat', 2.2); }
-      if (e.chase <= 0 || run > 340) this.complete('Lost the johnboat', 'The package is yours now. Whatever is in it.', 0, 0);
+      if (e.chase <= 0 || run > 340) this.complete('Lost the johnboat', 'The package is yours now. Whatever is in it.', 0, 0, '', 'package-taken');
     }
   }
 
@@ -466,7 +534,7 @@ export class EncounterDirector {
         q.found = true; q.mesh.visible = false; e.found++; this.audio.pickup(); this.pay(45, `Fuel drum ${e.found} of ${e.pieces.length}`);
       }
     }
-    if (e.found >= e.pieces.length) { if (this.law) this.law.cool(0.15); this.complete('Wreckage cleared', 'Three drums recovered before they split.', 140, 1, 'You cleared loose fuel drums out of the storm channel.'); }
+    if (e.found >= e.pieces.length) { if (this.law) this.law.cool(0.15); this.complete('Wreckage cleared', 'Three drums recovered before they split.', 140, 1, 'You cleared loose fuel drums out of the storm channel.', 'salvage-cleared'); }
   }
 
   beginNetRecovery(e, choice) {
@@ -511,7 +579,8 @@ export class EncounterDirector {
       if (this.law) this.law.add(0.45, 'illegal net crew tipped off', false);
       this.game.toast('Evidence gone', 'The johnboat hauled the line and left no floats behind.', 3.4);
     }
-    this.game.save.encounters.netline = (this.game.save.encounters.netline || 0) + 1; this.game.persist();
+    this.game.save.encounters.netline = (this.game.save.encounters.netline || 0) + 1;
+    this.remember(e.choice === 'fwc' ? 'net-evidence' : 'net-removed'); this.game.persist();
   }
 
   updateNetline(e, dt, t) {
@@ -557,12 +626,13 @@ export class EncounterDirector {
   canInteract() { return !this.game.dockCamp && !this.game.dockJob && !this.game.atBoard; }
 
   update(dt, t, enabled = true) {
-    this.enabled = enabled;
-    if (!enabled) { this.interact = false; this.alternate = false; return; }
-    if (this.game.state) { if (this.active) this.finish(false, true); this.interact = false; this.alternate = false; return; }
+    this.enabled = enabled; this.obs.length = 0;
+    if (!enabled) { if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
+    if (this.game.state) { if (this.active) this.finish(false, true); if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
     if (this.game.paused) { this.interact = false; this.alternate = false; return; }
+    this.updateDistressEcho(dt, t);
     if (!this.active) { this.next -= dt; if (this.next <= 0) this.start(); this.interact = false; this.alternate = false; return; }
-    const e = this.active; e.t += dt; this.obs.length = 0; this.clearPrompt();
+    const e = this.active; e.t += dt; this.clearPrompt();
     if (e.type === 'distress') this.updateDistress(e, dt, t);
     else if (e.type === 'patrol') this.updatePatrol(e, dt, t);
     else if (e.type === 'smuggler') this.updateSmuggler(e, dt, t);
