@@ -44,6 +44,7 @@ import { DolphinPod } from './dolphins.js';
 import { Fishing } from './fishing.js';
 import { NocturnalWetland } from './nocturnal.js';
 import { WakeStampPool } from './wakestamps.js';
+import { bindPageLifecycle } from './pagelifecycle.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -256,6 +257,8 @@ async function init() {
   const fishing = new Fishing({ scene, boat: boat.group, terrain, world, water, phys, game, audio, environment, currents, regions, life });
   game.fishing = fishing;
   const nocturnal = new NocturnalWetland({ scene, terrain, world, phys, environment, regions, audio, profile: renderProfile });
+  let pageHibernated = false;
+  const pageLifecycle = { hibernated: false, hiddenAt: 0, resumedAt: 0, releasedAttachmentBytes: 0, activations: 0 };
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
     const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
     const addMaterial = material => {
@@ -306,6 +309,7 @@ async function init() {
     },
     chart: worldMap.memoryStats(),
     models: modelLoadingStats(),
+    lifecycle: { ...pageLifecycle },
     effects: {
       spray: { active: spray.count, capacity: spray.max },
       plume: { active: plume.count, capacity: plume.max },
@@ -322,7 +326,7 @@ async function init() {
   }) : null;
   window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
-    adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
+    hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
 
   // ---- input ----
@@ -367,14 +371,16 @@ async function init() {
     lastX = e.clientX; lastY = e.clientY;
   });
   window.addEventListener('wheel', e => { camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
-  let resizeTimer = 0;
+  let resizeTimer = 0; const drawingSize = new THREE.Vector2();
   const resize = () => {
+    if (pageHibernated) return false;
     renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio));
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
-    const s = new THREE.Vector2(); renderer.getDrawingBufferSize(s);
-    pipeline.resize(s.x, s.y); water.resize(s.x, s.y); plume.mat.uniforms.resolution.value.set(s.x, s.y);
+    renderer.getDrawingBufferSize(drawingSize);
+    pipeline.resize(drawingSize.x, drawingSize.y); water.resize(drawingSize.x, drawingSize.y); plume.mat.uniforms.resolution.value.copy(drawingSize);
     qualityController.reset();
+    return true;
   };
   let renderFrameNo = 0;
   const applyRenderQuality = profile => {
@@ -750,6 +756,26 @@ async function init() {
     renderFrameNo++;
   }
   renderer.setAnimationLoop(frame);
+  const attachmentBytes = () => pipeline.memoryStats().estimatedAttachmentBytes + water.memoryStats().estimatedAttachmentBytes + (sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0);
+  const hibernatePage = () => {
+    if (pageHibernated) return false;
+    const before = attachmentBytes(); pageHibernated = true; renderer.setAnimationLoop(null);
+    pipeline.hibernate(); water.hibernate();
+    if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; water.uniforms.shadowOn.value = 0; }
+    renderer.setPixelRatio(1); renderer.setSize(1, 1, false); qualityController.reset(); void audio.suspend();
+    pageLifecycle.hibernated = true; pageLifecycle.hiddenAt = Date.now(); pageLifecycle.releasedAttachmentBytes = Math.max(0, before - attachmentBytes()); pageLifecycle.activations++;
+    return true;
+  };
+  const resumePage = () => {
+    if (!pageHibernated || document.hidden) return false;
+    pageHibernated = false; pipeline.resume(); water.resume(); resize(); clock.reset(); renderFrameNo = 0; void audio.resume(); renderer.setAnimationLoop(frame);
+    pageLifecycle.hibernated = false; pageLifecycle.resumedAt = Date.now();
+    return true;
+  };
+  const activatePageLifecycle = () => {
+    window.__dbg.lifecycle = { hibernate: hibernatePage, resume: resumePage, snapshot: () => ({ ...pageLifecycle }) };
+    bindPageLifecycle({ document, window, hibernate: hibernatePage, resume: resumePage });
+  };
   // Cinematic machines absorb the full shader/model warm-up behind the loading card. Lower profiles render the real
   // dock scene only and open as soon as local terrain is visible; distant terrain and optional models keep streaming.
   let warm = null;
@@ -795,6 +821,7 @@ async function init() {
   if (import.meta.env.DEV) document.documentElement.dataset.emeraldResource = JSON.stringify(debugResourceSnapshot());
   document.getElementById('loading').remove();
   showTitle(false);
+  activatePageLifecycle();
 }
 
 init().catch(e => { console.error(e); document.getElementById('loading').textContent = 'Error: ' + e.message; });

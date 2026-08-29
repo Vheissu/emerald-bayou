@@ -16,7 +16,10 @@ function mockAudioContext() {
   const scheduled = extras => connectable({ ...extras, start() {}, stop() {}, addEventListener(type, handler) { if (type === 'ended') this.onended = handler; }, finish() { this.onended?.(); } });
   return {
     currentTime: 0,
+    state: 'running',
     counts, allocations,
+    async suspend() { this.state = 'suspended'; },
+    async resume() { this.state = 'running'; },
     createOscillator() { counts.oscillators++; const oscillator = scheduled({ type: 'sine', frequency: audioParam() }); allocations.oscillators.push(oscillator); return oscillator; },
     createGain() { counts.gains++; return connectable({ gain: audioParam() }); },
     createBiquadFilter() { counts.filters++; return connectable({ type: 'lowpass', frequency: audioParam(), Q: audioParam() }); },
@@ -33,6 +36,16 @@ test('camera-relative pan follows listener heading without allocating scene obje
   assert.equal(cameraRelativePan(0, 0, 1, 0, 0, 10), 1);
   assert.equal(cameraRelativePan(4, 8, 0, -1, 4, 8), 0);
   assert.equal(cameraRelativePan(0, 0, 0, 0, 10, 0), 0);
+});
+
+test('page hibernation suspends and resumes the existing audio context idempotently', async () => {
+  const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx;
+  assert.equal(await audio.suspend(), true);
+  assert.equal(ctx.state, 'suspended');
+  assert.equal(await audio.suspend(), false);
+  assert.equal(await audio.resume(), true);
+  assert.equal(ctx.state, 'running');
+  assert.equal(await audio.resume(), false);
 });
 
 test('spatial output uses a panner when available and falls back to the shared effects bus', () => {

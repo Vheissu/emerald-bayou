@@ -26,3 +26,23 @@ test('performance mode releases full-size optional post targets', () => {
   assert.equal(pipeline.bloomA.width, 1);
   assert.ok(performance.estimatedAttachmentBytes < cinematic.estimatedAttachmentBytes * 0.45);
 });
+
+test('background hibernation collapses every post attachment and restores the selected profile', () => {
+  const renderer = { getDrawingBufferSize: target => target.set(1920, 1080) };
+  const pipeline = new Pipeline(renderer, new THREE.PerspectiveCamera(52, 16 / 9, 0.3, 7500), qualityProfile(3));
+  const active = pipeline.memoryStats();
+
+  assert.equal(pipeline.hibernate(), true);
+  assert.equal(pipeline.hibernate(), false);
+  const dormant = pipeline.memoryStats();
+  assert.equal(dormant.dormant, true);
+  assert.deepEqual([dormant.width, dormant.height, pipeline.sceneRT.width, pipeline.compRT.width, pipeline.aaRT.width, pipeline.bloomA.width], [1, 1, 1, 1, 1, 1]);
+  assert.ok(dormant.estimatedAttachmentBytes < active.estimatedAttachmentBytes * 0.001);
+
+  assert.equal(pipeline.resume(), true);
+  assert.equal(pipeline.resume(), false);
+  pipeline.resize(1920, 1080);
+  const restored = pipeline.memoryStats();
+  assert.equal(restored.dormant, false);
+  assert.equal(restored.estimatedAttachmentBytes, active.estimatedAttachmentBytes);
+});
