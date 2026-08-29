@@ -489,7 +489,7 @@ export class Game {
         this.bountyToast(`Lost trap recovered <b>+$40</b> · ${this.save.traps.length} total`); this.bounties.event('trap', 1); this.record('traps', this.save.traps.length);
         this.nearTraps = this.nearTraps.filter(x => x !== tr); break;
       }
-      const nc = this.nearCamp; const slow = this.mph() < 6, freeRide = !this.state && !this.story?.blocking() && !this.aftermath?.blocking() && !this.encounters?.active;
+      const nc = this.nearCamp; const slow = this.mph() < 6, freeRide = !this.state && !this.story?.blocking() && !this.aftermath?.blocking() && !this.encounters?.active && !this.life?.traffic?.activeCollision();
       this.updateNoWake(dt, freeRide);
       this.dockCamp = (freeRide && nc && Math.hypot(nc.camp.tie.x - p.pos.x, nc.camp.tie.z - p.pos.y) < 16 && slow) ? nc.camp : null;
       this.dockJob = null; if (freeRide && slow) { let bd = 14; for (const j of this.jobs) { const d = this.dist(j.x, j.z); if (d < bd) { bd = d; this.dockJob = j; } } }
@@ -562,6 +562,11 @@ export class Game {
       e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
       e.timer.innerHTML = ''; e.timer.classList.remove('warn');
       e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '';
+    } else if (this.life?.traffic?.activeCollision()) {
+      const b = this.life.traffic.activeCollision(), c = b.collision, checking = c.stage === 'disabled', restarting = c.stage === 'restart';
+      e.mission.innerHTML = `<div class="title">Collision aftermath</div><div class="obj">${checking ? `Idle below 5.5 mph and hold alongside ${b.profile.callsign}` : restarting ? `${b.profile.callsign} is restarting` : `${b.profile.callsign} reported the collision`}</div><div class="sub">${checking ? 'Stay until the crew accounts for everyone' : restarting ? 'The collision stays on the log, but you did not leave them' : 'FWC has your hull and direction'}</div>`;
+      e.timer.innerHTML = checking ? `${Math.max(0, 7 - c.hold).toFixed(1)}<small>seconds alongside</small>` : restarting ? `${Math.max(0, 4.5 - c.t).toFixed(1)}<small>engine restart</small>` : '';
+      e.timer.classList.toggle('warn', checking && c.distance > 80); e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label} <b>${fmtDist(c.distance)}</b>` : '';
     } else {
       const b = this.bounties.today().filter(x => !x.done)[0];
       const nc = this.nearCamp; const known = nc && this.save.camps.includes(nc.camp.key);

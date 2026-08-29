@@ -199,7 +199,7 @@ async function init() {
   environment.onLightning = strike => hazards.lightning(strike);
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, audio });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
-  condition.radio = radio;
+  condition.radio = radio; life.traffic.radio = radio;
   const incidents = new WorldIncidents({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition, encounters });
   const story = new StoryDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, radio, law, reputation, condition, encounters, incidents, hazards });
   game.incidents = incidents; game.story = story; radio.incidents = incidents; radio.story = story;
@@ -326,8 +326,8 @@ async function init() {
     phys.forward(fwd2); phys.right(rgt2);
     tricks.update(dt, time);
     game.update(dt, time);
-    story.update(dt, time, started && !game.paused);
-    encounters.update(dt, time, started && !story.blocking() && !aftermath.blocking());
+    story.update(dt, time, started && !game.paused && !life.traffic.activeCollision());
+    encounters.update(dt, time, started && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
     condition.update(dt, time, started);
     law.update(dt, started && !game.paused);
     reputation.update(dt, started && !game.paused);
@@ -394,7 +394,7 @@ async function init() {
     hazards.update(dtRaw, time, started && !game.paused);
     aftermath.update(dtRaw, time, started && !game.paused);
     ecology.update(dtRaw, time, started && !game.paused);
-    incidents.update(dtRaw, time, started && !game.paused && !story.blocking() && !aftermath.blocking());
+    incidents.update(dtRaw, time, started && !game.paused && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
     radio.update(dtRaw, started && !game.paused);
 
     // world updates

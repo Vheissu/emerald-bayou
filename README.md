@@ -65,7 +65,9 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 
 Thirteen jobs unlock in sequence, from a shakedown run through a manatee count, a poacher chase against an AI skiff, a night rescue and a creek gauntlet. On top of that there are daily bounties, per-run records (top speed, longest air, biggest spin, longest drift), a reputation system split three ways between the locals, the FWC and the backchannel, and a story that comes in over channel 68.
 
-Between jobs, you can come across dead motors, FWC stops, watched packages, storm wreckage and illegal monofilament sets. On a net call, either hold the scene for an FWC evidence recovery or warn the crew on channel 72 and watch them pull the set before the patrol arrives.
+Between jobs, you can come across dead motors, FWC stops, watched packages, storm wreckage, drifting fuel drums and illegal monofilament sets. A hard strike can split a drum and leave a sheen moving with the current. It can also stop one of the resident working boats: kill the prop and hold alongside while the crew checks everyone aboard, or leave and hear your hull reported over the radio.
+
+The seven resident crews keep their own schedules, jobs and operator records. They run for shelter when the weather exceeds what their boat can carry, complain about wake over working gear and remember collisions. FWC 27 can break from patrol to answer an emergency tow call when there is a safe approach.
 
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
 

@@ -184,7 +184,7 @@ export class StormRecovery {
   blocking() { return Boolean(this.towSite || this.passengerSite); }
   capturesInput(code) { return (code === 'KeyE' || code === 'KeyF') && Boolean(this.blocking() || this.interactiveNear); }
   canInteract() {
-    return !this.game.state && !this.game.paused && !this.story.blocking() && !this.encounters.active && !this.incidents.active
+    return !this.game.state && !this.game.paused && !this.story.blocking() && !this.encounters.active && !this.incidents.active && !this.game.life?.traffic?.activeCollision()
       && !this.game.dockCamp && !this.game.dockJob && !this.game.atBoard && !this.condition.serviceHere;
   }
 

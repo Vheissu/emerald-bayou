@@ -328,17 +328,20 @@ export class Traffic {
     for (let i = 0; i < hulls.length; i++) {
       const b = hulls[i], profile = TRAFFIC_PROFILES[i];
       const record = this.state.operators[profile.id] ||= { shifts: 0, passes: 0, collisions: 0, lastMet: '', lastShift: '' };
+      record.seriousCollisions = Number(record.seriousCollisions) || 0; record.aidedAfterCollision = Number(record.aidedAfterCollision) || 0; record.leftDisabled = Number(record.leftDisabled) || 0;
       const shelter = { active: false, arrived: false, kind: '', key: '', name: '', x: 0, z: 0, heading: 0, distance: 0 };
-      Object.assign(b, { profile, record, shelter, shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
+      const collision = { active: false, stage: '', t: 0, elapsed: 0, hold: 0, farT: 0, signalT: 0, impact: 0, distance: Infinity, prevState: 'transit', prevRetiring: false, prevLeg: 0, prevWorkT: 0, prevWorkRig: false, marker: { x: 0, z: 0, label: '', color: '#f06c38', trafficCollision: profile.id } };
+      Object.assign(b, { profile, record, shelter, collision, shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
       this.addWorkingDetails(b, i);
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
       b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
         b.shx += -nx * into * 0.5; b.shz += -nz * into * 0.5; b.speed *= 0.5;
         if (b.yellT <= 0 && into > 2.5) { b.yellT = 8; b.record.collisions++; fx.game.boatHit(b, into); fx.game.persist(); }
+        if (into >= 6) this.beginCollisionAftermath(b, into);
       } };
     }
     this.obs = []; phys.addObs('traffic', this.obs);
-    this.activity = 1; this.anglerActivity = 1;
+    this.activity = 1; this.anglerActivity = 1; this.collisionBoat = null; this.radio = null;
     this.assist = { active: false, failed: false, berthSafe: false, berthDepth: 0, boat: null, boatId: '', phase: '', side: 0, fore: 0, headingOffset: 0, targetX: 0, targetZ: 0, distance: 0, eta: 0, arrived: false, holdT: 0 };
     // anchored anglers
     this.anglerCells = new Map(); this.liveAnglers = new Map(); this.checkT = 0; this.anglerCacheEvictions = 0;
@@ -458,6 +461,7 @@ export class Traffic {
   requestTow() {
     const A = this.assist; if (A.active) return true;
     const b = this.boats.find(q => q.profile.id === 'fwc-27'); if (!b) { A.failed = true; return false; }
+    if (b.collision.active) { A.failed = true; return false; }
     if (!this.chooseTowBerth()) { A.failed = true; return false; }
     const d = b.active ? Math.hypot(b.x - A.targetX, b.z - A.targetZ) : Infinity;
     if (!b.active || d > 220 || !this.waterPathClear(b.x, b.z, A.targetX, A.targetZ)) { if (b.active) this.retire(b, 4); if (!this.spawnTowSpot(b)) { A.failed = true; return false; } }
@@ -529,7 +533,78 @@ export class Traffic {
     const [lo, hi] = b.profile.work; b.state = 'work'; b.workT = lo + this.rand() * (hi - lo); b.routeBias = 0;
     if (b.workRig) b.workRig.visible = !['bay-star', 'fwc-27', 'back-line'].includes(b.profile.id);
   }
+  activeCollision() { return this.collisionBoat?.collision.active ? this.collisionBoat : null; }
+  collisionWorldFree(b) {
+    const G = this.fx.game;
+    return b.active && b.kind !== 'canoe' && !b.assisting && !b.shelter.active && !G.paused && !G.state && !G.story?.blocking() && !G.aftermath?.blocking() && !G.encounters?.active && !G.incidents?.active;
+  }
+  signalCollisionCrew(b) {
+    const C = b.collision; if (!C.active || C.stage !== 'disabled') return;
+    if (b.people?.length) wave(b.people[b.people.length - 1]);
+    const d = C.distance;
+    if (d < 115) this.fx.audio.horn(Math.max(0.08, 0.26 * (1 - d / 130)));
+    C.signalT = 4.6;
+  }
+  beginCollisionAftermath(b, impact) {
+    if (!this.collisionWorldFree(b) || this.activeCollision() || b.collision.active) return false;
+    const C = b.collision, P = b.profile;
+    C.active = true; C.stage = 'disabled'; C.t = 0; C.elapsed = 0; C.hold = 0; C.farT = 0; C.signalT = 0; C.impact = impact; C.distance = Math.hypot(b.x - this.phys.pos.x, b.z - this.phys.pos.y);
+    C.prevState = b.state; C.prevRetiring = b.retiring; C.prevLeg = b.leg; C.prevWorkT = b.workT; C.prevWorkRig = Boolean(b.workRig?.visible);
+    C.marker.x = b.x; C.marker.z = b.z; C.marker.label = `${P.callsign} disabled · hold alongside`;
+    b.state = 'collision-disabled'; b.retiring = false; b.speed = Math.min(b.speed, 1.1); b.turn = 0; b.greetT = 18;
+    if (b.workRig) b.workRig.visible = false;
+    this.collisionBoat = b; this.fx.game.wpTarget = C.marker;
+    b.record.seriousCollisions++; this.fx.game.persist();
+    this.fx.game.toast('Their engine stopped', `${P.callsign} · idle below 5.5 mph and hold alongside`, 4.2);
+    this.radio?.transmit({ channel: P.channel, speaker: `${P.callsign} · ${P.operator}`, text: 'Tower Boat, you hit us hard. Engine is down. Kill your prop and hold alongside while we check everybody.', priority: 3, key: `working-collision:${P.id}:${b.record.seriousCollisions}`, cooldown: 99999 });
+    this.signalCollisionCrew(b); return true;
+  }
+  restoreAfterCollision(b) {
+    const C = b.collision, wasWork = C.prevState === 'work' && !C.prevRetiring;
+    b.retiring = C.prevRetiring || !this.shouldOperate(b); b.turn = 0; b.speed = Math.min(b.speed, b.max * 0.16);
+    if (wasWork && !b.retiring) { b.state = 'work'; b.workT = Math.max(10, C.prevWorkT); if (b.workRig) b.workRig.visible = C.prevWorkRig; }
+    else { b.state = 'transit'; b.leg = Math.max(90, C.prevLeg); if (b.workRig) b.workRig.visible = false; }
+    C.active = false; C.stage = ''; C.t = 0; C.elapsed = 0; C.hold = 0; C.farT = 0; C.signalT = 0; C.distance = Infinity;
+    if (this.fx.game.wpTarget === C.marker) this.fx.game.wpTarget = null;
+    if (this.collisionBoat === b) this.collisionBoat = null;
+  }
+  abandonCollision(b) {
+    const C = b.collision, P = b.profile; if (!C.active || C.stage !== 'disabled') return;
+    C.stage = 'reported'; C.t = 0; C.hold = 0; C.marker.label = `${P.callsign} disabled · incident reported`;
+    if (this.fx.game.wpTarget === C.marker) this.fx.game.wpTarget = null;
+    b.record.leftDisabled++; this.fx.game.persist();
+    this.law?.add(0.95, `left ${P.callsign} disabled after collision`, true);
+    this.reputation?.change(P.faction, -0.55, 'left-disabled-boat', `${P.callsign} told the district the tower boat struck them and left.`, false);
+    this.fx.game.toast('Hit-and-run reported', `${P.callsign} put your hull and direction over the radio`, 4.2);
+    this.radio?.transmit({ channel: 'CH 16', speaker: `${P.callsign} · ${P.operator}`, text: 'All stations, tower airboat struck us and left. We are disabled in the channel. Logging their direction now.', priority: 3, key: `working-abandoned:${P.id}:${b.record.leftDisabled}`, cooldown: 99999 });
+  }
+  updateCollisionAftermath(b, dt, d) {
+    const C = b.collision, P = b.profile; if (!C.active) return;
+    C.t += dt; C.elapsed += dt; C.distance = d; C.signalT -= dt; C.marker.x = b.x; C.marker.z = b.z;
+    if (C.stage === 'disabled') {
+      const holding = d < 24 && this.phys.speed * 2.23694 < 5.5 && !this.phys.airborne && this.phys.wipeT <= 0;
+      C.hold = holding ? Math.min(7, C.hold + dt) : Math.max(0, C.hold - dt * 0.55);
+      C.farT = C.elapsed > 4 && d > 120 ? C.farT + dt : Math.max(0, C.farT - dt * 1.5);
+      C.marker.label = C.hold > 0.2 ? `${P.callsign} · crew check ${Math.ceil(7 - C.hold)}s` : `${P.callsign} disabled · hold alongside`;
+      this.fx.game.wpTarget = C.marker;
+      if (C.signalT <= 0 && d < 115) this.signalCollisionCrew(b);
+      if (C.hold >= 7) {
+        C.stage = 'restart'; C.t = 0; C.marker.label = `${P.callsign} · restarting engine`;
+        b.record.aidedAfterCollision++; this.fx.game.persist();
+        this.reputation?.change(P.faction, 0.2, 'stayed-after-collision', `You stayed alongside while ${P.callsign} checked the crew and restarted.`, false);
+        this.fx.game.toast('Everybody is accounted for', `${P.callsign} is restarting · the collision remains on the log`, 3.8);
+        this.radio?.transmit({ channel: P.channel, speaker: `${P.callsign} · ${P.operator}`, text: 'Everybody is accounted for. We have steering. Stand clear while I restart her.', priority: 2, key: `working-aided:${P.id}:${b.record.aidedAfterCollision}`, cooldown: 99999 });
+      } else if (C.farT >= 2.2) this.abandonCollision(b);
+      else if (C.elapsed >= 58) {
+        this.fx.game.toast('They got the engine back', `${P.callsign} · you stayed, but never came alongside`, 3.4);
+        this.radio?.transmit({ channel: P.channel, speaker: `${P.callsign} · ${P.operator}`, text: 'Engine is back. Tower Boat, next time come alongside and make sure everybody is standing.', priority: 2, key: `working-unassisted:${P.id}:${b.record.seriousCollisions}`, cooldown: 99999 });
+        this.restoreAfterCollision(b);
+      }
+    } else if (C.stage === 'restart' && C.t >= 4.5) this.restoreAfterCollision(b);
+    else if (C.stage === 'reported' && (C.t >= 18 || d > 980)) this.restoreAfterCollision(b);
+  }
   retire(b, delay = 28) {
+    if (b.collision?.active) this.restoreAfterCollision(b);
     this.clearShelter(b); b.assisting = false; b.active = false; b.retiring = false; b.state = 'off'; b.mesh.visible = false; b.x = b.z = 1e9; b.speed = 0; b.spawnT = delay + this.rand() * delay;
     if (b.workRig) b.workRig.visible = false; if (b.navLights) b.navLights.visible = false; if (b.deckLight) b.deckLight.intensity = 0;
     if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; }
@@ -554,7 +629,7 @@ export class Traffic {
   }
   identify(b, d, playerSpeed) {
     b.greetT = Math.max(0, b.greetT);
-    if (d >= 27 || playerSpeed >= 4.2 || b.greetT > 0) return;
+    if (b.collision.active || d >= 27 || playerSpeed >= 4.2 || b.greetT > 0) return;
     const key = this.shiftKey(b); if (b.record.lastMet === key) return;
     b.record.lastMet = key; b.record.passes++; b.greetT = 24; this.fx.game.persist();
     if (b.people?.length) wave(b.people[b.people.length - 1]);
@@ -563,8 +638,8 @@ export class Traffic {
   }
   updateWorkingDetails(b, t) {
     const h = this.environment?.hour ?? 12, storm = this.environment?.values.storm || 0;
-    const night = h < 6.1 || h > 19.2; if (b.navLights) b.navLights.visible = b.active && (night || storm > 0.42);
-    if (b.deckLight) b.deckLight.intensity = b.navLights.visible ? (night ? 28 : 12) : 0;
+    const night = h < 6.1 || h > 19.2, distress = b.collision.active && b.collision.stage === 'disabled'; if (b.navLights) b.navLights.visible = b.active && (night || storm > 0.42 || distress);
+    if (b.deckLight) b.deckLight.intensity = distress ? (Math.floor(t * 2.4) % 2 ? 42 : 4) : b.navLights.visible ? (night ? 28 : 12) : 0;
     if (b.searchRig) {
       const on = b.active && (night || storm > 0.58), patrol = b.profile.id === 'fwc-27'; b.searchRig.visible = on; b.searchBeam.visible = on;
       b.searchLight.intensity = on ? (patrol ? 720 : 360) * Math.max(0.5, 1 - storm * 0.28) : 0;
@@ -609,7 +684,8 @@ export class Traffic {
     const calls = [];
     for (const b of nearby) {
       const P = b.profile, working = b.state === 'work'; let text = '';
-      if (b.state === 'tow-response') text = 'Twenty-seven is responding to the tower boat. Hold position and leave room on the approach.';
+      if (b.collision.active) text = b.collision.stage === 'reported' ? `${P.callsign} is disabled after a collision. The striking tower airboat left the scene.` : `${P.callsign} is disabled after a collision. Keep the cut open while the crew checks everyone aboard.`;
+      else if (b.state === 'tow-response') text = 'Twenty-seven is responding to the tower boat. Hold position and leave room on the approach.';
       else if (b.state === 'tow-alongside') text = 'Twenty-seven is alongside the tower boat. Passing the tow line now.';
       else if (b.state === 'shelter-run') text = `${P.callsign} is making for ${b.shelter.name}. Keep the approach open and pass astern.`;
       else if (b.state === 'sheltered') text = `${P.callsign} is secured at ${b.shelter.name}. Staying put until the wind comes down.`;
@@ -637,7 +713,7 @@ export class Traffic {
     return wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, 0.22, x, z, t);
   }
   snapshot() {
-    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions }));
+    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled }));
   }
   // ---- anglers ----
   anglerAt(ci, cj) {
@@ -688,16 +764,17 @@ export class Traffic {
       }
       let d = Math.hypot(b.x - bx, b.z - bz);
       if (assisting && b.ground > 3) { this.failTow(b); continue; }
-      if (!assisting && (d > 980 || b.ground > 3)) { this.retire(b, b.ground > 3 ? 18 : 25); continue; }
-      if (!assisting && unsafe && !b.shelter.active) this.beginShelter(b);
+      if (!assisting && !b.collision.active && (d > 980 || b.ground > 3)) { this.retire(b, b.ground > 3 ? 18 : 25); continue; }
+      if (!assisting && !b.collision.active && unsafe && !b.shelter.active) this.beginShelter(b);
       else if (!unsafe && b.shelter.active && storm <= b.profile.maxStorm - SHELTER_RELEASE_MARGIN) {
         if (operate) { this.clearShelter(b); this.beginLeg(b); }
         else if (!this.onDuty(b)) { this.clearShelter(b); this.beginLeg(b); b.retiring = true; }
       }
-      if (!assisting && !unsafe && !b.shelter.active && !operate) b.retiring = true;
-      if (!assisting && b.retiring && d > 720) { this.retire(b, 20); continue; }
+      if (!assisting && !b.collision.active && !unsafe && !b.shelter.active && !operate) b.retiring = true;
+      if (!assisting && !b.collision.active && b.retiring && d > 720) { this.retire(b, 20); continue; }
       b.mesh.visible = true;
-      if (assisting) {
+      if (b.collision.active) this.updateCollisionAftermath(b, dt, d);
+      else if (assisting) {
         const A = this.assist;
         if (b.state === 'tow-response' && A.distance < 6.5) { b.state = 'tow-alongside'; A.arrived = true; A.holdT = 0; }
         else if (b.state === 'tow-alongside' && A.distance > 17) { b.state = 'tow-response'; A.arrived = false; A.holdT = 0; }
@@ -710,8 +787,8 @@ export class Traffic {
       else if (b.state === 'work') { b.workT -= dt; if (b.workT <= 0) this.beginLeg(b); }
       else { b.leg -= b.speed * dt; if (b.leg <= 0) { if (this.rand() < b.profile.work[2]) this.beginWork(b); else this.beginLeg(b); } }
       // steer: probe five headings 24 m out and prefer deep water straight ahead; back off from the player and each other
-      let best = 0, bs = -1e9;
-      for (const da of STEER_PROBES) {
+      let best = 0, bs = b.collision.active ? 2 : -1e9;
+      if (!b.collision.active) for (const da of STEER_PROBES) {
         const h = b.heading + da; const px0 = b.x - Math.sin(h) * 10, pz0 = b.z - Math.cos(h) * 10, px = b.x - Math.sin(h) * 24, pz = b.z - Math.cos(h) * 24; const px2 = b.x - Math.sin(h) * 48, pz2 = b.z - Math.cos(h) * 48;
         const depth0 = -this.T.heightAt(px0, pz0), depth = -this.T.heightAt(px, pz), depth2 = -this.T.heightAt(px2, pz2);
         let sc = Math.min(3, depth0) * 0.72 + Math.min(4, depth) + Math.min(4, depth2) * 0.6 - Math.abs(da - (b.state === 'work' ? 0 : b.routeBias)) * 0.72;
@@ -734,7 +811,7 @@ export class Traffic {
       const fx0 = -Math.sin(b.heading), fz0 = -Math.cos(b.heading);
       const sea = weather?.sea || 0;
       b.weatherSpeedScale = 1 - Math.min(b.retiring ? 0.24 : 0.46, sea * 0.15 + storm * 0.12);
-      let cruise = (b.state === 'tow-alongside' || b.state === 'sheltered' ? 0 : b.state === 'tow-response' ? b.max * 0.82 : b.state === 'shelter-run' ? b.max * (b.kind === 'canoe' ? 0.72 : 0.82) : b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise) * b.weatherSpeedScale;
+      let cruise = (b.collision.active || b.state === 'tow-alongside' || b.state === 'sheltered' ? 0 : b.state === 'tow-response' ? b.max * 0.82 : b.state === 'shelter-run' ? b.max * (b.kind === 'canoe' ? 0.72 : 0.82) : b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise) * b.weatherSpeedScale;
       let want = cruise * (bs < 1.5 ? 0.45 : 1); if (d < 30 && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5; // slow for the player ahead
       if (b.state === 'shelter-run') { const desired = Math.atan2(-(b.shelter.x - b.x), -(b.shelter.z - b.z)), alignment = 1 - Math.min(1, Math.abs(wrapAngle(desired - b.heading)) / 1.25); want *= 0.04 + alignment * 0.96; }
       const playerWake = d < 100 ? wakeSampleAt(bx, bz, P.heading, P.speed, 18, 0.2, b.x, b.z, t) : 0;
@@ -744,7 +821,7 @@ export class Traffic {
       } else if (b.workRig?.visible && P.speed > 4.5 && Math.abs(playerWake) > 0.022 && b.wakeT <= 0) {
         b.wakeT = 14; this.fx.game.toast('“No wake. Gear in the water.”', `${b.profile.callsign} · ${b.profile.job}`, 2.5);
       }
-      b.turn += (best * 2.2 - b.turn) * (1 - Math.exp(-dt * 3)); b.heading += b.turn * dt;
+      b.turn += ((b.collision.active ? 0 : best * 2.2) - b.turn) * (1 - Math.exp(-dt * 3)); b.heading += b.turn * dt;
       if (b.state === 'tow-alongside') { const settle = 1 - Math.exp(-dt * 1.8); b.heading += wrapAngle(P.heading + this.assist.headingOffset - b.heading) * settle; b.turn *= Math.exp(-dt * 3); }
       else if (b.state === 'sheltered') { const settle = 1 - Math.exp(-dt * 1.5); b.heading += wrapAngle(b.shelter.heading - b.heading) * settle; b.turn *= Math.exp(-dt * 2.6); }
       b.speed += (want - b.speed) * (1 - Math.exp(-dt * 0.7));
@@ -774,14 +851,14 @@ export class Traffic {
       b.roll += ((-b.turn * b.speed * 0.02 + b.waterRoll + playerWake * wakeSide * 0.52) - b.roll) * (1 - Math.exp(-dt * 4));
       b.pitch += ((b.speed * (b.kind === 'air' ? 0.004 : 0.007) + b.waterPitch + playerWake * 0.18) - b.pitch) * (1 - Math.exp(-dt * 3));
       b.mesh.position.set(b.x, wy + (b.kind === 'air' ? -0.27 : b.kind === 'john' || b.kind === 'canoe' ? -0.05 : 0), b.z); b.mesh.rotation.set(b.pitch, b.heading, b.roll, 'YXZ');
-      if (b.kind === 'air') { b.prop.rotation.z += dt * (8 + b.speed * 8); b.blur.material.opacity = Math.min(0.35, b.speed / b.max * 0.4); for (const r of b.rudders) r.rotation.y = -b.turn * 0.25; }
-      else if (b.kind === 'john') { const motor = b.mesh.userData.motor; motor.rotation.y = -b.turn * 0.3; motor.userData.prop.rotation.z += dt * (6 + b.speed * 5); }
+      if (b.kind === 'air') { if (!b.collision.active) b.prop.rotation.z += dt * (8 + b.speed * 8); b.blur.material.opacity = b.collision.active ? 0 : Math.min(0.35, b.speed / b.max * 0.4); for (const r of b.rudders) r.rotation.y = -b.turn * 0.25; }
+      else if (b.kind === 'john') { const motor = b.mesh.userData.motor; motor.rotation.y = -b.turn * 0.3; if (!b.collision.active) motor.userData.prop.rotation.z += dt * (6 + b.speed * 5); }
       else if (b.kind === 'canoe') paddleAnim(b.mesh, t, Math.min(1, b.speed / b.max));
       if (b.people && d < 90) for (const pp of b.people) animatePerson(pp, t, dt, { x: bx, z: bz, speed: P.speed }, null);
       this.updateCrew(b, t, dt, d, playerWake);
       this.updateWorkingDetails(b, t); this.identify(b, d, P.speed);
       // the closest running motor is what you hear
-      if (b.kind !== 'air' && b.kind !== 'canoe' && d < 130) { const l = (0.3 + 0.7 * b.speed / b.max) * (1 - d / 130); if (l > ob) { ob = l; obp = b.kind === 'cruiser' ? 0.8 : b.kind === 'skiff' ? 1.25 : 1; } }
+      if (!b.collision.active && b.kind !== 'air' && b.kind !== 'canoe' && d < 130) { const l = (0.3 + 0.7 * b.speed / b.max) * (1 - d / 130); if (l > ob) { ob = l; obp = b.kind === 'cruiser' ? 0.8 : b.kind === 'skiff' ? 1.25 : 1; } }
       // horn at a boat coming straight at them
       if (!assisting && b.kind !== 'canoe' && d < 50 && b.hornT <= 0 && P.speed > 6) { const dd = d || 1, cx = (b.x - bx) / dd, cz = (b.z - bz) / dd; if (pf.x * cx + pf.y * cz > 0.9) { b.hornT = 12; this.fx.audio.horn(0.35 * (1 - d / 60)); } }
       if (d < 70) { b.obs.ax = b.x + fx * 2.2; b.obs.az = b.z + fz * 2.2; b.obs.bx = b.x - fx * 2.2; b.obs.bz = b.z - fz * 2.2; this.obs.push(b.obs); }
