@@ -36,6 +36,7 @@ import { WorldIncidents } from './incidents.js';
 import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
 import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor } from './renderquality.js';
+import { startupPlan, startupTerrainReady } from './startup.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -64,6 +65,7 @@ const fxScene = new THREE.Scene();
 const SUN_DIR = new THREE.Vector3(-0.42, 0.72, -0.55).normalize();
 
 async function init() {
+  const startup = startupPlan(renderProfile.id);
   // ---- sky & lighting ----
   const sky = new Sky(SUN_DIR);
   scene.add(sky.mesh);
@@ -254,7 +256,7 @@ async function init() {
     },
     chart: worldMap.memoryStats(),
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
@@ -612,39 +614,48 @@ async function init() {
     renderFrameNo++;
   }
   renderer.setAnimationLoop(frame);
-  // warm the shader cache: everything that can appear later (camps, traps, cargo, the poachers' boat) gets rendered once
-  // through every pass now, behind the loading screen, instead of compiling mid-ride
-  const warm = new THREE.Group();
-  { const nc = world.campAt(1, 1) || world.campsNear(0, 0, 5000)[0]; if (nc) { const g = world.buildCamp(nc); g.position.set(startX - nc.x, 0, startZ - 20 - nc.z); warm.add(g); } }
-  for (const [i, mk] of [crabFloat(), fuelDrum(), wreck(), shack(), kayak()].entries()) { mk.position.set(startX - 6 + i * 3, 0.2, startZ - 8); warm.add(mk); }
-  { const spill = encounters.spills[0], sheen = spill.mesh.clone(); spill.uniforms.uAlpha.value = 0.35; sheen.visible = true; sheen.position.set(startX + 10, 0.15, startZ - 12); sheen.scale.set(5, 1, 3.4); warm.add(sheen); }
-  { const funnel = hazards.spout.group.clone(true); funnel.traverse(o => { o.visible = true; }); warm.add(funnel); for (const d of hazards.debris.slice(0, 3)) { const m = d.mesh.clone(true); m.visible = true; warm.add(m); } }
-  { const rr = mulberry32(3); const hf = terrain.hf; let i = 0;
-    for (const kind of ['house', 'ramp', 'boathouse', 'blind']) { // one of each structure kind, anywhere the placer accepts, moved in front of the dock
-      let st = null; for (let k = 0; k < 40 && !st; k++) { const cx = (Math.floor(rr() * 20) - 10) * 800, cz = (Math.floor(rr() * 20) - 10) * 800; const r2 = mulberry32(k * 31 + i); st = pickSite(hf, 'warm', cx, cz, () => { const v = r2(); return v; }, () => 5000); if (st && st.kind !== kind) st = null; }
-      if (st) { const g = buildSite(st, terrain); g.position.set(startX - st.x + 20 + i * 14, 0, startZ - 40 - st.z); warm.add(g); st.colliders = []; } i++;
+  // Cinematic machines absorb the full shader/model warm-up behind the loading card. Lower profiles render the real
+  // dock scene only and open as soon as local terrain is visible; distant terrain and optional models keep streaming.
+  let warm = null;
+  if (startup.warmShaders) {
+    warm = new THREE.Group();
+    { const nc = world.campAt(1, 1) || world.campsNear(0, 0, 5000)[0]; if (nc) { const g = world.buildCamp(nc); g.position.set(startX - nc.x, 0, startZ - 20 - nc.z); warm.add(g); } }
+    for (const [i, mk] of [crabFloat(), fuelDrum(), wreck(), shack(), kayak()].entries()) { mk.position.set(startX - 6 + i * 3, 0.2, startZ - 8); warm.add(mk); }
+    { const spill = encounters.spills[0], sheen = spill.mesh.clone(); spill.uniforms.uAlpha.value = 0.35; sheen.visible = true; sheen.position.set(startX + 10, 0.15, startZ - 12); sheen.scale.set(5, 1, 3.4); warm.add(sheen); }
+    { const funnel = hazards.spout.group.clone(true); funnel.traverse(o => { o.visible = true; }); warm.add(funnel); for (const d of hazards.debris.slice(0, 3)) { const m = d.mesh.clone(true); m.visible = true; warm.add(m); } }
+    { const rr = mulberry32(3); const hf = terrain.hf; let i = 0;
+      for (const kind of ['house', 'ramp', 'boathouse', 'blind']) {
+        let st = null; for (let k = 0; k < 40 && !st; k++) { const cx = (Math.floor(rr() * 20) - 10) * 800, cz = (Math.floor(rr() * 20) - 10) * 800; const r2 = mulberry32(k * 31 + i); st = pickSite(hf, 'warm', cx, cz, () => r2(), () => 5000); if (st && st.kind !== kind) st = null; }
+        if (st) { const g = buildSite(st, terrain); g.position.set(startX - st.x + 20 + i * 14, 0, startZ - 40 - st.z); warm.add(g); st.colliders = []; } i++;
+      }
+      const warmDebris = [];
+      for (let j = -4; j <= 4 && warmDebris.length < 4; j++) for (let i = -4; i <= 4 && warmDebris.length < 4; i++) {
+        for (const d of life.debris.cellAt(i, j)) { warmDebris.push(d); if (warmDebris.length === 4) break; }
+      }
+      for (const d of warmDebris) { const m = life.debris.build(d); m.position.set(startX - 10 + Math.random() * 20, 0, startZ - 25); warm.add(m); }
+      for (const b of life.traffic.boats) {
+        b.mesh.visible = true; b.mesh.position.set(startX + 8, 0, startZ - 10);
+        if (b.searchRig) { b.searchRig.visible = true; b.searchLight.intensity = 0.01; b.searchBeam.visible = true; b.searchBeam.position.set(startX + 8, 0.05, startZ - 10); b.searchBeam.scale.set(b.searchWidth * 0.004, b.searchLength * 0.004, 1); }
+      }
+      for (let k = 0; k < 6; k++) life.fish.launch(startX + k, startZ - 6, 3, 0, 0, 1, 0, true);
+      { const pr = mulberry32(11); let k = 0; for (const pose of ['stand', 'sit', 'sitEdge', 'crouch']) { const pp = person(pr, { pose, rod: k % 2 === 0, gun: k === 3 }); pp.position.set(startX - 8 + k * 2, 0.4, startZ - 6); warm.add(pp); k++; } const cn = canoe(pr); cn.position.set(startX + 6, 0, startZ - 8); warm.add(cn); }
+      for (const [k, name] of ['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat'].entries()) { const m = spawn(name); m.position.set(startX - 10 + k * 5, 0.3, startZ - 16); warm.add(m); }
     }
-    const warmDebris = [];
-    for (let j = -4; j <= 4 && warmDebris.length < 4; j++) for (let i = -4; i <= 4 && warmDebris.length < 4; i++) {
-      for (const d of life.debris.cellAt(i, j)) { warmDebris.push(d); if (warmDebris.length === 4) break; }
-    }
-    for (const d of warmDebris) { const m = life.debris.build(d); m.position.set(startX - 10 + Math.random() * 20, 0, startZ - 25); warm.add(m); }
-    for (const b of life.traffic.boats) {
-      b.mesh.visible = true; b.mesh.position.set(startX + 8, 0, startZ - 10);
-      if (b.searchRig) { b.searchRig.visible = true; b.searchLight.intensity = 0.01; b.searchBeam.visible = true; b.searchBeam.position.set(startX + 8, 0.05, startZ - 10); b.searchBeam.scale.set(b.searchWidth * 0.004, b.searchLength * 0.004, 1); }
-    }
-    for (let k = 0; k < 6; k++) life.fish.launch(startX + k, startZ - 6, 3, 0, 0, 1, 0, true);
-    // the people and the Meshy models: a figure in each pose, a canoe, every hull, the gator, a turtle
-    { const pr = mulberry32(11); let k = 0; for (const pose of ['stand', 'sit', 'sitEdge', 'crouch']) { const pp = person(pr, { pose, rod: k % 2 === 0, gun: k === 3 }); pp.position.set(startX - 8 + k * 2, 0.4, startZ - 6); warm.add(pp); k++; } const cn = canoe(pr); cn.position.set(startX + 6, 0, startZ - 8); warm.add(cn); }
-    for (const [k, name] of ['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat'].entries()) { const m = spawn(name); m.position.set(startX - 10 + k * 5, 0.3, startZ - 16); warm.add(m); }
+    warm.scale.setScalar(0.004); warm.position.set(startX, 0.3, startZ - 6);
+    scene.add(warm); skiff.mesh.visible = true; skiff.mesh.position.set(startX, 0, startZ - 12);
   }
-  warm.scale.setScalar(0.004); warm.position.set(startX, 0.3, startZ - 6); // still rendered (so every program compiles) but a speck, not a lineup of dummies behind the start screen
-  scene.add(warm); skiff.mesh.visible = true; skiff.mesh.position.set(startX, 0, startZ - 12);
-  // hold the start screen until the world around the dock has streamed in, so the first thing seen is a finished bayou
   const t0 = performance.now();
-  await Promise.all([preload(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a']), new Promise(r => { const poll = () => { if ((terrain.settled() && performance.now() - t0 > 800) || performance.now() - t0 > 20000) r(); else setTimeout(poll, 100); }; poll(); })]);
-  await new Promise(r => setTimeout(r, 250)); // one more frame with the models in, so their programs are compiled
-  scene.remove(warm); encounters.spills[0].uniforms.uAlpha.value = 0; window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false; for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
+  const terrainReady = new Promise(r => { const poll = () => {
+    const elapsed = performance.now() - t0;
+    const ready = startupTerrainReady(startup.terrainReadiness, { settled: terrain.settled(), localVisible: terrain.visibleAt(startX, startZ) });
+    if ((ready && elapsed >= startup.minWaitMs) || elapsed >= startup.maxWaitMs) r(); else setTimeout(poll, 100);
+  }; poll(); });
+  await Promise.all([startup.blockingModels.length ? preload(startup.blockingModels) : Promise.resolve(), terrainReady]);
+  if (startup.compileDelayMs) await new Promise(r => setTimeout(r, startup.compileDelayMs));
+  if (warm) {
+    scene.remove(warm); encounters.spills[0].uniforms.uAlpha.value = 0; window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false;
+    for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
+  }
   if (import.meta.env.DEV) document.documentElement.dataset.emeraldResource = JSON.stringify(debugResourceSnapshot());
   document.getElementById('loading').remove();
   startEl.classList.remove('hidden');

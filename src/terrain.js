@@ -316,6 +316,10 @@ export class Terrain {
     this.stats.chunks = this.chunks.size; this.stats.visible = this.visible.size; this.stats.inFlight = this.pool.inFlight;
   }
   settled() { return this.queue.length === 0 && this.finalize.length === 0 && !this.building && this.pool.inFlight === 0 && this.visible.size > 0; }
+  visibleAt(x, z) {
+    for (const c of this.visible) if (c.mesh?.visible && x >= c.x0 && z >= c.z0 && x <= c.x0 + c.size && z <= c.z0 + c.size) return true;
+    return false;
+  }
   memoryStats() {
     const levels = {}; let terrainGrid = 0, terrainGeometry = 0, vegetation = 0, vegetationInstances = 0, vegetationMeshes = 0, colliders = 0;
     for (const c of this.chunks.values()) {
