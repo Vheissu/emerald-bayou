@@ -14,6 +14,13 @@ const WEATHER_CALLS = {
   hurricane: ['MARINE WX-3', 'Hurricane warning. Life-threatening surge is entering the backwater. No safe open crossing remains.'],
 };
 
+const HURRICANE_PHASE_CALLS = {
+  'front-eyewall': 'Leading eyewall arriving now. Expect the strongest wind, near-zero visibility and windborne debris.',
+  eye: 'The eye is overhead. Winds are temporarily light, but surge and rough water remain. The backside eyewall will return from the opposite direction.',
+  'back-eyewall': 'Backside eyewall arriving. Wind is reversing and debris will move from the opposite quarter.',
+  'trailing-bands': 'The eyewall has cleared the district. Dangerous surge, rough water and trailing squalls continue.',
+};
+
 const REGION_ENTRY = {
   blackwater: 'Blackwater eats a radio signal. Mark every turn and call if the cypress closes behind you.',
   sawgrass: 'Sawgrass is thin water and a long walk from help. Keep the tower in range.',
@@ -212,6 +219,19 @@ export class RadioDirector {
     const call = WEATHER_CALLS[key]; if (!call) return;
     const priority = key === 'hurricane' ? 4 : ['thunderstorm', 'hail', 'tropical'].includes(key) ? 3 : key === 'squall' ? 2 : 1;
     this.transmit({ channel: 'WX-3', speaker: call[0], text: call[1], priority, duration: priority >= 3 ? 7 : undefined, key: `weather:${key}`, cooldown: 90 });
+  }
+
+  hurricanePhaseCall(phase) {
+    const text = HURRICANE_PHASE_CALLS[phase]; if (!text) return false;
+    return this.transmit({ channel: 'WX-3', speaker: 'MARINE WX-3', text, priority: 4, duration: 7.6, key: `weather:hurricane:${phase}`, cooldown: 90 });
+  }
+
+  waterspoutCall() {
+    return this.transmit({
+      channel: 'WX-3', speaker: 'MARINE WX-3',
+      text: 'Special marine warning. Waterspout reported in the backcountry. Small craft do not approach. If it bears down, turn ninety degrees off its apparent track.',
+      priority: 4, duration: 7.4, key: `weather:waterspout:${Math.floor(this.clock / 30)}`, cooldown: 24,
+    });
   }
 
   regionCall(region) {

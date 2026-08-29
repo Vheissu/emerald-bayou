@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './noise.js';
 import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
 import { regionAt } from './regions.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const CELL = 360;
@@ -398,7 +399,7 @@ export class NavigationAids {
     for (let index = 0; index < this.active; index++) {
       const aid = this.aids[index]; if (aid.state === 'normal') continue;
       const distance = Math.hypot(aid.actualX - this.phys.pos.x, aid.actualZ - this.phys.pos.y);
-      if (distance < 420) this.game.mapMarkers.push({ x: aid.actualX, z: aid.actualZ, kind: 'hazard', color: aid.side === 'red' ? '#d84a3d' : '#49b878' });
+      if (distance < 420) emitMapMarker(this.game, aid.actualX, aid.actualZ, 'hazard', aid.side === 'red' ? '#d84a3d' : '#49b878');
     }
   }
 

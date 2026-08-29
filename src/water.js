@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as TEX from './textures.js';
 
-const MAX_WAKE_STAMPS = 20;
+export const MAX_WAKE_STAMPS = 20;
 const MURK_SIZE = 2400, MURK_PX = 240; // 10 m per texel
 export const WAKE_SIZE = 150; // metres covered by wake sim
 
@@ -380,10 +380,12 @@ export class Water {
     shift.set((nx - this.wakeOrigin.x) / WAKE_SIZE, (nz - this.wakeOrigin.y) / WAKE_SIZE);
     this.simMat.uniforms.advection.value.set(flow ? flow.x * dt / WAKE_SIZE : 0, flow ? flow.y * dt / WAKE_SIZE : 0);
     this.wakeOrigin.set(nx, nz);
-    const stampCount = Math.min(stampsIn.length, this.wakeMaxStamps, MAX_WAKE_STAMPS);
+    const stampItems = stampsIn?.items || stampsIn;
+    const availableStamps = Number.isFinite(stampsIn?.count) ? stampsIn.count : stampItems.length;
+    const stampCount = Math.min(availableStamps, this.wakeMaxStamps, MAX_WAKE_STAMPS);
     this.simMat.uniforms.stampCount.value = stampCount;
     for (let i = 0; i < stampCount; i++) {
-      const s = stampsIn[i];
+      const s = stampItems[i];
       const u = (s.x - nx) / WAKE_SIZE + 0.5, v = (s.z - nz) / WAKE_SIZE + 0.5;
       this.stamps[i].set(u, v, s.radius / WAKE_SIZE, s.height * dt);
       this.foamStamps[i].set(u, v, (s.foamRadius || s.radius) / WAKE_SIZE, (s.foam || 0) * dt);

@@ -7,6 +7,8 @@ import { FalsePassage } from './passage.js';
 import { StormLine } from './stormline.js';
 import { StoryResidents } from './residents.js';
 import { ResidentContracts } from './contracts.js';
+import { emitWakeStamp } from './wakestamps.js';
+import { emitMapMarker } from './mapmarkers.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -396,7 +398,7 @@ export class StoryDirector {
   pushMarker() {
     for (const m of this.markers()) {
       const complete = !m.story;
-      this.game.mapMarkers.push({ x: m.x, z: m.z, kind: complete ? 'dot' : 'objective', color: m.color, clamp: !complete });
+      emitMapMarker(this.game, m.x, m.z, complete ? 'dot' : 'objective', m.color, 0, !complete);
     }
   }
 
@@ -434,8 +436,8 @@ export class StoryDirector {
     this.contracts?.stamps(out);
     if (this.departT <= 0 || this.departSpeed < 1.8 || Math.hypot(this.departPoint.x - this.phys.pos.x, this.departPoint.z - this.phys.pos.y) > 95) return;
     const p = this.departPoint, fx = -Math.sin(p.heading), fz = -Math.cos(p.heading), sp = Math.min(1, this.departSpeed / 6.6);
-    out.push({ x: p.x - fx * 1.8, z: p.z - fz * 1.8, radius: 1.1, height: 0.5 * sp, foam: 1.65 * sp, foamRadius: 1 });
-    out.push({ x: p.x + fx * 1.8, z: p.z + fz * 1.8, radius: 1, height: -0.66 * sp, foam: 0.1 * sp, foamRadius: 0.7 });
+    emitWakeStamp(out, p.x - fx * 1.8, p.z - fz * 1.8, 1.1, 0.5 * sp, 1.65 * sp, 1);
+    emitWakeStamp(out, p.x + fx * 1.8, p.z + fz * 1.8, 1, -0.66 * sp, 0.1 * sp, 0.7);
   }
 
   update(dt, t, enabled = true) {

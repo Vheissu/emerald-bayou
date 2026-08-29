@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { sharedResource } from './cache.js';
 import { WORLD_HALF } from './heightfield.js';
 import { WakeStampPool } from './wakestamps.js';
+import { waterspoutCanForm, waterspoutDriftSpeed } from './waterspout.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -124,7 +125,7 @@ function makeSpout() {
   }
   const ringMat = new THREE.MeshBasicMaterial({ color: 0xe7f1ed, transparent: true, opacity: 0.34, depthWrite: false, side: THREE.DoubleSide });
   const ring = new THREE.Mesh(new THREE.TorusGeometry(7.8, 0.13, 6, 52), ringMat); ring.rotation.x = Math.PI / 2; ring.position.y = 0.22; group.add(ring);
-  return { group, outer, inner, spirals, ring, active: false, x: 0, z: 0, life: 0, maxLife: 1, spin: 0, emit: 0, damageCd: 0 };
+  return { group, outer, inner, spirals, ring, active: false, x: 0, z: 0, motionX: 0, motionZ: 0, life: 0, maxLife: 1, spin: 0, emit: 0, damageCd: 0 };
 }
 
 function makeStrike(scene) {
@@ -340,26 +341,30 @@ export class StormHazards {
   spawnSpout(debug = false, close = false) {
     const at = close ? this.waterSpot(11, 15, 4, true) : debug ? this.waterSpot(72, 88, 22, true) : this.waterSpot(95, 190, 120);
     if (!at) return false;
-    const S = this.spout; Object.assign(S, { active: true, x: at.x, z: at.z, life: debug ? 46 : 35 + Math.random() * 30, maxLife: debug ? 46 : 65, spin: Math.random() * 6.28, emit: 0, damageCd: 0 });
+    const speed = waterspoutDriftSpeed(this.environment.values.wind), wind = this.environment.windDir;
+    const S = this.spout; Object.assign(S, { active: true, x: at.x, z: at.z, motionX: wind.x * speed, motionZ: wind.z * speed, life: debug ? 46 : 35 + Math.random() * 30, maxLife: debug ? 46 : 65, spin: Math.random() * 6.28, emit: 0, damageCd: 0 });
     S.maxLife = S.life; S.group.visible = true; S.group.position.set(S.x, this.water.level, S.z); S.group.scale.setScalar(0.01);
     this.spoutT = 80 + Math.random() * 90; this.stats.spouts = (this.stats.spouts || 0) + 1; this.game.persist();
-    this.environment.alert('Waterspout', 'Funnel on the water. Give it room.', 5.5); this.audio.warn();
+    this.environment.alert('Waterspout', 'Funnel on the water. Give it room.', 5.5); this.audio.warn(); this.radio?.waterspoutCall(S);
     if (debug) this.game.toast('Waterspout', close ? 'Too close. Turn out and use full power.' : 'A funnel has touched down across the channel.', close ? 3.1 : 1.8);
     return true;
   }
 
-  endSpout() { this.spout.active = false; this.spout.group.visible = false; }
+  endSpout() { this.spout.active = false; this.spout.group.visible = false; this.audio.waterspout?.(0); }
 
   updateSpout(dt, t) {
     const S = this.spout, V = this.environment.values;
     this.spoutT -= dt;
-    const canForm = (this.environment.key === 'tropical' || this.environment.key === 'hurricane') && V.storm > 0.86;
-    if (!S.active && canForm && this.spoutT <= 0) this.spawnSpout(false, false);
-    if (!S.active) return;
+    if (!S.active && this.spoutT <= 0) {
+      if (waterspoutCanForm(this.environment.key, V, Math.random())) {
+        if (!this.spawnSpout(false, false)) this.spoutT = 7 + Math.random() * 8;
+      } else this.spoutT = 12 + Math.random() * 20;
+    }
+    if (!S.active) { this.audio.waterspout?.(0); return; }
     S.life -= dt * (V.storm > 0.7 ? 1 : 2.8); S.damageCd = Math.max(0, S.damageCd - dt); S.spin += dt * (1.5 + V.wind * 0.035);
-    const drift = 0.45 + V.wind * 0.024, flow = this.currents ? this.currents.flowAt(S.x, S.z, this._flow) : null;
-    const nx = S.x + (this.environment.windDir.x * drift + (flow ? flow.x * 0.35 : 0)) * dt;
-    const nz = S.z + (this.environment.windDir.z * drift + (flow ? flow.y * 0.35 : 0)) * dt;
+    const drift = waterspoutDriftSpeed(V.wind), flow = this.currents ? this.currents.flowAt(S.x, S.z, this._flow) : null;
+    S.motionX = this.environment.windDir.x * drift + (flow ? flow.x * 0.35 : 0); S.motionZ = this.environment.windDir.z * drift + (flow ? flow.y * 0.35 : 0);
+    const nx = S.x + S.motionX * dt, nz = S.z + S.motionZ * dt;
     if (this.terrain.heightAt(nx, nz) < -0.38 && !(this.world && this.world.blockedAt(nx, nz))) { S.x = nx; S.z = nz; }
     const appear = smooth(0, 2.2, S.maxLife - S.life) * smooth(0, 3.2, S.life);
     S.group.visible = appear > 0.01; S.group.scale.setScalar(appear); S.group.position.set(S.x, this.water.level, S.z); S.group.rotation.y = S.spin;
@@ -378,6 +383,7 @@ export class StormHazards {
     if (Math.random() < dt * 7) this.plume.emit(S.x + (Math.random() - 0.5) * 8, this.water.level + 72 + Math.random() * 10, S.z + (Math.random() - 0.5) * 8, this.environment.windDir.x * 2, 0.2, this.environment.windDir.z * 2, 3 + Math.random() * 3.5, 2.2, 2.2, 0.22);
 
     const dx = S.x - this.phys.pos.x, dz = S.z - this.phys.pos.y, d = Math.hypot(dx, dz), q = clamp((92 - d) / 82);
+    this.audio.waterspout?.(appear * clamp((540 - d) / 500) * (0.58 + V.storm * 0.42), S.x, S.z);
     if (q > 0) {
       const rx = dx / (d || 1), rz = dz / (d || 1), pull = q * q;
       this.phys.vel.x += (rx * (1.4 + V.wind * 0.05) - rz * 3.4) * pull * dt;
@@ -407,7 +413,7 @@ export class StormHazards {
 
   update(dt, t, enabled = true) {
     this.enabled = enabled;
-    if (!enabled) { this.obstacles.length = 0; if (this.el) this.el.classList.remove('on'); return; }
+    if (!enabled) { this.obstacles.length = 0; this.audio.waterspout?.(0); if (this.el) this.el.classList.remove('on'); return; }
     this.noticeT = Math.max(0, this.noticeT - dt); this.airNoticeT = Math.max(0, this.airNoticeT - dt);
     this.updateDebris(dt, t); this.updateStrikes(dt); this.updateSpout(dt, t);
     this.hudT -= dt; if (this.hudT <= 0) { this.hudT = 0.12; this.render(); }

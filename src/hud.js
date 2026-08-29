@@ -6,6 +6,17 @@ const TILE = 200, TILE_PX = 100; // 0.5 px per metre
 const TILE_LIMIT = 256, TILE_TRIM = 64;
 const FONT = '"Avenir Next Condensed", "Avenir Next", "Arial Narrow", sans-serif';
 const INK = 'rgba(8,20,15,0.85)';
+const tileKey = (i, j) => ((i & 0xffff) << 16) | (j & 0xffff);
+const MARKER_ORDER = { trap: 0, blind: 0, boathouse: 1, house: 1, ramp: 1, camp: 2, angler: 3, gator: 3, boat: 4, home: 5, dot: 5, job: 6, hazard: 7, objective: 8 };
+export const markerDrawPriority = kind => MARKER_ORDER[kind] || 0;
+
+const drawRim = (c, x, y, r, fill, stroke = INK, lw = 2) => { c.beginPath(); c.arc(x, y, r, 0, 6.283); c.fillStyle = fill; c.fill(); if (stroke) { c.lineWidth = lw; c.strokeStyle = stroke; c.stroke(); } };
+const drawGlyph = (c, x, y, glyph, px, color = '#0b1512') => { c.font = `700 ${px}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = color; c.fillText(glyph, x, y + px * 0.06); };
+const drawHouse = (c, x, y, r, fill, stroke = INK) => { c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r, y - r * 0.15); c.lineTo(x + r * 0.7, y - r * 0.15); c.lineTo(x + r * 0.7, y + r * 0.9); c.lineTo(x - r * 0.7, y + r * 0.9); c.lineTo(x - r * 0.7, y - r * 0.15); c.lineTo(x - r, y - r * 0.15); c.closePath(); c.fillStyle = fill; c.fill(); c.lineWidth = 1.5; c.strokeStyle = stroke; c.stroke(); };
+const drawTriangle = (c, x, y, angle, r, fill, stroke = INK) => { c.save(); c.translate(x, y); c.rotate(angle); c.beginPath(); c.moveTo(0, -r); c.lineTo(r * 0.7, r * 0.8); c.lineTo(0, r * 0.35); c.lineTo(-r * 0.7, r * 0.8); c.closePath(); c.fillStyle = fill; c.fill(); c.lineWidth = 1.5; c.strokeStyle = stroke; c.stroke(); c.restore(); };
+const drawFlag = (c, x, y, r) => { c.fillStyle = '#f3ede0'; c.fillRect(x - r * 0.55, y - r * 0.6, r * 1.1, r * 0.8); c.fillStyle = '#0b1512'; const s = r * 0.275; for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) if ((i + j) & 1) c.fillRect(x - r * 0.55 + i * s, y - r * 0.6 + j * s, s, s); c.fillRect(x - r * 0.62, y - r * 0.7, r * 0.12, r * 1.5); };
+const drawStar = (c, x, y, r, color) => { c.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i & 1 ? r * 0.45 : r; c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); } c.closePath(); c.fillStyle = color; c.fill(); };
+const drawLock = (c, x, y, r) => { c.fillStyle = '#0b1512'; c.fillRect(x - r * 0.45, y - r * 0.1, r * 0.9, r * 0.7); c.beginPath(); c.arc(x, y - r * 0.1, r * 0.3, Math.PI, 0); c.lineWidth = r * 0.16; c.strokeStyle = '#0b1512'; c.stroke(); };
 
 export class Minimap {
   constructor(terrain) {
@@ -17,10 +28,10 @@ export class Minimap {
     this.speedEl = document.getElementById('speedVal');
     this.scale = 0.62; // canvas px per metre (drifts down with speed)
     this.pulse = 0; this.pulseStamp = 0;
-    this.edgeFade = null; // radial gradient cached per canvas size
+    this.edgeGradient = null; this.edgeGradientWidth = 0; this.edgeGradientHeight = 0;
   }
   tile(i, j) {
-    const key = `${i},${j}`;
+    const key = tileKey(i, j);
     let t = this.tiles.get(key);
     if (t) { t.used = performance.now(); return t.canvas; }
     if (this.inFlight >= 3) return null;
@@ -65,54 +76,50 @@ export class Minimap {
     c.restore();
     // world -> radar
     const cr = Math.cos(rot), sr = Math.sin(rot);
-    const toS = (x, z) => { const mx = (x - boat.pos.x) * k, mz = (z - boat.pos.y) * k; return [CX + cr * mx - sr * mz, CY + sr * mx + cr * mz]; };
-    const toDir = (fx, fz) => [cr * fx - sr * fz, sr * fx + cr * fz];
     // keep a point inside the radar's rim
     const inset = 22;
-    const clamp = (sx, sy) => { const dx = sx - CX, dy = sy - CY; const kx = Math.abs(dx) > 1e-3 ? (CX - inset) / Math.abs(dx) : 1e9, ky = Math.abs(dy) > 1e-3 ? (CY - inset) / Math.abs(dy) : 1e9; const kk = Math.min(1, kx, Math.abs(dy) > 1e-3 ? (H - CY - inset) / Math.abs(dy) : 1e9, ky); return [CX + dx * kk, CY + dy * kk, kk < 1]; };
-    const rim = (x, y, r, fill, stroke = INK, lw = 2) => { c.beginPath(); c.arc(x, y, r, 0, 6.283); c.fillStyle = fill; c.fill(); if (stroke) { c.lineWidth = lw; c.strokeStyle = stroke; c.stroke(); } };
-    const glyph = (x, y, g, px, col = '#0b1512') => { c.font = `700 ${px}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = col; c.fillText(g, x, y + px * 0.06); };
-    const house = (x, y, r, fill, stroke = INK) => { c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r, y - r * 0.15); c.lineTo(x + r * 0.7, y - r * 0.15); c.lineTo(x + r * 0.7, y + r * 0.9); c.lineTo(x - r * 0.7, y + r * 0.9); c.lineTo(x - r * 0.7, y - r * 0.15); c.lineTo(x - r, y - r * 0.15); c.closePath(); c.fillStyle = fill; c.fill(); c.lineWidth = 1.5; c.strokeStyle = stroke; c.stroke(); };
-    const tri = (x, y, ang, r, fill, stroke = INK) => { c.save(); c.translate(x, y); c.rotate(ang); c.beginPath(); c.moveTo(0, -r); c.lineTo(r * 0.7, r * 0.8); c.lineTo(0, r * 0.35); c.lineTo(-r * 0.7, r * 0.8); c.closePath(); c.fillStyle = fill; c.fill(); c.lineWidth = 1.5; c.strokeStyle = stroke; c.stroke(); c.restore(); };
-    const flag = (x, y, r) => { c.fillStyle = '#f3ede0'; c.fillRect(x - r * 0.55, y - r * 0.6, r * 1.1, r * 0.8); c.fillStyle = '#0b1512'; const s = r * 0.275; for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) if ((i + j) & 1) c.fillRect(x - r * 0.55 + i * s, y - r * 0.6 + j * s, s, s); c.fillRect(x - r * 0.62, y - r * 0.7, r * 0.12, r * 1.5); };
-    const star = (x, y, r, col) => { c.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i & 1 ? r * 0.45 : r; c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); } c.closePath(); c.fillStyle = col; c.fill(); };
-    const lock = (x, y, r) => { c.fillStyle = '#0b1512'; c.fillRect(x - r * 0.45, y - r * 0.1, r * 0.9, r * 0.7); c.beginPath(); c.arc(x, y - r * 0.1, r * 0.3, Math.PI, 0); c.lineWidth = r * 0.16; c.strokeStyle = '#0b1512'; c.stroke(); };
-    // draw order: quiet things first, the objective last
-    const order = { trap: 0, blind: 0, boathouse: 1, house: 1, ramp: 1, camp: 2, angler: 3, gator: 3, boat: 4, home: 5, dot: 5, job: 6, hazard: 7, objective: 8 };
-    const list = markers.slice().sort((a, b) => (order[a.kind] || 0) - (order[b.kind] || 0));
-    for (const mk of list) {
-      let [sx, sy] = toS(mk.x, mk.z); let pinned = false;
-      if (mk.clamp) { [sx, sy, pinned] = clamp(sx, sy); }
+    // Nine allocation-free passes preserve stable draw order: quiet things first, the objective last.
+    for (let priority = 0; priority <= 8; priority++) for (let markerIndex = 0; markerIndex < markers.length; markerIndex++) {
+      const mk = markers[markerIndex]; if (markerDrawPriority(mk.kind) !== priority) continue;
+      const mx = (mk.x - boat.pos.x) * k, mz = (mk.z - boat.pos.y) * k;
+      let sx = CX + cr * mx - sr * mz, sy = CY + sr * mx + cr * mz, pinned = false;
+      if (mk.clamp) {
+        const dx = sx - CX, dy = sy - CY;
+        const kx = Math.abs(dx) > 1e-3 ? (CX - inset) / Math.abs(dx) : 1e9;
+        const ky = Math.abs(dy) > 1e-3 ? (CY - inset) / Math.abs(dy) : 1e9;
+        const kk = Math.min(1, kx, Math.abs(dy) > 1e-3 ? (H - CY - inset) / Math.abs(dy) : 1e9, ky);
+        sx = CX + dx * kk; sy = CY + dy * kk; pinned = kk < 1;
+      }
       else if (sx < -12 || sy < -12 || sx > W + 12 || sy > H + 12) continue;
       switch (mk.kind) {
         case 'objective': {
           const col = mk.color || '#f07a2e';
           if (!pinned) { const pr = 9 + (this.pulse * 1.2 % 1) * 10; c.beginPath(); c.arc(sx, sy, pr, 0, 6.283); c.lineWidth = 2; c.strokeStyle = col; c.globalAlpha = 1 - (this.pulse * 1.2 % 1); c.stroke(); c.globalAlpha = 1; }
-          rim(sx, sy, mk.soft ? 6 : 7, col, INK, 2.5);
+          drawRim(c, sx, sy, mk.soft ? 6 : 7, col, INK, 2.5);
           if (pinned) { const ang = Math.atan2(sy - CY, sx - CX); c.save(); c.translate(sx, sy); c.rotate(ang); c.beginPath(); c.moveTo(14, 0); c.lineTo(6, -6); c.lineTo(6, 6); c.closePath(); c.fillStyle = col; c.fill(); c.restore(); }
           break;
         }
         case 'job': {
-          const r = 11; rim(sx, sy, r, mk.locked ? 'rgba(140,146,140,0.85)' : mk.color, mk.done ? '#e5c063' : INK, mk.done ? 3 : 2);
-          if (mk.locked) lock(sx, sy, r * 0.8); else if (mk.glyph === 'flag') flag(sx, sy, r * 0.85); else if (mk.glyph === 'star') star(sx, sy, r * 0.62, '#0b1512'); else glyph(sx, sy, mk.glyph, 15);
+          const r = 11; drawRim(c, sx, sy, r, mk.locked ? 'rgba(140,146,140,0.85)' : mk.color, mk.done ? '#e5c063' : INK, mk.done ? 3 : 2);
+          if (mk.locked) drawLock(c, sx, sy, r * 0.8); else if (mk.glyph === 'flag') drawFlag(c, sx, sy, r * 0.85); else if (mk.glyph === 'star') drawStar(c, sx, sy, r * 0.62, '#0b1512'); else drawGlyph(c, sx, sy, mk.glyph, 15);
           break;
         }
-        case 'camp': house(sx, sy, 7, mk.known ? '#7be08a' : 'rgba(230,224,208,0.55)'); if (mk.known) glyph(sx, sy + 2, '$', 9); break;
-        case 'house': house(sx, sy, 5, 'rgba(230,224,208,0.85)'); break;
-        case 'boathouse': house(sx, sy, 5, 'rgba(160,190,210,0.85)'); break;
+        case 'camp': drawHouse(c, sx, sy, 7, mk.known ? '#7be08a' : 'rgba(230,224,208,0.55)'); if (mk.known) drawGlyph(c, sx, sy + 2, '$', 9); break;
+        case 'house': drawHouse(c, sx, sy, 5, 'rgba(230,224,208,0.85)'); break;
+        case 'boathouse': drawHouse(c, sx, sy, 5, 'rgba(160,190,210,0.85)'); break;
         case 'ramp': { c.save(); c.translate(sx, sy); c.beginPath(); c.moveTo(-6, 4); c.lineTo(6, 4); c.lineTo(6, -5); c.closePath(); c.fillStyle = 'rgba(205,205,195,0.9)'; c.fill(); c.lineWidth = 1.5; c.strokeStyle = INK; c.stroke(); c.restore(); break; }
-        case 'blind': rim(sx, sy, 2.5, 'rgba(180,170,110,0.8)', null); break;
-        case 'boat': { const [dx, dy] = toDir(-Math.sin(mk.heading), -Math.cos(mk.heading)); tri(sx, sy, Math.atan2(dy, dx) + Math.PI / 2, 7, mk.color || '#8fb8d8'); break; }
-        case 'angler': rim(sx, sy, 3.5, 'rgba(140,190,240,0.95)'); break;
-        case 'gator': rim(sx, sy, 4.5, '#4a5e2e', '#e0554a', 2); break;
-        case 'trap': rim(sx, sy, 2.6, '#f07a2e', INK, 1.2); break;
+        case 'blind': drawRim(c, sx, sy, 2.5, 'rgba(180,170,110,0.8)', null); break;
+        case 'boat': { const fx = -Math.sin(mk.heading), fz = -Math.cos(mk.heading), dx = cr * fx - sr * fz, dy = sr * fx + cr * fz; drawTriangle(c, sx, sy, Math.atan2(dy, dx) + Math.PI / 2, 7, mk.color || '#8fb8d8'); break; }
+        case 'angler': drawRim(c, sx, sy, 3.5, 'rgba(140,190,240,0.95)'); break;
+        case 'gator': drawRim(c, sx, sy, 4.5, '#4a5e2e', '#e0554a', 2); break;
+        case 'trap': drawRim(c, sx, sy, 2.6, '#f07a2e', INK, 1.2); break;
         case 'hazard': {
           const col = mk.color || '#d7f1f4', pr = 8 + (this.pulse * 1.4 % 1) * 9;
           c.beginPath(); c.arc(sx, sy, pr, 0, 6.283); c.lineWidth = 1.5; c.strokeStyle = col; c.globalAlpha = 1 - (this.pulse * 1.4 % 1); c.stroke(); c.globalAlpha = 1;
-          rim(sx, sy, 7, col, INK, 2); glyph(sx, sy + 0.5, '!', 11); break;
+          drawRim(c, sx, sy, 7, col, INK, 2); drawGlyph(c, sx, sy + 0.5, '!', 11); break;
         }
-        case 'home': tri(sx, sy, 0, 7, '#e5c063'); break;
-        default: rim(sx, sy, mk.r || 4, mk.color || '#f3ede0', 'rgba(0,0,0,0.5)', 1.5);
+        case 'home': drawTriangle(c, sx, sy, 0, 7, '#e5c063'); break;
+        default: drawRim(c, sx, sy, mk.r || 4, mk.color || '#f3ede0', 'rgba(0,0,0,0.5)', 1.5);
       }
     }
     // north marker
@@ -120,18 +127,18 @@ export class Minimap {
     const r = Math.min(W, H) * 0.44;
     const ang = rot - Math.PI / 2; // north is -z; forward is up when heading 0
     const nX = Math.cos(ang) * r, nY = Math.sin(ang) * r;
-    rim(nX, nY, 12, 'rgba(20,30,26,0.75)', null); glyph(nX, nY, 'N', 18, '#e8f0ea');
+    drawRim(c, nX, nY, 12, 'rgba(20,30,26,0.75)', null); drawGlyph(c, nX, nY, 'N', 18, '#e8f0ea');
     // player arrow
     c.fillStyle = '#f4f7f4'; c.strokeStyle = INK; c.lineWidth = 2; c.beginPath(); c.moveTo(0, -13); c.lineTo(9, 9); c.lineTo(0, 4); c.lineTo(-9, 9); c.closePath(); c.fill(); c.stroke();
     c.restore();
     // edge fade (the gradient is a fixed shape; build it once per canvas size)
     c.globalCompositeOperation = 'destination-in';
-    if (!this.edgeFade || this.edgeFadeKey !== `${W}x${H}`) {
-      const g = c.createRadialGradient(CX, CY, 20, CX, CY, W * 0.62);
-      g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.85, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0.6)');
-      this.edgeFade = g; this.edgeFadeKey = `${W}x${H}`;
+    if (!this.edgeGradient || this.edgeGradientWidth !== W || this.edgeGradientHeight !== H) {
+      this.edgeGradient = c.createRadialGradient(CX, CY, 20, CX, CY, W * 0.62);
+      this.edgeGradient.addColorStop(0, 'rgba(0,0,0,1)'); this.edgeGradient.addColorStop(0.85, 'rgba(0,0,0,1)'); this.edgeGradient.addColorStop(1, 'rgba(0,0,0,0.6)');
+      this.edgeGradientWidth = W; this.edgeGradientHeight = H;
     }
-    c.fillStyle = this.edgeFade; c.fillRect(0, 0, W, H);
+    c.fillStyle = this.edgeGradient; c.fillRect(0, 0, W, H);
     c.globalCompositeOperation = 'source-over';
     c.strokeStyle = 'rgba(190,220,205,0.35)'; c.lineWidth = 3; c.strokeRect(1.5, 1.5, W - 3, H - 3);
     const mph = String(Math.round(boat.speed * 2.23694));

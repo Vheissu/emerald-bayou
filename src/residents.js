@@ -1,3 +1,5 @@
+import { emitMapMarker } from './mapmarkers.js';
+
 const MPH = 2.23694;
 
 // The story boats do not disappear into a mission flag. Once they are off duty,
@@ -136,7 +138,7 @@ export class StoryResidents {
       if (!visible) { entry.inside = false; continue; }
       P.placeBoat(entry.mesh, entry.point, t);
       if (d < 82) this.addObstacle(entry);
-      if (d < 230) P.game.mapMarkers.push({ x: entry.point.x, z: entry.point.z, kind: 'boat', heading: entry.point.heading, color: entry.color });
+      if (d < 230) emitMapMarker(P.game, entry.point.x, entry.point.z, 'boat', entry.color, entry.point.heading);
       if (d < 68 && !entry.inside && P.phys.speed * MPH < 28 && !P.busy() && !P.game.state && !P.game.paused) this.greet(entry);
       entry.inside = d < 105;
     }
