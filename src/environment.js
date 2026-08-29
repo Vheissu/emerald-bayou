@@ -14,6 +14,11 @@ const WEATHER = {
     exposure: 1.02, surge: 0, lightning: 0, storm: 0, duration: [140, 230],
     call: 'Blue sky opening over the lower river.',
   },
+  fog: {
+    label: 'Dense fog', cloud: 0.52, rain: 0, hail: 0, wind: 1.6, sea: 0.04, fog: 0.0034,
+    exposure: 0.9, surge: 0, lightning: 0, storm: 0.02, duration: [95, 170],
+    call: 'Dense fog in the back cuts. Slow down, listen, and sound before blind bends.',
+  },
   overcast: {
     label: 'Overcast', cloud: 0.40, rain: 0.04, hail: 0, wind: 6.5, sea: 0.28, fog: 0.00042,
     exposure: 0.89, surge: 0.02, lightning: 0, storm: 0.28, duration: [100, 190],
@@ -47,13 +52,18 @@ const WEATHER = {
 };
 const WEATHER_ORDER = Object.keys(WEATHER);
 const WEATHER_FIELDS = ['cloud', 'rain', 'hail', 'wind', 'sea', 'fog', 'exposure', 'surge', 'lightning', 'storm'];
+const WEATHER_LIMITS = Object.fromEntries(WEATHER_FIELDS.map(field => {
+  let lo = Infinity, hi = -Infinity;
+  for (const name of WEATHER_ORDER) { const value = WEATHER[name][field]; lo = Math.min(lo, value); hi = Math.max(hi, value); }
+  return [field, [lo, hi]];
+}));
 
 function weatherSnapshot(source, fallback) {
   const out = {};
   for (const key of WEATHER_FIELDS) {
     const n = Number(source && source[key]);
-    const values = WEATHER_ORDER.map(name => WEATHER[name][key]);
-    out[key] = Number.isFinite(n) ? clamp(n, Math.min(...values), Math.max(...values)) : fallback[key];
+    const [lo, hi] = WEATHER_LIMITS[key];
+    out[key] = Number.isFinite(n) ? clamp(n, lo, hi) : fallback[key];
   }
   return out;
 }
@@ -148,6 +158,7 @@ export class Environment {
     this.from = weatherSnapshot(saved.from, WEATHER[this.key]); this.to = { ...WEATHER[this.key] };
     this.mix = Number.isFinite(savedMix) ? clamp(savedMix) : 1; this.transition = 24;
     this.values = {}; mixedWeather(this.values, this.from, this.to, this.mix);
+    this.restrictedVisibility = smooth(0.00085, 0.0029, this.values.fog);
     this.remaining = Number.isFinite(savedRemaining) ? clamp(savedRemaining, 0, 600) : 95;
     this.windAngle = Number.isFinite(savedWind) ? Math.atan2(Math.sin(savedWind), Math.cos(savedWind)) : 0.7;
     this.gust = 1; this.waterLevel = 0; this.tideRate = 0; this.syncClockAndTide(); this.persistT = 10;
@@ -155,7 +166,7 @@ export class Environment {
     this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
-    this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a);
+    this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
     this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.hailKick = 0;
     this.makeLightning(); this.makeBoatLights(); this.makeSettlementLights();
     this.el = document.getElementById('worldState'); this.alertEl = document.getElementById('weatherAlert'); this.alertT = 0; this.hudT = 0;
@@ -241,9 +252,15 @@ export class Environment {
   cycleWeather(instant = false) { const i = WEATHER_ORDER.indexOf(this.key); this.setWeather(WEATHER_ORDER[(i + 1) % WEATHER_ORDER.length], instant, true); }
 
   chooseWeather() {
-    const r = Math.random(); let next = 'fair';
-    if (this.key === 'fair') next = r < 0.67 ? 'overcast' : r < 0.83 ? 'fair' : 'squall';
-    else if (this.key === 'overcast') next = r < 0.34 ? 'fair' : r < 0.62 ? 'squall' : r < 0.88 ? 'thunderstorm' : r < 0.96 ? 'hail' : 'tropical';
+    const r = Math.random(), fogWindow = this.hour >= 0.5 && this.hour < 7.35; let next = 'fair';
+    if (this.key === 'fair') {
+      if (fogWindow && r < 0.2) next = 'fog';
+      else { const q = fogWindow ? (r - 0.2) / 0.8 : r; next = q < 0.67 ? 'overcast' : q < 0.83 ? 'fair' : 'squall'; }
+    } else if (this.key === 'fog') next = r < 0.7 ? 'fair' : 'overcast';
+    else if (this.key === 'overcast') {
+      if (fogWindow && r < 0.14) next = 'fog';
+      else { const q = fogWindow ? (r - 0.14) / 0.86 : r; next = q < 0.34 ? 'fair' : q < 0.62 ? 'squall' : q < 0.88 ? 'thunderstorm' : q < 0.96 ? 'hail' : 'tropical'; }
+    }
     else if (this.key === 'squall') next = r < 0.5 ? 'overcast' : r < 0.84 ? 'thunderstorm' : 'fair';
     else if (this.key === 'thunderstorm' || this.key === 'hail') next = r < 0.62 ? 'overcast' : r < 0.9 ? 'fair' : 'tropical';
     else if (this.key === 'tropical') next = r < 0.22 ? 'hurricane' : r < 0.78 ? 'squall' : 'overcast';
@@ -320,6 +337,9 @@ export class Environment {
     this.minutes += step * this.minutesPerSecond;
     if (step) {
       this.remaining -= step;
+      const clockHour = (this.minutes / 60) % 24;
+      // Low-wind pre-dawn fog lingers into the morning, then gives way quickly once solar heating takes hold.
+      if (this.key === 'fog' && clockHour >= 8.15 && clockHour < 11.5) this.remaining = Math.min(this.remaining, 18);
       if (this.remaining <= 0) this.chooseWeather();
       if (this.mix < 1) this.mix = Math.min(1, this.mix + step / this.transition);
       mixedWeather(this.values, this.from, this.to, this.mix);
@@ -327,6 +347,7 @@ export class Environment {
     this.syncClockAndTide();
 
     const V = this.values;
+    this.restrictedVisibility = smooth(0.00085, 0.0029, V.fog);
     this.windAngle += step * (0.003 + V.wind * 0.00016) + Math.sin(realTime * 0.019) * step * 0.0015;
     this.gust = 0.78 + 0.22 * Math.sin(realTime * 0.37) + 0.13 * Math.sin(realTime * 1.11 + 1.7) + 0.07 * Math.sin(realTime * 2.73);
     this.gust = clamp(this.gust, 0.58, 1.18);
@@ -379,12 +400,15 @@ export class Environment {
     const dawnHaze = Math.exp(-Math.pow((this.hour - 6.5) / 1.8, 2)) * (1 - smooth(5, 19, V.wind));
     fog.fogDensity.value = V.fog * lerp(1.28, 1, daylight) * (1 + dawnHaze * 0.3);
     fog.fogColor.value.copy(this.fogNight).lerp(this.fogDay, daylight).lerp(this.fogStorm, V.storm * 0.78);
-    fog.bloomAmt.value = lerp(0.18, 0.1, daylight) + V.rain * 0.03;
+    this.fogMist.setRGB(lerp(0.20, 0.72, daylight), lerp(0.27, 0.75, daylight), lerp(0.31, 0.73, daylight));
+    fog.fogColor.value.lerp(this.fogMist, this.restrictedVisibility * 0.82);
+    fog.fogMax.value = lerp(0.6, 0.94, this.restrictedVisibility);
+    fog.bloomAmt.value = lerp(0.18, 0.1, daylight) + V.rain * 0.03 + this.restrictedVisibility * (this.spotOn ? 0.065 : 0.022);
     fog.sunDir.value.copy(this.lightDir);
 
     this.precip.update(dt, camera, this.windDir, V.rain, V.hail, this.waterLevel);
     if (this.audio && this.audio.weather) this.audio.weather(V.wind * this.gust, V.rain, night, V.storm);
-    this.nav.visible = night > 0.03 || this.spotOn; this.cockpitLight.intensity = night * 15; this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) : 0;
+    this.nav.visible = night > 0.03 || this.restrictedVisibility > 0.25 || this.spotOn; this.cockpitLight.intensity = night * 15; this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) : 0;
     this.updateSettlementLights(dt, night);
 
     if (this.alertT > 0) { this.alertT -= dt; if (this.alertT <= 0 && this.alertEl) this.alertEl.classList.remove('on'); }

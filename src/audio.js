@@ -121,13 +121,19 @@ export class EngineAudio {
     const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol, now + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
     src.connect(bp); bp.connect(g); g.connect(this.sfx); src.start(now); src.stop(now + 0.8);
   }
-  // another boat's horn: two-tone, a touch flat
-  horn(vol = 0.3) {
-    if (!this.ctx || vol < 0.02) return; const ctx = this.ctx, now = ctx.currentTime;
+  hornBlast(vol, duration, when = 0) {
+    if (!this.ctx || vol < 0.02) return; const ctx = this.ctx, now = ctx.currentTime + when;
     for (const f of [311, 392]) { const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = f; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400;
-      const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol * 0.5, now + 0.03); g.gain.setValueAtTime(vol * 0.5, now + 0.4); g.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
-      o.connect(lp); lp.connect(g); g.connect(this.sfx); o.start(now); o.stop(now + 0.6); }
+      const release = Math.min(0.4, duration * 0.28), hold = duration - release;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol * 0.5, now + 0.03); g.gain.setValueAtTime(vol * 0.5, now + hold); g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      o.connect(lp); lp.connect(g); g.connect(this.sfx); o.start(now); o.stop(now + duration + 0.05); }
   }
+  // another boat's close-quarters warning: two-tone, a touch flat
+  horn(vol = 0.3) { this.hornBlast(vol, 0.55); }
+  // Rule 32 prolonged blast: held inside the four-to-six-second window.
+  fogHorn(vol = 0.3) { this.hornBlast(vol, 4.5); }
+  // Rule 35(c): a vessel engaged in fishing sounds one prolonged followed by two short blasts.
+  fogHornFishing(vol = 0.3) { this.hornBlast(vol, 4.5); this.hornBlast(vol * 0.9, 1, 5.5); this.hornBlast(vol * 0.9, 1, 7.5); }
   // osprey: a run of thin descending whistles
   osprey(vol = 0.18) {
     if (!this.ctx || vol < 0.02) return; const ctx = this.ctx;

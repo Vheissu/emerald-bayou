@@ -238,7 +238,7 @@ const SHELTER_RELEASE_MARGIN = 0.09;
 const TOW_BERTH_RADII = [6.5, 8.5, 10.5, 12.5];
 const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 const TRAFFIC_PROFILES = [
-  { id: 'net-nine', callsign: 'NET BOAT 9', operator: 'EDDIE MORA', job: 'mullet netter', duty: [4.5, 14], threshold: 0.22, cruise: 0.72, work: [18, 34, 0.72], maxStorm: 0.58, channel: 'CH 16', faction: 'locals', color: '#78a6bd' },
+  { id: 'net-nine', callsign: 'NET BOAT 9', operator: 'EDDIE MORA', job: 'mullet netter', duty: [4.5, 14], threshold: 0.12, cruise: 0.72, work: [18, 34, 0.72], maxStorm: 0.58, channel: 'CH 16', faction: 'locals', color: '#78a6bd' },
   { id: 'marsh-ice', callsign: 'MARSH ICE', operator: 'ROSA MENDEZ', job: 'fish buyer', duty: [5.25, 16.2], threshold: 0.38, cruise: 0.82, work: [10, 22, 0.42], maxStorm: 0.66, channel: 'CH 68', faction: 'locals', color: '#8eb895' },
   { id: 'bay-star', callsign: 'BAY STAR', operator: 'GABE NOLAN', job: 'guide boat', duty: [8, 18.5], threshold: 0.66, cruise: 0.72, work: [8, 16, 0.2], maxStorm: 0.4, channel: 'CH 16', faction: 'locals', color: '#d7c98d' },
   { id: 'bird-crew', callsign: 'BIRD CREW', operator: 'IMANI WELLS', job: 'rookery survey', duty: [6.25, 19.25], threshold: 0.5, cruise: 0.64, work: [24, 44, 0.68], maxStorm: 0.5, channel: 'CH 68', faction: 'fwc', color: '#a8c8bf' },
@@ -331,7 +331,7 @@ export class Traffic {
       record.seriousCollisions = Number(record.seriousCollisions) || 0; record.aidedAfterCollision = Number(record.aidedAfterCollision) || 0; record.leftDisabled = Number(record.leftDisabled) || 0;
       const shelter = { active: false, arrived: false, kind: '', key: '', name: '', x: 0, z: 0, heading: 0, distance: 0 };
       const collision = { active: false, stage: '', t: 0, elapsed: 0, hold: 0, farT: 0, signalT: 0, impact: 0, distance: Infinity, prevState: 'transit', prevRetiring: false, prevLeg: 0, prevWorkT: 0, prevWorkRig: false, marker: { x: 0, z: 0, label: '', color: '#f06c38', trafficCollision: profile.id } };
-      Object.assign(b, { profile, record, shelter, collision, shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, yellT: 0, ground: 0, shx: 0, shz: 0 });
+      Object.assign(b, { profile, record, shelter, collision, shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, fogHornT: 6 + i * 16, fogSignalIndex: i, yellT: 0, ground: 0, shx: 0, shz: 0 });
       this.addWorkingDetails(b, i);
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
       b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
@@ -633,15 +633,16 @@ export class Traffic {
     const key = this.shiftKey(b); if (b.record.lastMet === key) return;
     b.record.lastMet = key; b.record.passes++; b.greetT = 24; this.fx.game.persist();
     if (b.people?.length) wave(b.people[b.people.length - 1]);
-    const state = b.state === 'tow-response' ? 'responding to your tow call' : b.state === 'tow-alongside' ? 'passing a tow line' : b.state === 'shelter-run' ? `making for ${b.shelter.name}` : b.state === 'sheltered' ? `weathered in at ${b.shelter.name}` : b.state === 'work' ? `working · ${b.profile.job}` : b.retiring ? 'heading in' : b.profile.job;
+    const restricted = (this.environment?.restrictedVisibility || 0) > 0.45;
+    const state = b.state === 'tow-response' ? 'responding to your tow call' : b.state === 'tow-alongside' ? 'passing a tow line' : b.state === 'shelter-run' ? `making for ${b.shelter.name}` : b.state === 'sheltered' ? `weathered in at ${b.shelter.name}` : b.state === 'work' ? `working · ${b.profile.job}` : restricted ? 'making way slow · restricted visibility' : b.retiring ? 'heading in' : b.profile.job;
     this.fx.game.toast(`${b.profile.callsign} · ${b.profile.operator}`, state, 2.8);
   }
   updateWorkingDetails(b, t) {
-    const h = this.environment?.hour ?? 12, storm = this.environment?.values.storm || 0;
-    const night = h < 6.1 || h > 19.2, distress = b.collision.active && b.collision.stage === 'disabled'; if (b.navLights) b.navLights.visible = b.active && (night || storm > 0.42 || distress);
-    if (b.deckLight) b.deckLight.intensity = distress ? (Math.floor(t * 2.4) % 2 ? 42 : 4) : b.navLights.visible ? (night ? 28 : 12) : 0;
+    const h = this.environment?.hour ?? 12, storm = this.environment?.values.storm || 0, restricted = this.environment?.restrictedVisibility || 0;
+    const night = h < 6.1 || h > 19.2, distress = b.collision.active && b.collision.stage === 'disabled'; if (b.navLights) b.navLights.visible = b.active && (night || storm > 0.42 || restricted > 0.25 || distress);
+    if (b.deckLight) b.deckLight.intensity = distress ? (Math.floor(t * 2.4) % 2 ? 42 : 4) : b.navLights.visible ? (night ? 28 : restricted > 0.25 ? 16 : 12) : 0;
     if (b.searchRig) {
-      const on = b.active && (night || storm > 0.58), patrol = b.profile.id === 'fwc-27'; b.searchRig.visible = on; b.searchBeam.visible = on;
+      const on = b.active && (night || storm > 0.58 || restricted > 0.68), patrol = b.profile.id === 'fwc-27'; b.searchRig.visible = on; b.searchBeam.visible = on;
       b.searchLight.intensity = on ? (patrol ? 720 : 360) * Math.max(0.5, 1 - storm * 0.28) : 0;
       const scan = patrol ? Math.sin(t * 0.43) * 0.34 + Math.sin(t * 0.17 + 1.2) * 0.1 : Math.sin(t * 0.21 + 0.7) * 0.055;
       b.searchRig.rotation.y = scan;
@@ -689,6 +690,8 @@ export class Traffic {
       else if (b.state === 'tow-alongside') text = 'Twenty-seven is alongside the tower boat. Passing the tow line now.';
       else if (b.state === 'shelter-run') text = `${P.callsign} is making for ${b.shelter.name}. Keep the approach open and pass astern.`;
       else if (b.state === 'sheltered') text = `${P.callsign} is secured at ${b.shelter.name}. Staying put until the wind comes down.`;
+      else if ((this.environment?.restrictedVisibility || 0) > 0.45 && P.id === 'net-nine' && working) text = 'Net Nine is fishing in restricted visibility. Gear is down; listen for one prolonged and two short.';
+      else if ((this.environment?.restrictedVisibility || 0) > 0.45 && b.kind !== 'canoe') text = `${P.callsign} is making way slow in restricted visibility. One prolonged blast on the next interval.`;
       else if (P.id === 'net-nine') text = working ? 'Net is in the water on the outside bank. Pass my stern and keep your wash off it.' : 'Net Nine is moving to the next set. I will hold the narrow bend.';
       else if (P.id === 'marsh-ice') text = 'Cold boxes aboard and running back toward the camps. I am taking the next blind turn slow.';
       else if (P.id === 'bay-star') text = 'Guide boat has two passengers aboard. We will idle through the rookery water.';
@@ -713,7 +716,7 @@ export class Traffic {
     return wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, 0.22, x, z, t);
   }
   snapshot() {
-    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled }));
+    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, weatherSpeedScale: b.weatherSpeedScale, fogSignalIn: b.fogHornT, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled }));
   }
   // ---- anglers ----
   anglerAt(ci, cj) {
@@ -750,6 +753,8 @@ export class Traffic {
     for (const b of this.boats) {
       b.yellT = Math.max(0, b.yellT - dt); b.hornT = Math.max(0, b.hornT - dt); b.greetT = Math.max(0, b.greetT - dt); b.wakeT = Math.max(0, b.wakeT - dt);
       const weather = this.environment?.values, storm = weather?.storm || 0;
+      const fogRisk = this.environment?.restrictedVisibility || 0;
+      if (fogRisk > 0.3) b.fogHornT = Math.max(0, b.fogHornT - dt); else b.fogHornT = 6 + b.fogSignalIndex * 16;
       const operate = this.shouldOperate(b), unsafe = this.stormUnsafe(b), assisting = this.assist.active && this.assist.boat === b;
       if (!b.active) {
         b.mesh.visible = false; if (b.searchBeam) b.searchBeam.visible = false;
@@ -794,7 +799,7 @@ export class Traffic {
         let sc = Math.min(3, depth0) * 0.72 + Math.min(4, depth) + Math.min(4, depth2) * 0.6 - Math.abs(da - (b.state === 'work' ? 0 : b.routeBias)) * 0.72;
         if (depth0 < 0.56) sc -= 22 + (0.56 - depth0) * 26;
         if (depth < 0.62) sc -= 14 + (0.62 - depth) * 18; if (depth2 < 0.48) sc -= 7 + (0.48 - depth2) * 10;
-        const dp = Math.hypot(px - bx, pz - bz); if (!assisting && dp < 22) sc -= (22 - dp) * 0.5;
+        const dp = Math.hypot(px - bx, pz - bz), playerClear = 22 + fogRisk * 22; if (!assisting && dp < playerClear) sc -= (playerClear - dp) * (0.5 + fogRisk * 0.24);
         if (b.state === 'tow-response') {
           const A = this.assist, pd = Math.hypot(px - A.targetX, pz - A.targetZ), desired = Math.atan2(-(A.targetX - b.x), -(A.targetZ - b.z));
           sc += (A.distance - pd) * 0.34 - Math.abs(wrapAngle(h - desired)) * 2.1;
@@ -805,14 +810,17 @@ export class Traffic {
         } else if (b.state === 'sheltered') sc -= Math.abs(wrapAngle(h - b.shelter.heading)) * 3.4;
         // Prefer probes that increase separation so an off-duty boat visibly runs out of the local channel.
         if (b.retiring) sc += (dp - d) * 0.16;
-        for (const o of this.boats) if (o !== b && o.active) { const dd = Math.hypot(px - o.x, pz - o.z); if (dd < 18) sc -= (18 - dd) * 0.4; }
+        const trafficClear = 18 + fogRisk * 20;
+        for (const o of this.boats) if (o !== b && o.active) { const dd = Math.hypot(px - o.x, pz - o.z); if (dd < trafficClear) sc -= (trafficClear - dd) * (0.4 + fogRisk * 0.22); }
         if (sc > bs) { bs = sc; best = da; }
       }
       const fx0 = -Math.sin(b.heading), fz0 = -Math.cos(b.heading);
       const sea = weather?.sea || 0;
-      b.weatherSpeedScale = 1 - Math.min(b.retiring ? 0.24 : 0.46, sea * 0.15 + storm * 0.12);
+      const seaScale = 1 - Math.min(b.retiring ? 0.24 : 0.46, sea * 0.15 + storm * 0.12);
+      b.weatherSpeedScale = seaScale * (1 - fogRisk * (b.kind === 'canoe' ? 0.2 : 0.44));
       let cruise = (b.collision.active || b.state === 'tow-alongside' || b.state === 'sheltered' ? 0 : b.state === 'tow-response' ? b.max * 0.82 : b.state === 'shelter-run' ? b.max * (b.kind === 'canoe' ? 0.72 : 0.82) : b.retiring ? b.max * 0.92 : b.state === 'work' ? (b.kind === 'canoe' ? 0.08 : 0.18) : b.max * b.profile.cruise) * b.weatherSpeedScale;
-      let want = cruise * (bs < 1.5 ? 0.45 : 1); if (d < 30 && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5; // slow for the player ahead
+      const playerAheadRange = 30 + fogRisk * 32;
+      let want = cruise * (bs < 1.5 ? 0.45 : 1); if (d < playerAheadRange && (fx0 * (bx - b.x) + fz0 * (bz - b.z)) > 0) want *= 0.5 - fogRisk * 0.14; // slow for the player ahead
       if (b.state === 'shelter-run') { const desired = Math.atan2(-(b.shelter.x - b.x), -(b.shelter.z - b.z)), alignment = 1 - Math.min(1, Math.abs(wrapAngle(desired - b.heading)) / 1.25); want *= 0.04 + alignment * 0.96; }
       const playerWake = d < 100 ? wakeSampleAt(bx, bz, P.heading, P.speed, 18, 0.2, b.x, b.z, t) : 0;
       if (b.kind === 'canoe' && d < 72 && P.speed > 4 && Math.abs(playerWake) > 0.012) {
@@ -859,6 +867,13 @@ export class Traffic {
       this.updateWorkingDetails(b, t); this.identify(b, d, P.speed);
       // the closest running motor is what you hear
       if (!b.collision.active && b.kind !== 'air' && b.kind !== 'canoe' && d < 130) { const l = (0.3 + 0.7 * b.speed / b.max) * (1 - d / 130); if (l > ob) { ob = l; obp = b.kind === 'cruiser' ? 0.8 : b.kind === 'skiff' ? 1.25 : 1; } }
+      // Rule 35(a): a power-driven vessel making way in restricted visibility sounds one prolonged blast.
+      const fogFishing = fogRisk > 0.45 && !b.collision.active && !assisting && b.profile.id === 'net-nine' && b.state === 'work';
+      const fogMakingWay = fogRisk > 0.45 && !b.collision.active && !assisting && b.kind !== 'canoe' && !fogFishing && b.state !== 'sheltered' && b.state !== 'tow-alongside' && b.speed > 0.75;
+      if ((fogMakingWay || fogFishing) && d < 340 && b.fogHornT <= 0) {
+        b.fogHornT = 108 + this.rand() * 11; const volume = 0.5 * fogRisk * Math.max(0.08, 1 - d / 360);
+        if (fogFishing) this.fx.audio.fogHornFishing(volume); else this.fx.audio.fogHorn(volume);
+      }
       // horn at a boat coming straight at them
       if (!assisting && b.kind !== 'canoe' && d < 50 && b.hornT <= 0 && P.speed > 6) { const dd = d || 1, cx = (b.x - bx) / dd, cz = (b.z - bz) / dd; if (pf.x * cx + pf.y * cz > 0.9) { b.hornT = 12; this.fx.audio.horn(0.35 * (1 - d / 60)); } }
       if (d < 70) { b.obs.ax = b.x + fx * 2.2; b.obs.az = b.z + fz * 2.2; b.obs.bx = b.x - fx * 2.2; b.obs.bz = b.z - fz * 2.2; this.obs.push(b.obs); }

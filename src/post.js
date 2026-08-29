@@ -56,12 +56,12 @@ export class Pipeline {
       uniforms: {
         tColor: { value: this.compRT.texture }, tDepth: { value: depthB }, tBloom: { value: this.bloomA.texture },
         near: { value: camera.near }, far: { value: camera.far }, exposure: { value: 1.0 },
-        fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, bloomAmt: { value: 0.12 },
+        fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, fogMax: { value: 0.6 }, bloomAmt: { value: 0.12 },
         invProj: { value: new THREE.Matrix4() }, camMat: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       },
       vertexShader: QUAD_VS,
       fragmentShader: `
-        uniform sampler2D tColor, tDepth, tBloom; uniform float near, far, exposure, fogDensity, bloomAmt; uniform vec3 fogColor, sunDir;
+        uniform sampler2D tColor, tDepth, tBloom; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt; uniform vec3 fogColor, sunDir;
         uniform mat4 invProj, camMat; varying vec2 vUv;
         vec3 aces(vec3 x) { const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14; return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0); }
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
@@ -76,7 +76,7 @@ export class Pipeline {
             float z = linZ(d);
             float dist = z;
             float f = 1.0 - exp(-dist * fogDensity);
-            f = clamp(f, 0.0, 0.6);
+            f = clamp(f, 0.0, fogMax);
             c = mix(c, fc * 1.05, f);
           }
           c += texture2D(tBloom, vUv).rgb * bloomAmt;

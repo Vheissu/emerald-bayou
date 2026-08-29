@@ -5,6 +5,7 @@ const RECENT_LIMIT = 256;
 
 const WEATHER_CALLS = {
   fair: ['MARINE WX-3', 'Small-craft advisory cancelled. Storm water may still be high in the back cuts.'],
+  fog: ['MARINE WX-3', 'Dense fog advisory for the backcountry. Visibility near one-quarter mile. Reduce to safe speed and sound one prolonged blast while making way.'],
   overcast: ['MARINE WX-3', 'Pressure falling across the backcountry. Patchy rain and visibility below two miles.'],
   squall: ['MARINE WX-3', 'Fast squall crossing west to east. Gusts near thirty knots on open water.'],
   thunderstorm: ['MARINE WX-3', 'Severe thunderstorm warning. Frequent lightning and waterspouts possible in the river mouths.'],
