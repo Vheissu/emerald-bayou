@@ -1,11 +1,44 @@
 import * as THREE from 'three';
 import { lunarAgeAt, lunarIllumination, lunarPhaseAt, lunarPhaseName, lunarTideRange } from './lunar.js';
+import { updateAttributePrefix } from './cache.js';
+import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
 
 const FT = 3.28084;
 const MPS_TO_MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const lerp = (a, b, t) => a + (b - a) * t;
+
+export function surfaceMistEnvelope({ hour = 12, fog = 0, rain = 0, wind = 0, storm = 0 } = {}) {
+  const dawnCooling = Math.exp(-Math.pow((hour - 6.35) / 1.75, 2));
+  const calm = 1 - smooth(5, 18, wind);
+  const weatherFog = smooth(0.0006, 0.0031, fog) * 0.88;
+  const rainCooling = smooth(0.22, 0.86, rain) * calm * (1 - smooth(0.52, 1, storm)) * 0.2;
+  return clamp(weatherFog + dawnCooling * calm * 0.58 + rainCooling);
+}
+
+// Local rain can stop before the retreating curtain has cleared the opposite horizon. Retaining a small amount of
+// atmospheric moisture lets a bow emerge during that clearing interval without inventing another weather state.
+export function rainbowMoistureStep(current = 0, rain = 0, dt = 0) {
+  const moisture = clamp(Number(current) || 0), target = smooth(0.08, 0.72, Number(rain) || 0);
+  const seconds = clamp(Number(dt) || 0, 0, 60), rate = target > moisture ? 0.65 : 0.018;
+  return clamp(target + (moisture - target) * Math.exp(-seconds * rate));
+}
+
+export function rainbowPotential({ moisture = 0, rain = 0, storm = 0, daylight = 0, sunAltitude = 0, cloudLight = 1 } = {}) {
+  const droplets = smooth(0.12, 0.52, Math.max(Number(moisture) || 0, (Number(rain) || 0) * 0.72));
+  const clearing = 1 - smooth(0.72, 0.98, Number(storm) || 0);
+  const lowSun = smooth(0.015, 0.075, Number(sunAltitude) || 0) * (1 - smooth(0.58, 0.72, Number(sunAltitude) || 0));
+  const sunBreak = smooth(0.88, 0.98, Number(cloudLight) || 0);
+  const rainVeil = 1 - smooth(0.82, 1, Number(rain) || 0);
+  return clamp(droplets * clearing * lowSun * clamp(Number(daylight) || 0) * sunBreak * rainVeil);
+}
+
+export function rainbowResponse(current = 0, target = 0, dt = 0) {
+  const from = clamp(Number(current) || 0), to = clamp(Number(target) || 0), seconds = clamp(Number(dt) || 0, 0, 60);
+  const rate = to > from ? 0.45 : 0.18;
+  return clamp(to + (from - to) * Math.exp(-seconds * rate));
+}
 
 // Wind values are metres per second. A hurricane is intentionally uncommon in the natural
 // sequence, but it is a fully simulated state rather than a cosmetic preset.
@@ -77,41 +110,36 @@ function mixedWeather(out, a, b, t) {
 
 function makeRain(count = 2200) {
   const pos = new Float32Array(count * 6);
-  const drops = [];
-  for (let i = 0; i < count; i++) drops.push({
-    x: (Math.random() - 0.5) * 100,
-    y: Math.random() * 44,
-    z: (Math.random() - 0.5) * 100,
-    speed: 25 + Math.random() * 25,
-    phase: Math.random() * 6.28,
-  });
+  const speed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const j = i * 6;
+    pos[j] = (Math.random() - 0.5) * 100; pos[j + 1] = Math.random() * 44; pos[j + 2] = (Math.random() - 0.5) * 100;
+    pos[j + 3] = pos[j]; pos[j + 4] = pos[j + 1]; pos[j + 5] = pos[j + 2]; speed[i] = 25 + Math.random() * 25;
+  }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
   geo.setDrawRange(0, 0);
   const mat = new THREE.LineBasicMaterial({ color: 0xcfe1e8, transparent: true, opacity: 0, depthWrite: false, blending: THREE.NormalBlending });
   const lines = new THREE.LineSegments(geo, mat); lines.frustumCulled = false; lines.renderOrder = 80;
-  return { count, pos, drops, geo, mat, lines };
+  return { count, pos, speed, geo, mat, lines };
 }
 
 function makeHail(count = 720) {
   const pos = new Float32Array(count * 3);
-  const stones = [];
-  for (let i = 0; i < count; i++) stones.push({
-    x: (Math.random() - 0.5) * 70,
-    y: Math.random() * 36,
-    z: (Math.random() - 0.5) * 70,
-    speed: 18 + Math.random() * 12,
-    drift: Math.random() * 6.28,
-  });
-  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setDrawRange(0, 0);
+  const speed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const j = i * 3;
+    pos[j] = (Math.random() - 0.5) * 70; pos[j + 1] = Math.random() * 36; pos[j + 2] = (Math.random() - 0.5) * 70; speed[i] = 18 + Math.random() * 12;
+  }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage)); geo.setDrawRange(0, 0);
   const mat = new THREE.PointsMaterial({ color: 0xf5fbff, size: 0.11, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false });
   const points = new THREE.Points(geo, mat); points.frustumCulled = false; points.renderOrder = 81;
-  return { count, pos, stones, geo, mat, points };
+  return { count, pos, speed, geo, mat, points };
 }
 
-class Precipitation {
-  constructor(scene) {
-    this.rain = makeRain(); this.hail = makeHail();
+export class Precipitation {
+  constructor(scene, { rain = 2200, hail = 720 } = {}) {
+    this.rain = makeRain(rain); this.hail = makeHail(hail);
     this.group = new THREE.Group(); this.group.name = 'weather'; this.group.add(this.rain.lines, this.hail.points); scene.add(this.group);
   }
   update(dt, camera, windDir, rainAmt, hailAmt, waterLevel) {
@@ -120,26 +148,26 @@ class Precipitation {
     R.geo.setDrawRange(0, rn * 2); R.mat.opacity = 0.08 + rainAmt * 0.34; R.lines.visible = rn > 0;
     const slant = 4 + rainAmt * 8;
     for (let i = 0; i < rn; i++) {
-      const d = R.drops[i]; d.y -= d.speed * dt; d.x += windDir.x * slant * dt; d.z += windDir.z * slant * dt;
-      if (d.y < 0) { d.y += 42; d.x = (Math.random() - 0.5) * 100; d.z = (Math.random() - 0.5) * 100; }
-      if (d.x > 50) d.x -= 100; else if (d.x < -50) d.x += 100;
-      if (d.z > 50) d.z -= 100; else if (d.z < -50) d.z += 100;
-      const j = i * 6, len = 0.8 + rainAmt * 1.9;
-      R.pos[j] = d.x; R.pos[j + 1] = d.y; R.pos[j + 2] = d.z;
-      R.pos[j + 3] = d.x - windDir.x * len * 0.55; R.pos[j + 4] = d.y + len; R.pos[j + 5] = d.z - windDir.z * len * 0.55;
+      const j = i * 6; let x = R.pos[j] + windDir.x * slant * dt, y = R.pos[j + 1] - R.speed[i] * dt, z = R.pos[j + 2] + windDir.z * slant * dt;
+      if (y < 0) { y += 42; x = (Math.random() - 0.5) * 100; z = (Math.random() - 0.5) * 100; }
+      if (x > 50) x -= 100; else if (x < -50) x += 100;
+      if (z > 50) z -= 100; else if (z < -50) z += 100;
+      const len = 0.8 + rainAmt * 1.9;
+      R.pos[j] = x; R.pos[j + 1] = y; R.pos[j + 2] = z;
+      R.pos[j + 3] = x - windDir.x * len * 0.55; R.pos[j + 4] = y + len; R.pos[j + 5] = z - windDir.z * len * 0.55;
     }
-    if (rn) R.geo.attributes.position.needsUpdate = true;
+    if (rn) updateAttributePrefix(R.geo.attributes.position, rn * 6);
 
     const H = this.hail, hn = Math.floor(H.count * smooth(0.05, 1, hailAmt));
     H.geo.setDrawRange(0, hn); H.mat.opacity = 0.25 + hailAmt * 0.75; H.points.visible = hn > 0;
     for (let i = 0; i < hn; i++) {
-      const s = H.stones[i]; s.y -= s.speed * dt; s.x += windDir.x * 7 * dt; s.z += windDir.z * 7 * dt;
-      if (s.y < 0) { s.y += 35; s.x = (Math.random() - 0.5) * 70; s.z = (Math.random() - 0.5) * 70; }
-      if (s.x > 35) s.x -= 70; else if (s.x < -35) s.x += 70;
-      if (s.z > 35) s.z -= 70; else if (s.z < -35) s.z += 70;
-      const j = i * 3; H.pos[j] = s.x; H.pos[j + 1] = s.y; H.pos[j + 2] = s.z;
+      const j = i * 3; let x = H.pos[j] + windDir.x * 7 * dt, y = H.pos[j + 1] - H.speed[i] * dt, z = H.pos[j + 2] + windDir.z * 7 * dt;
+      if (y < 0) { y += 35; x = (Math.random() - 0.5) * 70; z = (Math.random() - 0.5) * 70; }
+      if (x > 35) x -= 70; else if (x < -35) x += 70;
+      if (z > 35) z -= 70; else if (z < -35) z += 70;
+      H.pos[j] = x; H.pos[j + 1] = y; H.pos[j + 2] = z;
     }
-    if (hn) H.geo.attributes.position.needsUpdate = true;
+    if (hn) updateAttributePrefix(H.geo.attributes.position, hn * 3);
   }
 }
 
@@ -162,13 +190,15 @@ export class Environment {
     this.restrictedVisibility = smooth(0.00085, 0.0029, this.values.fog);
     this.remaining = Number.isFinite(savedRemaining) ? clamp(savedRemaining, 0, 600) : 95;
     this.windAngle = Number.isFinite(savedWind) ? Math.atan2(Math.sin(savedWind), Math.cos(savedWind)) : 0.7;
-    this.gust = 1; this.waterLevel = 0; this.tideRate = 0; this.syncClockAndTide(); this.persistT = 10;
-    this.precip = new Precipitation(this.fxScene);
+    this.gust = 1; this.waterLevel = 0; this.tideRate = 0; this.daylight = 0; this.night = 1; this.syncClockAndTide(); this.persistT = 10;
+    this.rainbowMoisture = smooth(0.08, 0.72, this.values.rain); this.rainbow = 0; this.rainbowOverride = null;
+    this.navVisibility = { port: true, starboard: true, stern: true }; this.hornCooldown = 0;
+    this.precip = new Precipitation(this.fxScene, this.effectBudget);
     this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
-    this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.hailKick = 0;
+    this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
     this.makeLightning(); this.makeBoatLights(); this.makeSettlementLights();
     this.el = document.getElementById('worldState'); this.alertEl = document.getElementById('weatherAlert'); this.alertT = 0; this.hudT = 0;
     this.keyHandler = (e) => this.onKey(e); window.addEventListener('keydown', this.keyHandler);
@@ -184,9 +214,10 @@ export class Environment {
 
   makeBoatLights() {
     const g = new THREE.Group(); g.name = 'navigation-lights';
-    this.port = addBulb(g, 0xff2418, 1.03, 0.78, -1.55, 0.06);
-    this.starboard = addBulb(g, 0x2cff7c, -1.03, 0.78, -1.55, 0.06);
-    this.stern = addBulb(g, 0xffffff, 0, 2.1, 1.8, 0.07);
+    const port = PLAYER_NAV_LIGHT_LAYOUT.port, starboard = PLAYER_NAV_LIGHT_LAYOUT.starboard, stern = PLAYER_NAV_LIGHT_LAYOUT.stern;
+    this.port = addBulb(g, 0xff2418, port.x, port.y, port.z, 0.06);
+    this.starboard = addBulb(g, 0x2cff7c, starboard.x, starboard.y, starboard.z, 0.06);
+    this.stern = addBulb(g, 0xffffff, stern.x, stern.y, stern.z, 0.07);
     this.cockpitLight = new THREE.PointLight(0xffd69a, 0, 13, 2); this.cockpitLight.position.set(0, 1.7, 0.8); g.add(this.cockpitLight);
     const spot = new THREE.SpotLight(0xfff3dc, 0, 110, 0.31, 0.58, 2); spot.position.set(0, 1.15, -1.45);
     const target = new THREE.Object3D(); target.position.set(0, 0.1, -55); spot.target = target; g.add(spot, target); this.spotlight = spot; this.spotOn = false;
@@ -208,6 +239,13 @@ export class Environment {
     if (e.repeat) return;
     if (e.code === 'KeyL' && this.game.playing && !this.game.paused && !this.game.menuOpen && !this.game.mapOpen) {
       this.spotOn = !this.spotOn; this.game.toast(`Spotlight ${this.spotOn ? 'on' : 'off'}`, this.spotOn ? 'L sweeps the channel ahead' : '', 1.3);
+    }
+    if (e.code === 'KeyH' && this.hornCooldown <= 0 && this.game.playing && !this.game.paused && !this.game.menuOpen && !this.game.mapOpen) {
+      const prolonged = this.restrictedVisibility > 0.45;
+      if (prolonged) { this.audio.fogHorn(0.34); this.game.toast('Prolonged blast', 'Restricted visibility · four to six seconds', 2.2); }
+      else this.audio.horn(0.38);
+      this.hornCooldown = prolonged ? 5.1 : 0.65;
+      this.traffic?.signalPlayerHorn(prolonged);
     }
     // Test hooks are keys as well as methods on window.__dbg.environment. They make every extreme state inspectable.
     if (import.meta.env.DEV && e.code === 'F7') { e.preventDefault(); this.setHour((this.hour + 2) % 24); }
@@ -248,6 +286,15 @@ export class Environment {
   setHour(hour) {
     this.minutes = (this.day - 1) * 1440 + ((hour % 24) + 24) % 24 * 60;
     this.syncClockAndTide(); this.persistState(true);
+  }
+  setRainbow(value = null) {
+    const n = Number(value); this.rainbowOverride = value === null || value === undefined || !Number.isFinite(n) ? null : clamp(n);
+    if (this.rainbowOverride !== null) this.rainbow = this.rainbowOverride;
+    this.sky.uniforms.rainbow.value = this.rainbow;
+    return this.rainbowOverride;
+  }
+  rainbowSnapshot() {
+    return { intensity: this.rainbow, moisture: this.rainbowMoisture, forced: this.rainbowOverride !== null };
   }
   setWeather(key, instant = false, announce = true) {
     if (!WEATHER[key]) return;
@@ -301,19 +348,12 @@ export class Environment {
       p[i * 3] = px; p[i * 3 + 1] = y0 + k * top; p[i * 3 + 2] = pz;
     }
     this.bolt.geometry.attributes.position.needsUpdate = true; this.bolt.material.opacity = 1; this.bolt.visible = true; this.boltT = 0.14;
-    this.flash = 1; this.thunderT = dist / 343; this.lightningT = lerp(7, 28, Math.random()) / Math.max(0.35, this.values.lightning);
+    this.flash = 1; this.thunderT = dist / 343; this.thunderX = x; this.thunderZ = z; this.lightningT = lerp(7, 28, Math.random()) / Math.max(0.35, this.values.lightning);
     if (this.onLightning) this.onLightning({ x, z, y: y0, distance: dist, water: ground < this.waterLevel + 0.12 });
   }
 
   thunder(strength = 1) {
-    const ctx = this.audio && this.audio.ctx; if (!ctx) return;
-    const dur = 2.8, buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate), data = buffer.getChannelData(0);
-    let brown = 0;
-    for (let i = 0; i < data.length; i++) { brown = brown * 0.985 + (Math.random() * 2 - 1) * 0.12; const t = i / data.length; data[i] = brown * Math.exp(-t * 4.2) * (0.7 + 0.3 * Math.sin(t * 51)); }
-    const src = ctx.createBufferSource(); src.buffer = buffer;
-    const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = 210; low.Q.value = 0.7;
-    const gain = ctx.createGain(); const now = ctx.currentTime; gain.gain.setValueAtTime(0.0001, now); gain.gain.exponentialRampToValueAtTime(0.32 * strength, now + 0.05); gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-    src.connect(low).connect(gain).connect(ctx.destination); src.start();
+    this.audio?.thunder?.(strength, this.thunderX, this.thunderZ);
   }
 
   updateSettlementLights(dt, night) {
@@ -346,6 +386,7 @@ export class Environment {
   }
 
   update(dt, realTime, camera, paused = false) {
+    this.hornCooldown = Math.max(0, this.hornCooldown - dt);
     const step = paused ? 0 : dt;
     this.minutes += step * this.minutesPerSecond;
     if (step) {
@@ -373,6 +414,7 @@ export class Environment {
     const lunar = solar - this.lunarPhase;
     this.moonDir.set(-Math.cos(lunar) * 0.86, Math.sin(lunar), -0.42 * Math.cos(this.lunarPhase)).normalize();
     const daylight = smooth(-0.08, 0.16, sunY), night = 1 - smooth(-0.04, 0.18, sunY);
+    this.daylight = daylight; this.night = night;
     const horizon = 1 - smooth(0.04, 0.52, Math.max(0, sunY));
     const stormShade = 1 - V.storm * 0.7;
     const moonLight = night * smooth(0.01, 0.68, this.moonDir.y) * lerp(0, 0.14, Math.pow(this.moonIllumination, 0.72)) * lerp(1, 0.34, V.storm);
@@ -380,6 +422,9 @@ export class Environment {
     const cloudZ = this.phys.pos.y + this.windDir.z * realTime * V.wind * 14;
     const overheadCloud = clamp(0.5 + Math.sin(cloudX * 0.0017 + cloudZ * 0.0008) * 0.28 + Math.sin(cloudX * -0.0006 + cloudZ * 0.0021 + 1.7) * 0.18);
     this.cloudLight = 1 - smooth(V.cloud, V.cloud + 0.2, overheadCloud) * lerp(0.12, 0.045, V.storm);
+    this.rainbowMoisture = rainbowMoistureStep(this.rainbowMoisture, V.rain, step);
+    const rainbowTarget = this.rainbowOverride ?? rainbowPotential({ moisture: this.rainbowMoisture, rain: V.rain, storm: V.storm, daylight, sunAltitude: this.sunDir.y, cloudLight: this.cloudLight });
+    this.rainbow = rainbowResponse(this.rainbow, rainbowTarget, step);
     const sunBase = daylight * smooth(-0.01, 0.055, sunY) * lerp(3.15, 2.6, horizon) * stormShade * this.cloudLight;
     const useMoon = moonLight > sunBase;
     this.lightDir.copy(useMoon ? this.moonDir : this.sunDir);
@@ -404,9 +449,9 @@ export class Environment {
     this.sun.position.copy(this.lightDir).multiplyScalar(420).add(this.sun.target.position); this.sun.target.updateMatrixWorld();
     this.sky.uniforms.sunDir.value.copy(this.sunDir); this.sky.uniforms.moonDir.value.copy(this.moonDir);
     this.sky.uniforms.lightDir.value.copy(this.lightDir); this.sky.uniforms.windDir.value.set(this.windDir.x, this.windDir.z); this.sky.uniforms.windSpeed.value = V.wind;
-    this.sky.uniforms.daylight.value = daylight; this.sky.uniforms.storm.value = V.storm; this.sky.uniforms.flash.value = this.flash; this.sky.uniforms.cover.value = V.cloud;
+    this.sky.uniforms.daylight.value = daylight; this.sky.uniforms.storm.value = V.storm; this.sky.uniforms.flash.value = this.flash; this.sky.uniforms.cover.value = V.cloud; this.sky.uniforms.rainbow.value = this.rainbow;
 
-    this.water.setConditions({ level: this.waterLevel, seaState: V.sea, windAngle: this.windAngle, rain: V.rain, wind: V.wind });
+    this.water.setConditions({ level: this.waterLevel, seaState: V.sea, windAngle: this.windAngle, rain: V.rain, hail: V.hail, wind: V.wind });
     this.water.uniforms.sunDir.value.copy(this.lightDir);
     this.water.uniforms.sunIntensity.value = Math.max(0.025, useMoon ? moonLight * 2.1 : daylight * 1.55 * stormShade) + this.flash * 2;
     this.water.uniforms.sunColor.value.copy(this.sun.color);
@@ -422,10 +467,21 @@ export class Environment {
     fog.fogMax.value = lerp(0.6, 0.94, this.restrictedVisibility);
     fog.bloomAmt.value = lerp(0.18, 0.1, daylight) + V.rain * 0.03 + this.restrictedVisibility * (this.spotOn ? 0.065 : 0.022);
     fog.sunDir.value.copy(this.lightDir);
+    fog.mistAmount.value = surfaceMistEnvelope({ hour: this.hour, fog: V.fog, rain: V.rain, wind: V.wind * this.gust, storm: V.storm });
+    fog.mistLevel.value = this.waterLevel;
+    fog.mistHeight.value = lerp(2.35, 4.1, this.restrictedVisibility) + V.rain * 0.35;
+    fog.mistTime.value = realTime;
+    fog.mistWind.value.set(this.windDir.x, this.windDir.z).multiplyScalar(V.wind * 0.12);
 
     this.precip.update(dt, camera, this.windDir, V.rain, V.hail, this.waterLevel);
     if (this.audio && this.audio.weather) this.audio.weather(V.wind * this.gust, V.rain, night, V.storm);
-    this.nav.visible = night > 0.03 || this.restrictedVisibility > 0.25 || this.spotOn; this.cockpitLight.intensity = night * 15; this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) : 0;
+    this.nav.visible = night > 0.03 || this.restrictedVisibility > 0.25 || this.spotOn;
+    if (this.nav.visible) {
+      const dx = camera.x - this.phys.pos.x, dz = camera.z - this.phys.pos.y, c = Math.cos(this.phys.heading), s = Math.sin(this.phys.heading);
+      const visible = navigationLightVisibility(dx * c - dz * s, dx * s + dz * c, this.navVisibility);
+      this.port.visible = visible.port; this.starboard.visible = visible.starboard; this.stern.visible = visible.stern;
+    }
+    this.cockpitLight.intensity = night * 15; this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) : 0;
     this.updateSettlementLights(dt, night);
 
     if (this.alertT > 0) { this.alertT -= dt; if (this.alertT <= 0 && this.alertEl) this.alertEl.classList.remove('on'); }

@@ -20,6 +20,24 @@ test('coordinated pursuit schedules each pooled backup once and keeps the fleet 
   e.pursuit = 200; director.schedulePatrolBackups(e, 5, 0); assert.deepEqual(deployed, [0, 1]);
 });
 
+test('five-star aviation schedules once and waits on unsafe weather', () => {
+  const director = Object.create(EncounterDirector.prototype), deployed = [];
+  director.environment = { values: { wind: 12, storm: 0.25 }, gust: 1 };
+  director.deployPatrolAviation = (e, t) => { deployed.push(t); e.aviationActive = true; return true; };
+  const e = { pursuit: 0, aviationRequested: false, aviationDue: Infinity, aviationActive: false };
+
+  director.schedulePatrolAviation(e, 4, 1);
+  assert.equal(e.aviationRequested, false); assert.deepEqual(deployed, []);
+  director.schedulePatrolAviation(e, 5, 1);
+  assert.equal(e.aviationRequested, true); assert.equal(e.aviationDue, 9.5); assert.deepEqual(deployed, []);
+  e.pursuit = 9.49; director.schedulePatrolAviation(e, 5, 2); assert.deepEqual(deployed, []);
+  director.environment.values.wind = 26; e.pursuit = 9.5; director.schedulePatrolAviation(e, 5, 3);
+  assert.deepEqual(deployed, []); assert.equal(e.aviationDue, 12);
+  director.environment.values.wind = 10; e.pursuit = 12; director.schedulePatrolAviation(e, 5, 4);
+  assert.deepEqual(deployed, [4]); assert.equal(e.aviationActive, true);
+  e.pursuit = 100; director.schedulePatrolAviation(e, 5, 5); assert.deepEqual(deployed, [4]);
+});
+
 test('the nearest active patrol unit holds the pursuit line', () => {
   const director = Object.create(EncounterDirector.prototype);
   director.phys = { pos: { x: 0, y: 0 } };

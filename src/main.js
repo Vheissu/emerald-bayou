@@ -4,7 +4,7 @@ import { Sky } from './sky.js';
 import { Water } from './water.js';
 import { Vegetation } from './vegetation.js';
 import { buildTower, buildDock } from './tower.js';
-import { buildAirboat, AirboatPhysics, loadDriver } from './airboat.js';
+import { airboatSprayExposure, buildAirboat, AirboatPhysics, loadDriver, updateAirboatWetness } from './airboat.js';
 import { Birds, Waders, Manatees, Gators } from './wildlife.js';
 import { SkiffAI } from './npc.js';
 import { Spray, Plume } from './particles.js';
@@ -21,7 +21,7 @@ import { WorldMap } from './worldmap.js';
 import { Life } from './life.js';
 import { pickSite, buildSite } from './sites.js';
 import { person, canoe } from './folk.js';
-import { configureModelLoading, loadGeo, loadModel, modelBox, modelLoadingStats, preload, releaseDeferredModels, spawn } from './models.js';
+import { configureModelLoading, loadGeo, loadModel, modelBox, modelLoadingStats, preload, releaseDeferredModels, reportModelFramePressure, spawn } from './models.js';
 import { Environment } from './environment.js';
 import { EncounterDirector } from './encounters.js';
 import { BoatCondition } from './condition.js';
@@ -40,6 +40,9 @@ import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel,
 import { startupPlan, startupTerrainReady } from './startup.js';
 import { FieldDiscoveryDirector } from './discoveries.js';
 import { NavigationAids } from './navigationaids.js';
+import { DolphinPod } from './dolphins.js';
+import { Fishing } from './fishing.js';
+import { NocturnalWetland } from './nocturnal.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -73,7 +76,14 @@ const SUN_DIR = new THREE.Vector3(-0.42, 0.72, -0.55).normalize();
 
 async function init() {
   const startup = startupPlan(renderProfile.id);
-  configureModelLoading({ deferOptional: startup.deferOptionalModels, concurrency: startup.modelConcurrency });
+  configureModelLoading({
+    deferOptional: startup.deferOptionalModels,
+    concurrency: startup.modelConcurrency,
+    batchDelayMs: startup.modelBatchDelayMs,
+    idleTimeoutMs: startup.modelIdleTimeoutMs,
+    pressureMaxWaitMs: startup.modelPressureMaxWaitMs,
+    disabled: startup.disabledModels,
+  });
   // ---- sky & lighting ----
   const sky = new Sky(SUN_DIR);
   scene.add(sky.mesh);
@@ -126,15 +136,23 @@ async function init() {
 
   // ---- vegetation ----
   const veg = new Vegetation(terrain, exclusions);
-  // the Meshy grass clumps become instanced kinds before the first chunk is grown; the hero tree gets the wind
-  await preload(['grass_a', 'grass_d']);
-  for (const name of ['grass_a', 'grass_d']) { const r = await loadGeo(name); if (r) veg.addSolid(r.geo, r.mat, r.height); } // b and c stay at ~5.5k tris a clump (separate blades will not collapse), too heavy to instance
+  // Cinematic keeps the full pre-title warm-up. Balanced installs the same clumps after play begins and retrofits
+  // already-built near chunks one per frame; the two old-hardware tiers retain the procedural grass without ever
+  // downloading or decoding these optional meshes.
+  const solidGrassNames = ['grass_a', 'grass_d']; // b and c stay at ~5.5k tris a clump, too heavy to instance
+  const installSolidGrass = async (blocking = false) => {
+    if (blocking) await preload(solidGrassNames);
+    const resources = (await Promise.all(solidGrassNames.map(name => loadGeo(name, { releaseSource: true })))).filter(Boolean);
+    if (resources.length) veg.addSolids(resources);
+  };
+  if (startup.solidGrass === 'blocking') await installSolidGrass(true);
+  else if (startup.solidGrass === 'deferred') installSolidGrass().catch(error => console.warn('grass models failed to load', error));
   loadModel('tree_c').then(root => { const f = modelBox('tree_c'); if (root && f) root.traverse(o => { if (o.isMesh) veg.windMat(o.material, f.box.min.y, f.box.max.y, f.scale, 0.28); }); });
 
   await new Promise(r => setTimeout(r, 10));
 
   // ---- boat ----
-  const boat = buildAirboat();
+  const boat = buildAirboat({ dynamicWetness: true });
   scene.add(boat.group);
   loadDriver(boat.group).catch(e => console.warn('driver model failed to load', e));
   const phys = new AirboatPhysics(terrain, startX, startZ, 0);
@@ -166,12 +184,13 @@ async function init() {
   for (const g of gators.list) scene.add(g.mesh);
 
   // ---- fx ----
-  const spray = new Spray(12000);
-  const plume = new Plume(2600);
+  const spray = new Spray(startup.effectBudget.spray);
+  const plume = new Plume(startup.effectBudget.plume);
   fxScene.add(plume.mesh, spray.points);
 
   // ---- post ----
   const pipeline = new Pipeline(renderer, camera, renderProfile);
+  pipeline.grade.material.uniforms.tNoise.value = groundTex.noise;
   pipeline.grade.material.uniforms.sunDir.value.copy(SUN_DIR);
   pipeline.reflTexture = water.reflRT.texture;
   water.uniforms.tRefr.value = pipeline.sceneRT.texture;
@@ -194,16 +213,16 @@ async function init() {
   game.paused = true; // loading and the title screen are presentation states, not unobserved play time
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
-  const life = new Life({ terrain, scene, water, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
+  const life = new Life({ terrain, scene, water, camera, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
   const playerWater = (x, z, t) => water.waveHeight(x, z, t) + life.traffic.wakeHeightAt(x, z, t);
   world.fx = { plume, spray, audio, fish: life.fish, playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) }; world.onShot = (x, z) => { waders.flushNear && waders.flushNear(x, z, 140); };
   birds.audio = audio; gators.audio = audio;
   gators.onCharge = (g) => game.gatorCharge(g);
   gators.onSlide = (g, d) => { game.bounties.event('spook', 1); };
   gators.onSplash = (x, z, sc) => { for (let i = 0; i < 14; i++) plume.emit(x + jitter() * 1.2, 0.1, z + jitter() * 1.2, jitter() * 2, 0.8 + Math.random() * 1.8, jitter() * 2, 0.2 + Math.random() * 0.25, 1.0, 0.6 + Math.random() * 0.4, 0.3); for (let i = 0; i < 40; i++) spray.emit(x + jitter() * 1.2, 0.05, z + jitter() * 1.2, jitter() * 3, 1 + Math.random() * 2.5, jitter() * 3, 0.015 + Math.random() * 0.03, 0.4 + Math.random() * 0.4, 0.6); audio.splash(0.5 * sc); };
-  waders.onFlush = (w, d) => { game.bounties.event('flush', 1); if (Math.random() < 0.5) audio.squawk(0.25 * Math.max(0, 1 - d / 40)); };
-  const environment = new Environment({ scene, fxScene, camera, terrain, world, water, sky, sun, hemi, pipeline, wind, boat: boat.group, audio, game, phys, sunDir: SUN_DIR });
-  life.traffic.environment = environment;
+  waders.onFlush = (w, d) => { game.bounties.event('flush', 1); if (Math.random() < 0.5) audio.squawk(0.25 * Math.max(0, 1 - d / 40), w.x, w.z); };
+  const environment = new Environment({ scene, fxScene, camera, terrain, world, water, sky, sun, hemi, pipeline, wind, boat: boat.group, audio, game, phys, sunDir: SUN_DIR, effectBudget: startup.effectBudget });
+  life.traffic.environment = environment; environment.traffic = life.traffic;
   const currents = new CurrentField({ fxScene, terrain, water, environment, phys, game });
   environment.currentField = currents; life.currents = currents; life.fx.currents = currents; world.currents = currents; world.fx.currents = currents; skiff.currents = currents;
   const reputation = new Reputation({ game, environment, audio }); game.reputation = reputation;
@@ -216,7 +235,7 @@ async function init() {
   const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   environment.onLightning = strike => hazards.lightning(strike);
-  const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio });
+  const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio, currents, phys, terrain });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
   ecology.radio = radio;
   condition.radio = radio; life.traffic.radio = radio;
@@ -228,6 +247,11 @@ async function init() {
   const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
   game.discoveries = discoveries;
   const navigationAids = new NavigationAids({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition });
+  const dolphins = new DolphinPod({ scene, terrain, world, water, phys, game, audio, environment, regions, plume, spray, law, reputation, radio, encounters, incidents, story, aftermath });
+  game.dolphins = dolphins;
+  const fishing = new Fishing({ scene, boat: boat.group, terrain, world, water, phys, game, audio, environment, currents, regions, life });
+  game.fishing = fishing;
+  const nocturnal = new NocturnalWetland({ scene, terrain, world, phys, environment, regions, audio, profile: renderProfile });
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
     const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
     const addMaterial = material => {
@@ -251,6 +275,9 @@ async function init() {
   } : null;
   const debugResourceSnapshot = import.meta.env.DEV ? () => ({
     renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length },
+    audio: audio.spatialStats(),
+    proceduralSurfaces: TEX.sharedSurfaceTextureStats(),
+    sky: sky.resourceStats(),
     graph: debugSceneGraphStats(),
     terrain: terrain.memoryStats(),
     minimap: minimap.memoryStats(),
@@ -258,8 +285,10 @@ async function init() {
       waders: debugTreeResources(waders.list.map(w => w.mesh)),
       manatees: debugTreeResources(manatees.list.map(m => m.mesh)),
       gators: debugTreeResources(gators.list.map(g => g.mesh)),
+      dolphins: dolphins.resourceStats(),
     },
     stormRecovery: { sites: aftermath.sites.length, rigs: aftermath.rigs.size, disposed: { ...aftermath.disposedResources } },
+    pursuit: encounters.pursuitSnapshot(),
     livingWorld: {
       debris: { live: life.debris.live.size, cachedCells: life.debris.cells.size, cacheEvictions: life.debris.cacheEvictions },
       anchoredAnglers: { live: life.traffic.liveAnglers.size, cachedCells: life.traffic.anglerCells.size, cacheEvictions: life.traffic.anglerCacheEvictions },
@@ -267,11 +296,25 @@ async function init() {
       fishFallbackReleased: life.fish.fallbackReleased,
       fieldDiscoveries: discoveries.resourceStats(),
       navigationAids: navigationAids.resourceStats(),
+      fishing: fishing.resourceStats(),
+      nocturnalWetland: nocturnal.resourceStats(),
+      feedingActivity: ecology.feedingSnapshot(),
     },
     chart: worldMap.memoryStats(),
     models: modelLoadingStats(),
+    effects: {
+      spray: { active: spray.count, capacity: spray.max },
+      plume: { active: plume.count, capacity: plume.max },
+      rain: { active: environment.precip.rain.geo.drawRange.count / 2, capacity: environment.precip.rain.count },
+      hail: { active: environment.precip.hail.geo.drawRange.count, capacity: environment.precip.hail.count },
+      stormHazards: hazards.resourceStats(),
+      wakeStamps: {
+        life: { active: life.stampPool.count, capacity: life.stampPool.capacity, droppedFrame: life.stampPool.droppedFrame, droppedTotal: life.stampPool.droppedTotal },
+        world: { active: world.stampPool.count, capacity: world.stampPool.capacity, droppedFrame: world.stampPool.droppedFrame, droppedTotal: world.stampPool.droppedTotal },
+      },
+    },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
@@ -329,7 +372,7 @@ async function init() {
   };
   let renderFrameNo = 0;
   const applyRenderQuality = profile => {
-    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile);
+    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); nocturnal.setQuality(profile);
     if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
       sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
       if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
@@ -371,6 +414,7 @@ async function init() {
   };
   const showTitle = (persist = true) => {
     game.closeMap(); game.closeMenu(); game.closeResult();
+    fishing.cancel('', false);
     started = false; game.playing = false; game.paused = true;
     for (const key in keys) keys[key] = false;
     if (persist) game.persist();
@@ -395,9 +439,10 @@ async function init() {
   // ---- camera state ----
   const camPos = new THREE.Vector3(startX, 4, startZ + 10);
   const camTarget = new THREE.Vector3(startX, 1, startZ);
-  const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3();
+  const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3(), audioForward = new THREE.Vector3();
   const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2();
   const input = { throttle: 0, steer: 0, pitch: 0 };
+  const boatWetnessConditions = { dt: 0, rain: 0, spray: 0, splash: 0, wind: 0, speed: 0, daylight: 0, windScreen: 0 };
   const clock = new THREE.Timer(); clock.connect(document);
   let time = 0, splashStamp = 0, slowT = 0, slowK = 1, fovKick = 0, airCam = 0, frameNo = 0;
   const stamps = [];
@@ -461,6 +506,7 @@ async function init() {
     clock.update();
     const frameDelta = clock.getDelta();
     const dtRaw = Math.min(frameDelta, 0.05);
+    reportModelFramePressure(frameDelta, started && !game.paused && !document.hidden);
     const qualityChange = qualityController.observe(frameDelta, started && !game.paused && !document.hidden);
     if (qualityChange) {
       applyRenderQuality(qualityChange.profile);
@@ -471,7 +517,7 @@ async function init() {
     time += dt;
     // input
     input.throttle = 0; input.steer = 0; input.pitch = 0;
-    const locked = !started || game.paused || game.inputLock;
+    const locked = !started || game.paused || game.inputLock || fishing.blocking();
     if (!locked) {
       if (keys.KeyW || keys.ArrowUp) input.throttle = 1;
       if (keys.KeyS || keys.ArrowDown) input.throttle = -0.35;
@@ -489,8 +535,8 @@ async function init() {
     phys.forward(fwd2); phys.right(rgt2);
     tricks.update(dt, time);
     game.update(dt, time);
-    story.update(dt, time, started && !game.paused && !life.traffic.activeCollision());
-    encounters.update(dt, time, started && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
+    story.update(dt, time, started && !game.paused && !fishing.blocking() && !life.traffic.activeCollision());
+    encounters.update(dt, time, started && !fishing.blocking() && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
     condition.update(dt, time, started);
     law.update(dt, started && !game.paused);
     reputation.update(dt, started && !game.paused);
@@ -526,6 +572,7 @@ async function init() {
     boat.blur.material.opacity = Math.min(0.35, phys.rpm * 0.4);
     for (const r of boat.rudders) r.rotation.y = -phys.steer * 0.55;
     condition.updateEffects(dt, time, started && !game.paused);
+    fishing.update(dtRaw, time, started && !game.paused);
 
     // camera
     if (!dragging) { idle += dt; if (idle > 2.5) { camYaw *= Math.exp(-dt * 1.2); camPitch *= Math.exp(-dt * 1.2); } }
@@ -549,17 +596,33 @@ async function init() {
     fovKick *= Math.exp(-dtRaw * 5);
     { const f = 52 + fovKick + airCam * 4; if (Math.abs(camera.fov - f) > 0.01) { camera.fov = f; camera.updateProjectionMatrix(); } }
     camera.updateMatrixWorld();
+    camera.getWorldDirection(audioForward); audio.setListener(camera.position.x, camera.position.z, audioForward.x, audioForward.z);
 
     // Time, tide and weather own the sky, light, wind and water state. The camera is already settled for this frame,
     // so rain and lightning follow it without the one-frame wobble that shows up at speed.
     environment.update(dtRaw, time, camera.position, game.paused || !started);
+    if (started && !game.paused) {
+      // This retained input object keeps the material response free of per-frame garbage.
+      boatWetnessConditions.dt = dtRaw;
+      boatWetnessConditions.rain = environment.values.rain;
+      boatWetnessConditions.spray = airboatSprayExposure(phys);
+      boatWetnessConditions.splash = phys.wet > 0.25 && phys.impact > 1.2 ? Math.min(1, (phys.impact - 1.2) / 8) : 0;
+      boatWetnessConditions.wind = environment.values.wind * environment.gust;
+      boatWetnessConditions.speed = phys.speed;
+      boatWetnessConditions.daylight = environment.daylight;
+      boatWetnessConditions.windScreen = environment.windDir.x * camera.matrixWorld.elements[0] + environment.windDir.z * camera.matrixWorld.elements[2];
+      updateAirboatWetness(boat, boatWetnessConditions);
+      pipeline.updateLensWeather(time, boatWetnessConditions);
+    }
     currents.update(dtRaw, time, started && !game.paused);
     hazards.update(dtRaw, time, started && !game.paused);
-    aftermath.update(dtRaw, time, started && !game.paused);
+    aftermath.update(dtRaw, time, started && !game.paused && !fishing.blocking());
+    nocturnal.update(dtRaw, time, started && !game.paused);
     ecology.update(dtRaw, time, started && !game.paused);
-    incidents.update(dtRaw, time, started && !game.paused && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
-    discoveries.update(dtRaw, time, started && !game.paused);
-    navigationAids.update(dtRaw, time, started && !game.paused);
+    dolphins.update(dtRaw, time, started && !game.paused);
+    incidents.update(dtRaw, time, started && !game.paused && !fishing.blocking() && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
+    discoveries.update(dtRaw, time, started && !game.paused && !fishing.blocking());
+    navigationAids.update(dtRaw, time, started && !game.paused && !fishing.blocking());
     radio.update(dtRaw, started && !game.paused);
 
     // world updates
@@ -588,22 +651,24 @@ async function init() {
     water.mesh.position.set(Math.round(camera.position.x / 50) * 50, water.level, Math.round(camera.position.z / 50) * 50);
 
     // wake stamps
-    stamps.length = 0; playerStampCount = 0;
     const wet = phys.wet;
     const sp = phys.speed * wet, rpm = phys.rpm, thr = Math.max(0, phys.throttle) * wet;
     const spF = Math.min(sp / 12, 1);
-    if (splashStamp > 0) { for (const p of splashPts) addPlayerStamp(p, 1.6 + splashStamp * 0.45, -2.2 * splashStamp, 2.4 * splashStamp, 2.2 + splashStamp * 0.6); splashStamp = 0; }
-    // rates are per second (simulate() scales by dt)
-    let pt = hullPt(0, -2.7); addPlayerStamp(pt, 1.3, -1.4 * spF, 0.12 * spF, 0.9);
-    pt = hullPt(0, -1.2); addPlayerStamp(pt, 1.5, -0.6 * spF);
-    pt = hullPt(1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
-    pt = hullPt(-1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
-    pt = hullPt(0, 2.6); addPlayerStamp(pt, 1.5, 0.9 * spF + 0.3 * thr, 0.9 * spF + 2.2 * thr * (0.3 + spF), 1.25);
-    pt = hullPt(0, 4.3); addPlayerStamp(pt, 2, 0, 1.3 * thr * (0.3 + spF), 1.7);
-    pt = hullPt(0, 6.5); addPlayerStamp(pt, 2.4, 0, 0.5 * thr * spF, 2.2);
-    skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); encounters.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); hazards.stamps(stamps);
-    wakeCenter.set(phys.pos.x + fwd2.x * -25, phys.pos.y + fwd2.y * -25);
-    water.simulate(wakeCenter, stamps, dt, currentFlow);
+    if (started && !game.paused) {
+      stamps.length = 0; playerStampCount = 0;
+      if (splashStamp > 0) { for (const p of splashPts) addPlayerStamp(p, 1.6 + splashStamp * 0.45, -2.2 * splashStamp, 2.4 * splashStamp, 2.2 + splashStamp * 0.6); splashStamp = 0; }
+      // rates are per second (simulate() scales by dt)
+      let pt = hullPt(0, -2.7); addPlayerStamp(pt, 1.3, -1.4 * spF, 0.12 * spF, 0.9);
+      pt = hullPt(0, -1.2); addPlayerStamp(pt, 1.5, -0.6 * spF);
+      pt = hullPt(1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
+      pt = hullPt(-1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
+      pt = hullPt(0, 2.6); addPlayerStamp(pt, 1.5, 0.9 * spF + 0.3 * thr, 0.9 * spF + 2.2 * thr * (0.3 + spF), 1.25);
+      pt = hullPt(0, 4.3); addPlayerStamp(pt, 2, 0, 1.3 * thr * (0.3 + spF), 1.7);
+      pt = hullPt(0, 6.5); addPlayerStamp(pt, 2.4, 0, 0.5 * thr * spF, 2.2);
+      skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); dolphins.stamps(stamps); encounters.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); hazards.stamps(stamps);
+      wakeCenter.set(phys.pos.x + fwd2.x * -25, phys.pos.y + fwd2.y * -25);
+      water.simulate(wakeCenter, stamps, dt, currentFlow);
+    }
 
     // ---- spray ----
     // sun direction in view space drives the lighting of droplets / plume

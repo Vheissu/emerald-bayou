@@ -37,9 +37,10 @@ export class WorldIncidents {
     this.next = 95 + Math.random() * 75; this.active = null; this.enabled = false;
     this.interact = false; this.alternate = false; this.prompting = false; this.hitCd = 0;
     this.obs = []; this.phys.addObs('world-incidents', this.obs);
-    this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.runner.agent];
+    this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.runner.agent, this.rigs.victim.agent];
     this.patrolObs = this.makeBoatObstacle(this.rigs.patrol.agent, 'FWC patrol');
     this.runnerObs = this.makeBoatObstacle(this.rigs.runner.agent, 'runner');
+    this.victimObs = this.makeBoatObstacle(this.rigs.victim.agent, 'work skiff');
     this.kayakObs = { x: 0, z: 0, r: 0.75, tag: 'kayak', onHit: (into, nx, nz) => {
       const e = this.active; if (!e || e.type !== 'search') return;
       e.kickX += -nx * into * 0.36; e.kickZ += -nz * into * 0.36;
@@ -64,12 +65,14 @@ export class WorldIncidents {
     const searchTarget = new THREE.Object3D(); searchTarget.position.set(0, 0.1, -34); search.target = searchTarget; patrolBoat.add(search, searchTarget);
 
     const runnerBoat = buildSkiff({ crew: true }); recolor(runnerBoat, 0x4b3527); runnerBoat.visible = false; this.scene.add(runnerBoat);
+    const victimBoat = buildSkiff({ crew: true, driverModel: false }); recolor(victimBoat, 0x587080); victimBoat.visible = false; this.scene.add(victimBoat);
     const paddler = kayak(); paddler.visible = false; this.scene.add(paddler);
     const kayakStrobe = signalLight(paddler, 0xff6b28, 0, 1.22, 0.25);
 
     const patrol = { boat: patrolBoat, blue, red, search, agent: makeAgent(patrolBoat, 'patrol') };
     const runner = { boat: runnerBoat, agent: makeAgent(runnerBoat, 'runner') };
-    return { patrol, runner, paddler, kayakStrobe };
+    const victim = { boat: victimBoat, agent: makeAgent(victimBoat, 'victim') };
+    return { patrol, runner, victim, paddler, kayakStrobe };
   }
 
   spot(nearby = false) {
@@ -109,13 +112,15 @@ export class WorldIncidents {
     const local = this.regions.current ? this.regions.current.encounters : {};
     const search = 0.32 + storm * 0.35 + (night ? 0.18 : 0);
     const pursuit = 0.52 * (local.law || 1) * (local.runners || 1) * (1 - storm * 0.72);
-    return Math.random() * (search + pursuit) < search ? 'search' : 'pursuit';
+    const shakedown = 0.34 * (local.runners || 1) * (night ? 1.15 : 1) * (1 - storm * 0.35);
+    const roll = Math.random() * (search + pursuit + shakedown);
+    return roll < search ? 'search' : roll < search + pursuit ? 'pursuit' : 'shakedown';
   }
 
   start(type = this.pickType(), nearby = false) {
     if (this.active || this.game.state || this.encounters.active || this.environment.values.storm > 0.94) return false;
     const at = this.spot(nearby); if (!at) { this.next = 25; return false; }
-    if (type === 'pursuit') this.startPursuit(at); else this.startSearch(at);
+    if (type === 'pursuit') this.startPursuit(at); else if (type === 'search') this.startSearch(at); else this.startShakedown(at);
     this.stats.heard = (this.stats.heard || 0) + 1; this.game.persist();
     return true;
   }
@@ -123,6 +128,8 @@ export class WorldIncidents {
   startPursuit(at) {
     const fx = -Math.sin(at.heading), fz = -Math.cos(at.heading);
     const runner = this.rigs.runner.agent, patrol = this.rigs.patrol.agent;
+    this.rigs.victim.boat.visible = false; this.rigs.victim.agent.active = false;
+    if (this.rigs.runner.boat.userData.fuel) this.rigs.runner.boat.userData.fuel.visible = true;
     this.setAgent(runner, at.x, at.z, at.heading, 8.8);
     this.setAgent(patrol, at.x - fx * 38, at.z - fz * 38, at.heading, 9.2);
     this.rigs.paddler.visible = false; this.rigs.patrol.search.intensity = 0;
@@ -137,7 +144,9 @@ export class WorldIncidents {
 
   startSearch(at) {
     const patrol = this.rigs.patrol.agent, fx = -Math.sin(at.heading), fz = -Math.cos(at.heading);
+    this.rigs.victim.boat.visible = false; this.rigs.victim.agent.active = false;
     this.rigs.runner.boat.visible = false; this.rigs.runner.agent.active = false;
+    if (this.rigs.runner.boat.userData.fuel) this.rigs.runner.boat.userData.fuel.visible = true;
     this.setAgent(patrol, at.x - fx * 115, at.z - fz * 115, at.heading, 5.8);
     const k = this.rigs.paddler; k.visible = true; k.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) - 0.04, at.z); k.rotation.y = at.heading + 0.35;
     const region = regionAt(at.x, at.z);
@@ -149,7 +158,26 @@ export class WorldIncidents {
     this.radio.transmit({ channel: 'CH 16', speaker: 'MARA KEENE · TOWER', text: `Injured paddler overdue in ${region.name}. FWC has the last position. Orange kayak, one person aboard.`, priority: 3, key: `incident:search:${Math.floor(this.radio.clock)}`, cooldown: 0 });
   }
 
-  updateAgent(A, dt, t, tx, tz, maxSpeed, holdRadius = 0, avoid = null) {
+  startShakedown(at) {
+    const fx = -Math.sin(at.heading), fz = -Math.cos(at.heading), victim = this.rigs.victim.agent, runner = this.rigs.runner.agent;
+    this.setAgent(victim, at.x, at.z, at.heading, 0.8);
+    this.setAgent(runner, at.x - fx * 26, at.z - fz * 26, at.heading, 4.6);
+    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.rigs.patrol.search.intensity = 0;
+    this.rigs.paddler.visible = false;
+    if (this.rigs.victim.boat.userData.fuel) this.rigs.victim.boat.userData.fuel.visible = true;
+    if (this.rigs.runner.boat.userData.fuel) this.rigs.runner.boat.userData.fuel.visible = false;
+    const region = regionAt(at.x, at.z);
+    this.active = {
+      type: 'shakedown', state: 'threat', x: at.x, z: at.z, heading: at.heading, region, t: 0, life: 72 + Math.random() * 14,
+      originX: at.x, originZ: at.z, patrolX: at.x - fx * 115, patrolZ: at.z - fz * 115,
+      escapeX: at.x + fx * 1500, escapeZ: at.z + fz * 1500, victimX: at.x + fx * 130, victimZ: at.z + fz * 130,
+      choice: '', choiceT: 0, seen: false, cargoTaken: false, pressure: 0, bumpCd: 1.5, contactCd: 0,
+      hostileT: 0, reportT: 0, escapeT: 0, captureT: 0, victimHit: false, resolved: '', resolveT: 0,
+    };
+    this.radio.transmit({ channel: 'CH 16', speaker: 'WORK SKIFF', text: `Mayday. Black johnboat has us pinned in ${region.name}. They are taking the fuel cans. Any boat close, answer now.`, priority: 4, key: `incident:shakedown:${Math.floor(this.radio.clock)}`, cooldown: 0 });
+  }
+
+  updateAgent(A, dt, t, tx, tz, maxSpeed, holdRadius = 0, avoid = null, avoidPlayer = true) {
     if (!A.active) return;
     const depthHere = this.water.level - this.terrain.heightAt(A.x, A.z);
     if (!A.backing && depthHere > 0.58) { A.safeX = A.x; A.safeZ = A.z; }
@@ -167,7 +195,7 @@ export class WorldIncidents {
         const align = Math.cos(Math.atan2(Math.sin(h - direct), Math.cos(h - direct)));
         const blocked = this.world.blockedAt(x1, z1) || this.world.blockedAt(x2, z2);
         let score = Math.min(2.5, d0) * 1.45 + Math.min(4, d1) + Math.min(4, d2) * 0.58 + align * 1.35 - Math.abs(da) * 0.08;
-        const pd = Math.hypot(x1 - this.phys.pos.x, z1 - this.phys.pos.y); if (pd < 18) score -= (18 - pd) * 0.42;
+        if (avoidPlayer) { const pd = Math.hypot(x1 - this.phys.pos.x, z1 - this.phys.pos.y); if (pd < 18) score -= (18 - pd) * 0.42; }
         if (avoid && avoid.active) { const ad = Math.hypot(x1 - avoid.x, z1 - avoid.z); if (ad < 13) score -= (13 - ad) * 0.55; }
         if (d0 < 0.38) score -= 28; if (d1 < 0.42) score -= 18; if (d2 < 0.35) score -= 7; if (blocked) score -= 32;
         if (score > bestScore) { bestScore = score; best = da; bestSafe = !blocked && d0 > 0.38 && d1 > 0.42; }
@@ -274,6 +302,131 @@ export class WorldIncidents {
     else if (e.life <= 0 || Math.hypot(runner.x - e.originX, runner.z - e.originZ) > 1400) this.resolvePursuit(chaseGap < 28 ? 'caught' : 'escaped');
   }
 
+  transferShakedownCargo(e) {
+    if (!e || e.cargoTaken) return false;
+    e.cargoTaken = true;
+    if (this.rigs.victim.boat.userData.fuel) this.rigs.victim.boat.userData.fuel.visible = false;
+    if (this.rigs.runner.boat.userData.fuel) this.rigs.runner.boat.userData.fuel.visible = true;
+    return true;
+  }
+
+  chooseShakedown(side) {
+    const e = this.active; if (!e || e.type !== 'shakedown' || e.choice || e.resolved) return false;
+    e.choice = side; e.choiceT = e.t; this.clearPrompt();
+    if (side === 'fwc') {
+      e.state = 'reported'; e.reportT = 0; e.hostileT = 5.5;
+      this.setAgent(this.rigs.patrol.agent, e.patrolX, e.patrolZ, e.heading, 5.8);
+      this.radio.transmit({ channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Position copied. Keep the work skiff clear. Twenty-seven is coming in from behind the black hull.', priority: 4, key: `incident:shakedown-report:${Math.floor(this.radio.clock)}`, cooldown: 0 });
+      this.game.toast('Position sent', 'The black johnboat heard the call and is turning on you.', 3);
+    } else {
+      this.transferShakedownCargo(e); e.state = 'escaping'; e.escapeT = 0;
+      this.law.add(1.45, 'aided theft from a work skiff', true);
+      this.radio.transmit({ channel: 'CH 72', speaker: 'BLACK JOHNBOAT', text: 'Tower hull is with us. Put both cans across and back away from the motor.', priority: 4, key: `incident:shakedown-aid:${Math.floor(this.radio.clock)}`, cooldown: 0 });
+      this.game.toast('Backed the johnboat', 'The work skiff is putting your hull description on sixteen.', 3);
+    }
+    return true;
+  }
+
+  driveOffShakedown(e, into = 0) {
+    if (!e || e.type !== 'shakedown' || e.choice || e.resolved) return false;
+    e.choice = 'locals'; e.choiceT = e.t; e.state = 'fleeing'; e.escapeT = 0; this.clearPrompt();
+    this.rigs.runner.agent.speed *= clamp(1 - into * 0.025, 0.62, 0.86);
+    this.audio.horn(0.24);
+    this.radio.transmit({ channel: 'CH 16', speaker: 'WORK SKIFF', text: 'Black hull is breaking off. Tower Boat, keep them moving and leave us room to restart.', priority: 3, key: `incident:shakedown-driven:${Math.floor(this.radio.clock)}`, cooldown: 0 });
+    this.game.toast('Johnboat driven off', 'They lost the fuel cans and are running for open water.', 2.8);
+    return true;
+  }
+
+  resolveShakedown(outcome) {
+    const e = this.active; if (!e || e.type !== 'shakedown' || e.resolved) return false;
+    e.resolved = outcome; e.state = 'resolved'; e.resolveT = 5; this.clearPrompt();
+    if (outcome !== 'missed') this.stats.resolved = (this.stats.resolved || 0) + 1;
+    if (outcome === 'captured') {
+      this.stats.fwc = (this.stats.fwc || 0) + 1;
+      this.reputation.change('fwc', 0.95, 'fuel-theft-report', 'Your moving position put FWC onto a fuel theft in progress.', true);
+      this.reputation.change('locals', 0.7, 'work-skiff-help', 'You kept a work skiff’s fuel aboard and brought the patrol in.', false);
+      this.reputation.change('runners', -0.75, 'fuel-theft-report', 'The backchannel heard who held the black johnboat for twenty-seven.', false);
+      this.game.addCash(150); this.game.bountyToast('FWC theft assist <b>+$150</b>');
+      this.radio.transmit({ channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Twenty-seven alongside the black johnboat. Fuel cans are still on the work skiff. Tower Boat can clear.', priority: 3, key: `incident:shakedown-captured:${Math.floor(this.radio.clock)}`, cooldown: 0 });
+    } else if (outcome === 'driven-off') {
+      this.stats.locals = (this.stats.locals || 0) + 1;
+      this.reputation.change('locals', 0.85, 'work-skiff-defended', 'You put your hull between a work skiff and the crew taking its fuel.', true);
+      this.reputation.change('fwc', 0.2, 'fuel-theft-broken-up', 'A work skiff reported that the tower boat broke up a fuel theft.', false);
+      this.reputation.change('runners', -0.65, 'johnboat-driven-off', 'The black johnboat crew remembers who hit their hull.', false);
+      this.game.bountyToast('Work skiff clear');
+      this.radio.transmit({ channel: 'CH 68', speaker: 'WORK SKIFF', text: 'Motor caught. Both cans are aboard. Tower Boat, we are clear of the cut.', priority: 2, key: `incident:shakedown-clear:${Math.floor(this.radio.clock)}`, cooldown: 0 });
+    } else if (outcome === 'aided') {
+      this.stats.runners = (this.stats.runners || 0) + 1;
+      this.reputation.change('runners', 1.05, 'fuel-theft-aided', 'The black johnboat paid the hull that made the work skiff stand down.', true);
+      this.reputation.change('locals', -1.1, 'fuel-theft-aided', 'A work crew named your hull after its fuel was taken.', false);
+      this.reputation.change('fwc', -0.65, 'fuel-theft-aided', 'The victim put the tower airboat on the theft report.', false);
+      this.game.addCash(175); this.game.bountyToast('Backchannel cut <b>+$175</b>');
+      this.radio.transmit({ channel: 'CH 16', speaker: 'WORK SKIFF', text: 'FWC, copy tower airboat aiding the black johnboat. They took both cans and are outbound.', priority: 4, key: `incident:shakedown-witness:${Math.floor(this.radio.clock)}`, cooldown: 0 });
+    } else {
+      this.stats.missed = (this.stats.missed || 0) + 1; this.transferShakedownCargo(e);
+      this.radio.transmit({ channel: 'CH 16', speaker: 'WORK SKIFF', text: 'Black johnboat is gone with both cans. We are disabled and drifting. Any tow near the call, answer sixteen.', priority: 3, key: `incident:shakedown-missed:${Math.floor(this.radio.clock)}`, cooldown: 0 });
+    }
+    const memory = outcome === 'captured' ? 'fuel-theft-stopped' : outcome === 'driven-off' ? 'fuel-theft-driven-off' : outcome === 'aided' ? 'fuel-theft-aided' : 'fuel-theft-missed';
+    this.encounters.remember(memory, e.region?.name || '', 'incident'); this.game.persist(); return true;
+  }
+
+  attemptShakedownRam(e, A, distance) {
+    if (!e || e.state !== 'reported' || e.hostileT <= 0 || e.contactCd > 0 || distance >= 6.2 || A.speed <= 5) return false;
+    const p = this.phys, dx = p.pos.x - A.x, dz = p.pos.y - A.z, d = Math.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d;
+    const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), closing = fx * nx + fz * nz; if (closing <= 0.28) return false;
+    const cross = fx * nz - fz * nx, side = cross < 0 ? -1 : 1;
+    e.contactCd = 3.2; A.speed *= 0.68; p.vel.x += nx * 1.65 + fx * 0.7; p.vel.y += nz * 1.65 + fz * 0.7;
+    p.hit = Math.max(p.hit, 4.6); p.hitNormal.set(nx, nz); p.hitTag = 'boat'; p.angVel += side * 1.25; p.rollVel += side * 1.35;
+    this.game.shake = Math.max(this.game.shake, 0.3); if (this.condition) this.condition.damage(0.34, 0.05); this.audio.thud(0.78);
+    this.game.toast('Johnboat ram', 'They are trying to knock the tower hull off the radio call.', 2.5); return true;
+  }
+
+  updateShakedown(e, dt, t) {
+    const runner = this.rigs.runner.agent, victim = this.rigs.victim.agent, patrol = this.rigs.patrol.agent;
+    e.bumpCd = Math.max(0, e.bumpCd - dt); e.contactCd = Math.max(0, e.contactCd - dt);
+    const victimSpeed = e.cargoTaken ? 0.18 : e.resolved ? 0.55 : 0.9;
+    this.updateAgent(victim, dt, t, e.victimX, e.victimZ, victimSpeed, 10, runner);
+    if (e.resolved) {
+      const caught = e.resolved === 'captured';
+      this.updateAgent(runner, dt, t, caught ? patrol.x : e.escapeX, caught ? patrol.z : e.escapeZ, caught ? 0.25 : 10.8, caught ? 7 : 0, patrol);
+      if (patrol.active) { this.updateAgent(patrol, dt, t, runner.x, runner.z, caught ? 1.2 : 10.5, caught ? 8 : 0, runner); this.updateLights(t, false); }
+      e.resolveT -= dt; e.x = victim.x; e.z = victim.z; if (e.resolveT <= 0) this.finish(); return;
+    }
+
+    e.life -= dt; const playerD = Math.min(Math.hypot(victim.x - this.phys.pos.x, victim.z - this.phys.pos.y), Math.hypot(runner.x - this.phys.pos.x, runner.z - this.phys.pos.y));
+    if (playerD < 145) e.seen = true;
+    if (e.state === 'threat') {
+      const rightX = Math.cos(victim.heading), rightZ = -Math.sin(victim.heading), fx = -Math.sin(victim.heading), fz = -Math.cos(victim.heading), side = Math.sin(e.t * 0.46) * 4.2;
+      this.updateAgent(runner, dt, t, victim.x + fx * 2.5 + rightX * side, victim.z + fz * 2.5 + rightZ * side, 7.4, 4.6, victim);
+      const gap = Math.hypot(runner.x - victim.x, runner.z - victim.z);
+      if (gap < 7.1 && e.bumpCd <= 0) {
+        const dx = victim.x - runner.x, dz = victim.z - runner.z, d = Math.hypot(dx, dz) || 1;
+        e.bumpCd = 5.4; e.pressure++; victim.shx += dx / d * 1.25; victim.shz += dz / d * 1.25; victim.speed *= 0.45;
+        if (playerD < 115) { this.audio.thud(0.3); this.game.toast('Black hull on the work skiff', 'They are pushing it toward the bank.', 2.1); }
+      }
+      if (playerD < 34 && this.phys.speed * MPH < 30 && this.canInteract()) {
+        this.setPrompt('<b>E</b> report the black johnboat <i>· F back its crew · ram it to drive them off</i>');
+        if (this.interact) this.chooseShakedown('fwc'); else if (this.alternate) this.chooseShakedown('runners');
+      } else this.clearPrompt();
+      if (e.life <= 0 && !e.choice) {
+        this.transferShakedownCargo(e); e.state = 'escaping'; e.escapeT = 0;
+        this.radio.transmit({ channel: 'CH 16', speaker: 'WORK SKIFF', text: 'They have both cans. Black johnboat is breaking north; we are dead in the water.', priority: 4, key: `incident:shakedown-taken:${Math.floor(this.radio.clock)}`, cooldown: 0 });
+      }
+    } else if (e.state === 'reported') {
+      e.reportT += dt; e.hostileT = Math.max(0, e.hostileT - dt);
+      const hostile = e.hostileT > 0, tx = hostile ? this.phys.pos.x + this.phys.vel.x * 0.55 : e.escapeX, tz = hostile ? this.phys.pos.y + this.phys.vel.y * 0.55 : e.escapeZ;
+      this.updateAgent(runner, dt, t, tx, tz, hostile ? 12.6 : 12.1, 0, patrol, !hostile);
+      this.updateAgent(patrol, dt, t, runner.x, runner.z, 14.4, 7.5, runner); this.updateLights(t, false);
+      const gap = Math.hypot(runner.x - patrol.x, runner.z - patrol.z), d = Math.hypot(runner.x - this.phys.pos.x, runner.z - this.phys.pos.y);
+      this.attemptShakedownRam(e, runner, d); e.captureT = gap < 9 ? e.captureT + dt : Math.max(0, e.captureT - dt * 0.5);
+      if ((e.reportT > 4 && e.captureT > 2.2) || e.reportT > 19) this.resolveShakedown('captured');
+    } else {
+      e.escapeT += dt; this.updateAgent(runner, dt, t, e.escapeX, e.escapeZ, 12.8, 0, victim);
+      if (e.escapeT > (e.choice === 'locals' ? 7 : 6)) this.resolveShakedown(e.choice === 'locals' ? 'driven-off' : e.choice === 'runners' ? 'aided' : 'missed');
+    }
+    e.x = victim.x; e.z = victim.z;
+  }
+
   reportPaddler() {
     const e = this.active; if (!e || e.type !== 'search' || e.reported) return;
     e.reported = true; e.reportT = 0; this.clearPrompt();
@@ -332,14 +485,21 @@ export class WorldIncidents {
       A.shx += -nx * into * 0.48; A.shz += -nz * into * 0.48; A.speed *= 0.55;
       if (this.hitCd > 0 || into < 2.7) return; this.hitCd = 4;
       if (tag === 'FWC patrol') { this.game.toast('FWC vessel struck', 'Twenty-seven is logging the collision.', 2.4); this.law.violation(0.8, 'FWC vessel struck', true); }
-      else this.game.toast('Runner hit', 'The johnboat is still trying to clear the cut.', 2.2);
+      else if (tag === 'work skiff') {
+        const e = this.active;
+        this.game.toast('Work skiff struck', 'The crew is reporting the tower hull on sixteen.', 2.4);
+        this.law.violation(0.45 + Math.min(0.45, into * 0.05), 'work skiff collision witnessed', true);
+        if (e?.type === 'shakedown' && !e.victimHit) { e.victimHit = true; this.reputation.change('locals', -0.45, 'work-skiff-struck', 'The stranded crew reported that you hit their skiff during the theft.', false); }
+      } else if (this.active?.type === 'shakedown') {
+        if (!this.driveOffShakedown(this.active, into)) this.game.toast('Black johnboat hit', 'The crew is still trying to clear the cut.', 2.2);
+      } else this.game.toast('Runner hit', 'The johnboat is still trying to clear the cut.', 2.2);
     } };
   }
 
   addObstacle(A, tag) {
     if (!A.active || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 75) return;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading);
-    const o = tag === 'FWC patrol' ? this.patrolObs : this.runnerObs;
+    const o = tag === 'FWC patrol' ? this.patrolObs : tag === 'work skiff' ? this.victimObs : this.runnerObs;
     o.ax = A.x + fx * 2.1; o.az = A.z + fz * 2.1; o.bx = A.x - fx * 2.1; o.bz = A.z - fz * 2.1;
     this.obs.push(o);
   }
@@ -355,16 +515,22 @@ export class WorldIncidents {
       const r = this.rigs.runner.agent, p = this.rigs.patrol.agent;
       this.game.mapMarkers.push({ x: r.x, z: r.z, kind: 'hazard', color: '#e0554a', clamp: true });
       this.game.mapMarkers.push({ x: p.x, z: p.z, kind: 'boat', heading: p.heading, color: '#5aa7ff' });
-    } else {
+    } else if (e.type === 'search') {
       const p = this.rigs.patrol.agent;
       this.game.mapMarkers.push({ x: e.x, z: e.z, kind: 'hazard', color: '#f07a2e', clamp: true });
       this.game.mapMarkers.push({ x: p.x, z: p.z, kind: 'boat', heading: p.heading, color: '#5aa7ff' });
+    } else {
+      const v = this.rigs.victim.agent, r = this.rigs.runner.agent, p = this.rigs.patrol.agent;
+      this.game.mapMarkers.push({ x: v.x, z: v.z, kind: 'hazard', color: '#f07a2e', clamp: true });
+      this.game.mapMarkers.push({ x: r.x, z: r.z, kind: 'boat', heading: r.heading, color: '#e0554a' });
+      if (p.active) this.game.mapMarkers.push({ x: p.x, z: p.z, kind: 'boat', heading: p.heading, color: '#5aa7ff' });
     }
   }
 
   marker() {
     const e = this.active; if (!e || e.resolved) return null;
-    return { x: e.x, z: e.z, color: e.type === 'pursuit' ? '#e0554a' : '#f07a2e', label: e.type === 'pursuit' ? 'live FWC pursuit' : 'active paddler search' };
+    const label = e.type === 'pursuit' ? 'live FWC pursuit' : e.type === 'search' ? 'active paddler search' : 'work skiff mayday';
+    return { x: e.x, z: e.z, color: e.type === 'pursuit' ? '#e0554a' : '#f07a2e', label };
   }
 
   updateAudio() {
@@ -387,9 +553,12 @@ export class WorldIncidents {
     if (e.type === 'pursuit') {
       if (this.environment.values.storm > 0.96 && !e.resolved) this.resolvePursuit('escaped');
       this.updatePursuit(e, dt, t); this.addObstacle(this.rigs.runner.agent, 'runner'); this.addObstacle(this.rigs.patrol.agent, 'FWC patrol');
-    } else {
+    } else if (e.type === 'search') {
       if (this.environment.values.storm > 0.98 && !e.resolved) this.resolveSearch(false);
       this.updateSearch(e, dt, t); this.addObstacle(this.rigs.patrol.agent, 'FWC patrol'); if (!e.resolved) this.addKayakObstacle(e);
+    } else {
+      if (this.environment.values.storm > 0.97 && !e.resolved) this.resolveShakedown('missed');
+      this.updateShakedown(e, dt, t); this.addObstacle(this.rigs.runner.agent, 'runner'); this.addObstacle(this.rigs.victim.agent, 'work skiff'); if (this.rigs.patrol.agent.active) this.addObstacle(this.rigs.patrol.agent, 'FWC patrol');
     }
     this.pushMarkers(); this.updateAudio(); this.interact = false; this.alternate = false;
   }
@@ -407,6 +576,9 @@ export class WorldIncidents {
     this.clearPrompt(); this.obs.length = 0;
     this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0; this.rigs.patrol.search.intensity = 0;
     this.rigs.runner.boat.visible = false; this.rigs.runner.agent.active = false; this.rigs.paddler.visible = false; this.rigs.kayakStrobe.light.intensity = 0;
+    this.rigs.victim.boat.visible = false; this.rigs.victim.agent.active = false;
+    if (this.rigs.victim.boat.userData.fuel) this.rigs.victim.boat.userData.fuel.visible = true;
+    if (this.rigs.runner.boat.userData.fuel) this.rigs.runner.boat.userData.fuel.visible = true;
     this.active = null; this.next = 210 + Math.random() * 210; this.updateAudio();
   }
 }

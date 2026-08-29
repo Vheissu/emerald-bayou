@@ -195,7 +195,7 @@ function animateRamp(g, t, waveFn, ctx) {
     if (vis && speed > 0.05 && d < 90) {
       ctx.ob = Math.max(ctx.ob, speed * Math.max(0, 1 - d / 90));
       const fx = -Math.sin(heading + g.rotation.y), fz = -Math.cos(heading + g.rotation.y);
-      if (d < 75) { ctx.stamps.push({ x: wp.x - fx * 1.8, z: wp.z - fz * 1.8, radius: 1.1, height: 0.5 * speed, foam: 1.4 * speed, foamRadius: 1.0 }); const n = Math.floor(50 * ctx.dt * speed + Math.random()); for (let i = 0; i < n; i++) ctx.plume.emit(wp.x - fx * 2.4 + (Math.random() - 0.5) * 0.8, 0.1, wp.z - fz * 2.4 + (Math.random() - 0.5) * 0.8, -fx * 1.5 + (Math.random() - 0.5), 0.5 + Math.random() * 1.2 * speed, -fz * 1.5 + (Math.random() - 0.5), 0.25 + Math.random() * 0.3, 0.9, 0.6 + Math.random() * 0.5, 0.25); }
+      if (d < 75) { if (ctx.emitStamp) ctx.emitStamp(wp.x - fx * 1.8, wp.z - fz * 1.8, 1.1, 0.5 * speed, 1.4 * speed, 1); else ctx.stamps?.push({ x: wp.x - fx * 1.8, z: wp.z - fz * 1.8, radius: 1.1, height: 0.5 * speed, foam: 1.4 * speed, foamRadius: 1 }); const n = Math.floor(50 * ctx.dt * speed + Math.random()); for (let i = 0; i < n; i++) ctx.plume.emit(wp.x - fx * 2.4 + (Math.random() - 0.5) * 0.8, 0.1, wp.z - fz * 2.4 + (Math.random() - 0.5) * 0.8, -fx * 1.5 + (Math.random() - 0.5), 0.5 + Math.random() * 1.2 * speed, -fz * 1.5 + (Math.random() - 0.5), 0.25 + Math.random() * 0.3, 0.9, 0.6 + Math.random() * 0.5, 0.25); }
     }
     const tw = truck.getWorldPosition(_v3b); const dT = Math.hypot(tw.x - ctx.bx, tw.z - ctx.bz);
     if (dT < 90) ctx.truck = Math.max(ctx.truck, (moving ? 1 : 0.25) * Math.max(0, 1 - dT / 90));
@@ -353,7 +353,7 @@ export function animateSite(g, t, waveFn, wind, ctx) {
   const site = g.userData.site; const dSite = site ? Math.hypot(site.x - ctx.bx, site.z - ctx.bz) : 1e9;
   if ((ctx.humanActivity ?? 1) <= 0.2) return;
   // a shotgun from the blind now and then, when you are not right on top of it
-  if (g.userData.blind && g.userData.blind.userData.people.length) { const b = g.userData.blind; b.userData.shotT -= dt; if (b.userData.shotT < 2.2 && dSite < 520 && !b.userData.aiming) { b.userData.aiming = true; aim(b.userData.people[Math.floor(Math.random() * b.userData.people.length)], 3.2); } if (b.userData.shotT <= 0) { b.userData.aiming = false; b.userData.shotT = 30 + Math.random() * 70; if (dSite > 40 && dSite < 520 && ctx.audio) { ctx.audio.shot(0.4 * (1 - dSite / 520)); if (ctx.onShot) ctx.onShot(site.x, site.z); } } }
+  if (g.userData.blind && g.userData.blind.userData.people.length) { const b = g.userData.blind; b.userData.shotT -= dt; if (b.userData.shotT < 2.2 && dSite < 520 && !b.userData.aiming) { b.userData.aiming = true; aim(b.userData.people[Math.floor(Math.random() * b.userData.people.length)], 3.2); } if (b.userData.shotT <= 0) { b.userData.aiming = false; b.userData.shotT = 30 + Math.random() * 70; if (dSite > 40 && dSite < 520 && ctx.audio) { ctx.audio.shot(0.4 * (1 - dSite / 520), site.x, site.z); if (ctx.onShot) ctx.onShot(site.x, site.z); } } }
   if (dSite > 220) return; // people only move when you can see them
   for (const p of g.userData.people) {
     const u = p.userData;

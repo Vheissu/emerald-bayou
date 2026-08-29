@@ -275,7 +275,7 @@ export function pair(a, b) { a.userData.buddy = b; b.userData.buddy = a; }
 export function walkAlong(g, ax, az, bx, bz) { g.userData.walk = { ax, az, bx, bz }; }
 
 // the rod: cast on a cooldown, line on the water for a while, sometimes a bite, then reel it in. Needs the figure to
-// carry a fishingLine() in userData.line and a lineTarget vector; ctx = { bx, bz, stamps, audio, fish }.
+// carry a fishingLine() in userData.line and a lineTarget vector; ctx = { bx, bz, emitStamp, audio, fish }.
 const _tip = new THREE.Vector3(), _dir = new THREE.Vector3();
 export function fishingUpdate(p, t, dt, waveFn, ctx) {
   const u = p.userData; if (!u.rod || !u.line) return;
@@ -283,8 +283,9 @@ export function fishingUpdate(p, t, dt, waveFn, ctx) {
     rodTip(pp, _tip); pp.getWorldDirection(_dir); const r = 5 + Math.random() * 5;
     u.lineTarget.set(_tip.x + _dir.x * r, 0, _tip.z + _dir.z * r); u.lineOn = 14 + Math.random() * 14; u.line.visible = true;
     const d = Math.hypot(u.lineTarget.x - ctx.bx, u.lineTarget.z - ctx.bz);
-    ctx.stamps.push({ x: u.lineTarget.x, z: u.lineTarget.z, radius: 0.45, height: 0.12, foam: 0.5, foamRadius: 0.4 });
-    if (ctx.audio) ctx.audio.plip(0.3 * Math.max(0, 1 - d / 60));
+    if (ctx.emitStamp) ctx.emitStamp(u.lineTarget.x, u.lineTarget.z, 0.45, 0.12, 0.5, 0.4);
+    else ctx.stamps?.push({ x: u.lineTarget.x, z: u.lineTarget.z, radius: 0.45, height: 0.12, foam: 0.5, foamRadius: 0.4 });
+    if (ctx.audio) ctx.audio.plip(0.3 * Math.max(0, 1 - d / 60), u.lineTarget.x, u.lineTarget.z);
     u.biteT = Math.random() < 0.35 ? 4 + Math.random() * 8 : -1;
   };
   if (u.lineOn > 0) {

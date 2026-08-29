@@ -14,6 +14,7 @@ test('recognizes exploration, jobs and world history as progress', () => {
   assert.equal(hasProgress({ ...baseSave(), boatPosition: { x: 50, z: 70 } }), true);
   assert.equal(hasProgress({ ...baseSave(), done: ['shakedown'] }), true);
   assert.equal(hasProgress({ ...baseSave(), reputation: { deeds: [{ faction: 'locals' }] } }), true);
+  assert.equal(hasProgress({ ...baseSave(), fishing: { total: 1 } }), true);
 });
 
 test('disabled persistence cannot recreate a save during reset navigation', () => {

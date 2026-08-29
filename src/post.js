@@ -3,6 +3,24 @@ import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { msaaSamplesFor } from './renderquality.js';
 
 const QUAD_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+const unit = value => {
+  const n = Number(value); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+};
+
+// Lens water is presentation state, not another particle simulation. Rain and chine spray lay down a film, landing
+// splash adds an immediate sheet, and speed plus crosswind clear the exposed chase camera after the weather passes.
+export function lensWetnessStep(current = 0, { rain = 0, spray = 0, splash = 0, wind = 0, speed = 0, dt = 0 } = {}) {
+  let next = unit(current);
+  const seconds = Math.max(0, Math.min(0.25, Number.isFinite(Number(dt)) ? Number(dt) : 0));
+  if (!seconds) return next;
+  const rainN = unit(rain), sprayN = unit(spray), splashN = unit(splash);
+  const deposition = 1 - Math.exp(-seconds * (rainN * 1.35 + sprayN * 0.8));
+  next += (1 - next) * deposition;
+  if (splashN) next += (1 - next) * splashN * 0.68;
+  const windN = unit((Number(wind) || 0) / 36), speedN = unit((Number(speed) || 0) / 14);
+  const clearRate = (0.018 + windN * 0.038 + speedN * 0.07) * (1 - rainN * 0.88) * (1 - sprayN * 0.7);
+  return unit(next - seconds * clearRate);
+}
 
 function quadPass(material) {
   const scene = new THREE.Scene(); const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -13,7 +31,7 @@ function quadPass(material) {
 export class Pipeline {
   constructor(renderer, camera, quality = {}) {
     this.renderer = renderer; this.camera = camera;
-    this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false;
+    this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false; this.lensWetness = 0;
     const size = new THREE.Vector2(); renderer.getDrawingBufferSize(size);
     this.size = size;
     const w = size.x, h = size.y;
@@ -56,22 +74,58 @@ export class Pipeline {
     }));
     this.grade = quadPass(new THREE.ShaderMaterial({
       uniforms: {
-        tColor: { value: this.compRT.texture }, tDepth: { value: depthB }, tBloom: { value: this.bloomA.texture },
+        tColor: { value: this.compRT.texture }, tDepth: { value: depthB }, tBloom: { value: this.bloomA.texture }, tNoise: { value: null },
         near: { value: camera.near }, far: { value: camera.far }, exposure: { value: 1.0 },
         fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, fogMax: { value: 0.6 }, bloomAmt: { value: 0.12 }, bloomQuality: { value: this.bloomEnabled ? 1 : 0 },
+        mistAmount: { value: 0 }, mistQuality: { value: quality.surfaceMist ?? 0 }, mistLevel: { value: 0 }, mistHeight: { value: 2.8 }, mistTime: { value: 0 }, mistWind: { value: new THREE.Vector2() },
+        lensWetness: { value: 0 }, lensQuality: { value: quality.lensWater ?? 0 }, lensTime: { value: 0 }, lensWind: { value: 0 }, lensAspect: { value: w / Math.max(1, h) },
         invProj: { value: new THREE.Matrix4() }, camMat: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       },
       vertexShader: QUAD_VS,
       fragmentShader: `
-        uniform sampler2D tColor, tDepth, tBloom; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt, bloomQuality; uniform vec3 fogColor, sunDir;
+        uniform sampler2D tColor, tDepth, tBloom, tNoise; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt, bloomQuality; uniform vec3 fogColor, sunDir;
+        uniform float mistAmount, mistQuality, mistLevel, mistHeight, mistTime; uniform vec2 mistWind;
+        uniform float lensWetness, lensQuality, lensTime, lensWind, lensAspect;
         uniform mat4 invProj, camMat; varying vec2 vUv;
         vec3 aces(vec3 x) { const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14; return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0); }
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
+        float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+        vec4 lensDropLayer(vec2 uv, float scale, float seed) {
+          vec2 p = vec2(uv.x * lensAspect, uv.y) * scale;
+          p.x += p.y * lensWind * 0.18;
+          p.y += lensTime * 0.027 * (0.8 + seed * 0.07);
+          vec2 id = floor(p), cell = fract(p) - 0.5;
+          float h = hash21(id + vec2(seed, seed * 1.91));
+          float density = smoothstep(1.0 - lensWetness * 0.52, 1.0, h);
+          float fall = mix(0.07, 0.18, hash21(id.yx + seed * 2.37));
+          float phase = fract(h * 17.0 + lensTime * fall);
+          vec2 centre = vec2((hash21(id + seed * 3.1) - 0.5) * 0.5, 0.52 - phase);
+          vec2 delta = cell - centre; delta.y *= 1.28;
+          float radius = mix(0.065, 0.145, hash21(id + seed * 5.7));
+          float dist = length(delta);
+          float body = (1.0 - smoothstep(radius * 0.48, radius, dist)) * density;
+          float outer = 1.0 - smoothstep(radius * 0.72, radius, dist);
+          float inner = 1.0 - smoothstep(radius * 0.34, radius * 0.62, dist);
+          float rim = max(0.0, outer - inner) * density;
+          float trail = (1.0 - smoothstep(0.004, 0.045, abs(delta.x))) * (1.0 - smoothstep(0.025, 0.42, delta.y)) * step(0.0, delta.y) * density * 0.28;
+          return vec4(delta / max(dist, 0.0001) * rim, max(body, trail), rim);
+        }
         void main() {
-          vec3 c = texture2D(tColor, vUv).rgb;
+          float lensStrength = lensWetness * lensQuality, lensMask = 0.0, lensRim = 0.0;
+          vec2 lensSampleUv = vUv;
+          if (lensStrength > 0.003) {
+            vec4 coarseDrop = lensDropLayer(vUv, 5.2, 1.3);
+            vec4 fineDrop = lensDropLayer(vUv + vec2(0.17, 0.07), 10.8, 4.7);
+            vec2 lensNormal = coarseDrop.xy * 0.9 + fineDrop.xy * 0.48;
+            lensMask = clamp(max(coarseDrop.z, fineDrop.z * 0.82), 0.0, 1.0);
+            lensRim = clamp(max(coarseDrop.w, fineDrop.w * 0.72), 0.0, 1.0);
+            vec2 refraction = vec2(lensNormal.x / max(lensAspect, 0.5), lensNormal.y) * 0.0065 * lensStrength;
+            lensSampleUv = clamp(vUv + refraction, vec2(0.002), vec2(0.998));
+          }
+          vec3 c = texture2D(tColor, lensSampleUv).rgb;
           float d = texture2D(tDepth, vUv).r;
           // view ray for aerial perspective tint
-          vec4 vp = invProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0); vec3 vdir = normalize((camMat * vec4(vp.xyz / vp.w, 0.0)).xyz);
+          vec4 vp = invProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0); vec3 viewRay = normalize(vp.xyz / vp.w); vec3 vdir = normalize((camMat * vec4(viewRay, 0.0)).xyz);
           float sunAmt = pow(max(dot(vdir, sunDir), 0.0), 8.0);
           vec3 fc = mix(fogColor, vec3(0.95, 0.9, 0.8), sunAmt * 0.5);
           if (d < 0.99999) {
@@ -80,8 +134,30 @@ export class Pipeline {
             float f = 1.0 - exp(-dist * fogDensity);
             f = clamp(f, 0.0, fogMax);
             c = mix(c, fc * 1.05, f);
+            // Low fog has a real height instead of tinting the entire view equally. Reconstructing the endpoint makes
+            // open water and lower trunks carry the bank while the tops of cypress remain visible above it.
+            float mistStrength = mistAmount * mistQuality;
+            if (mistStrength > 0.001) {
+              float rayDist = min(z / max(-viewRay.z, 0.05), 900.0);
+              vec3 cameraWorld = camMat[3].xyz;
+              vec3 worldPos = cameraWorld + vdir * rayDist;
+              float h0 = max(cameraWorld.y - mistLevel, 0.0), h1 = max(worldPos.y - mistLevel, 0.0);
+              float heightDensity = (exp(-h0 / mistHeight) + exp(-h1 / mistHeight)) * 0.5;
+              vec2 drift = mistWind * mistTime;
+              float broad = texture2D(tNoise, worldPos.xz * 0.0022 - drift * 0.0022).r;
+              float detail = texture2D(tNoise, worldPos.xz * 0.0061 - drift * 0.0047 + 0.37).g;
+              float patchDensity = mix(0.52, 1.28, smoothstep(0.18, 0.82, broad * 0.7 + detail * 0.3));
+              float bank = (1.0 - exp(-rayDist * 0.0032 * heightDensity * patchDensity)) * mistStrength;
+              bank *= smoothstep(18.0, 75.0, rayDist);
+              bank = clamp(bank, 0.0, 0.42 * mistStrength);
+              c = mix(c, fc * 1.035, bank);
+            }
           }
           c += texture2D(tBloom, vUv).rgb * bloomAmt * bloomQuality;
+          if (lensStrength > 0.003) {
+            c *= 1.0 - lensMask * lensStrength * 0.055;
+            c += vec3(0.11, 0.135, 0.15) * lensRim * lensStrength;
+          }
           c *= exposure;
           // gentle filmic grade: lift greens, soft contrast
           c = aces(c);
@@ -154,7 +230,19 @@ export class Pipeline {
   }
   setQuality(quality = {}) {
     this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false;
-    if (this.grade) this.grade.material.uniforms.bloomQuality.value = this.bloomEnabled ? 1 : 0;
+    if (this.grade) {
+      this.grade.material.uniforms.bloomQuality.value = this.bloomEnabled ? 1 : 0;
+      this.grade.material.uniforms.mistQuality.value = quality.surfaceMist ?? 0;
+      this.grade.material.uniforms.lensQuality.value = quality.lensWater ?? 0;
+    }
+  }
+  updateLensWeather(time = 0, conditions = {}) {
+    this.lensWetness = lensWetnessStep(this.lensWetness, conditions);
+    const u = this.grade.material.uniforms;
+    u.lensWetness.value = this.lensWetness;
+    u.lensTime.value = Number.isFinite(Number(time)) ? Number(time) : 0;
+    u.lensWind.value = Math.max(-1, Math.min(1, Number(conditions.windScreen) || 0));
+    return this.lensWetness;
   }
   resize(w, h) {
     w = Math.max(1, Math.floor(w)); h = Math.max(1, Math.floor(h));
@@ -167,6 +255,7 @@ export class Pipeline {
     const bw = this.bloomEnabled ? Math.max(1, Math.floor(w / 4)) : 1, bh = this.bloomEnabled ? Math.max(1, Math.floor(h / 4)) : 1;
     this.bloomA.setSize(bw, bh); this.bloomB.setSize(bw, bh);
     this.fxaa.material.uniforms.resolution.value.set(1 / w, 1 / h);
+    this.grade.material.uniforms.lensAspect.value = w / Math.max(1, h);
   }
   memoryStats() {
     const width = this.size.x, height = this.size.y, pixels = width * height, samples = this.sceneRT.samples;
@@ -175,7 +264,7 @@ export class Pipeline {
     const sceneBytes = pixels * 12 * (1 + samples);
     const compositeBytes = pixels * 12, postBytes = pixels * 4 + (this.finalEnabled ? pixels * 4 : 4);
     const bloomBytes = this.bloomEnabled ? Math.floor(width / 4) * Math.floor(height / 4) * 16 : 16;
-    return { width, height, pixels, samples, bloom: this.bloomEnabled, finalPass: this.finalEnabled, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
+    return { width, height, pixels, samples, bloom: this.bloomEnabled, finalPass: this.finalEnabled, surfaceMist: this.grade.material.uniforms.mistQuality.value, lensWater: this.grade.material.uniforms.lensQuality.value, lensWetness: this.lensWetness, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
   }
   // scene: opaque world. overlays: array of scenes rendered on top (water, fx)
   render(scene, camera, overlays, mode = 'full') {

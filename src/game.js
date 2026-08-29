@@ -55,7 +55,7 @@ export class Game {
     this.renderHud();
   }
   load() {
-    const fill = (s) => { s.rec = s.rec || {}; s.bounties = s.bounties || {}; s.camps = s.camps || []; s.seen = s.seen || []; s.traps = s.traps || []; s.runs = s.runs || 0; return s; };
+    const fill = (s) => { s.rec = s.rec || {}; s.bounties = s.bounties || {}; s.camps = s.camps || []; s.seen = s.seen || []; s.traps = s.traps || []; s.nature = s.nature || {}; s.runs = s.runs || 0; return s; };
     try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); if (s && s.best) return fill(s); } catch (e) { /* ignore */ }
     // migrate the pass-3 save if there is one
     try { const s = JSON.parse(localStorage.getItem('emeraldBayou.save.v1')); if (s && s.best) return fill({ cash: s.cash || 0, best: s.best, done: s.done || [] }); } catch (e) { /* ignore */ }
@@ -99,6 +99,7 @@ export class Game {
       || Number(incidents.heard) || (s.reputation?.deeds || []).length
       || (s.discoveries?.found || []).length
       || (s.navigationAids?.reports || []).length
+      || Number(s.fishing?.total)
       || (story.stage && story.stage !== 'dormant') || travelled
     );
   }
@@ -293,6 +294,7 @@ export class Game {
       ['Top speed', r.speed ? `${Math.round(r.speed)} mph` : '—'], ['Longest air', r.air ? `${r.air.toFixed(2)} s` : '—'], ['Highest air', r.peak ? `${r.peak.toFixed(1)} m` : '—'],
       ['Biggest spin', r.spin ? `${r.spin}°` : '—'], ['Longest drift', r.drift ? `${r.drift.toFixed(1)} s` : '—'], ['Best chain', r.bank ? `${Math.round(r.bank).toLocaleString()} pts` : '—'],
       ['Longest run', r.run ? `${r.run.toFixed(1)} mi` : '—'], ['Camps found', `${this.save.camps.length}`], ['Traps recovered', `${this.save.traps.length}`],
+      ['Dolphin passes', `${Math.max(0, Number(this.save.nature?.dolphinPasses) || 0)}`],
     ];
     const bl = this.bounties.today().map(b => `<div class="b ${b.done ? 'done' : ''}"><span class="chk">${b.done ? '✓' : ''}</span><span class="bt">${b.text}${b.count > 1 && !b.done ? ` <i>${b.progress} / ${b.count}</i>` : ''}</span><span class="pay">${fmtCash(b.pay)}</span></div>`).join('');
     const encounterCount = Object.values(this.save.encounters || {}).reduce((n, v) => n + (Number(v) || 0), 0);
@@ -305,8 +307,12 @@ export class Game {
     const fieldNotes = this.discoveries?.menuEntries?.() || [];
     const fieldNoteCount = fieldNotes.filter(entry => entry.found).length;
     const fieldNoteRows = fieldNotes.length ? fieldNotes.map(entry => `<div class="deed ${entry.found ? 'found' : ''}"><b>${entry.found ? esc(entry.short) : 'Unlogged'}</b>${esc(entry.found ? `${entry.place} · day ${entry.record?.day || '—'}` : entry.hint)}</div>`).join('') : '<div class="deed">No field observations logged.</div>';
+    const fishingEntries = this.fishing?.menuEntries?.() || [], fishLogged = fishingEntries.filter(entry => entry.caught > 0).length;
+    const fishingRows = fishingEntries.length ? fishingEntries.map(entry => `<div class="deed ${entry.caught ? 'found' : ''}"><b>${esc(entry.name)}</b>${entry.caught ? `${entry.caught} landed · best ${entry.bestIn.toFixed(1)} in` : 'Not logged'}</div>`).join('') : '<div class="deed">No catches logged.</div>';
     records.push(['Field notes', `${fieldNoteCount} / ${fieldNotes.length || 3}`]);
     records.push(['Aid reports', `${Math.max(0, Number(this.save.navigationAids?.stats?.reports) || 0)}`]);
+    records.push(['Fish landed', `${Math.max(0, Number(this.save.fishing?.total) || 0)}`]);
+    records.push(['Fish released', `${Math.max(0, Number(this.save.fishing?.released) || 0)}`]);
     const wanted = Math.max(0, Math.min(5, Math.ceil(Number(this.law?.attention) || 0)));
     const deeds = (this.reputation?.deeds || []).slice(-6).reverse();
     const deedRows = deeds.length ? deeds.map(deed => `<div class="deed"><b>${esc(deed.faction)} ${deed.delta > 0 ? '+' : ''}${Number(deed.delta).toFixed(1)}</b>${esc(deed.text)}</div>`).join('') : '<div class="deed">Nobody has made up their mind about this hull yet.</div>';
@@ -322,8 +328,8 @@ export class Game {
       content = `<div class="world-grid"><section class="menu-card"><div class="h">Current picture</div><div class="kpis"><div class="kpi"><b>${encounterCount}</b><span>encounters</span></div><div class="kpi"><b>${regionsSeen}/${regionTotal}</b><span>regions</span></div><div class="kpi"><b>${incidentResolved}/${incidentHeard}</b><span>calls resolved</span></div><div class="kpi"><b>${wanted ? '★'.repeat(wanted) : 'Clear'}</b><span>FWC wanted</span></div><div class="kpi"><b>${citations}</b><span>citations</span></div><div class="kpi"><b>${Number(incidents.fwc) || 0}/${Number(incidents.runners) || 0}</b><span>FWC / runners</span></div></div></section><section class="menu-card"><div class="h">Standing</div><div class="standing"><span>Locals</span><b>${esc(standing.locals)}</b><em>${this.reputation ? this.reputation.score('locals').toFixed(1) : '0.0'}</em></div><div class="standing"><span>FWC</span><b>${esc(standing.fwc)}</b><em>${this.reputation ? this.reputation.score('fwc').toFixed(1) : '0.0'}</em></div><div class="standing"><span>Backchannel</span><b>${esc(standing.runners)}</b><em>${this.reputation ? this.reputation.score('runners').toFixed(1) : '0.0'}</em></div></section><section class="menu-card"><div class="h">Open threads</div><div class="deed"><b>Story</b>${esc(storyLine)}</div><div class="deed"><b>Resident work</b>${esc(contractLine)}</div><div class="deed"><b>Conditions</b>${esc(this.getWorldLabel?.() || 'South Florida backcountry')}</div></section><section class="menu-card"><div class="h">What people remember</div>${deedRows}</section><section class="menu-card field-notes"><div class="h">Field notes · ${fieldNoteCount} / ${fieldNotes.length || 3}</div><div class="field-note-grid">${fieldNoteRows}</div></section></div>`;
       keyHelp = '<span><b>Tab / ← →</b> change section</span><span><b>Esc</b> back to the water</span>';
     } else if (this.menuTab === 'records') {
-      kicker = 'Boat log'; title = 'Records'; copy = 'Fastest runs, biggest air and the work already put behind this hull.';
-      content = `<div class="records-grid"><section class="menu-card"><div class="h">Hull &amp; style</div>${records.slice(0, 6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}</section><section class="menu-card"><div class="h">Backcountry work</div>${records.slice(6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}<div class="r"><span>Jobs finished</span><b>${this.save.done.length} / ${this.missions.length}</b></div><div class="r"><span>Camp runs</span><b>${Number(this.save.runs) || 0}</b></div><div class="r"><span>Cash earned</span><b>${fmtCash(this.save.cash)}</b></div></section></div>`;
+      kicker = 'Boat log'; title = 'Records'; copy = 'Fastest runs, biggest air, field work and catches measured over the gunwale.';
+      content = `<div class="records-grid"><section class="menu-card"><div class="h">Hull &amp; style</div>${records.slice(0, 6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}</section><section class="menu-card"><div class="h">Backcountry work</div>${records.slice(6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}<div class="r"><span>Jobs finished</span><b>${this.save.done.length} / ${this.missions.length}</b></div><div class="r"><span>Camp runs</span><b>${Number(this.save.runs) || 0}</b></div><div class="r"><span>Cash earned</span><b>${fmtCash(this.save.cash)}</b></div></section><section class="menu-card fishing-log"><div class="h">Catch-and-release log · ${fishLogged} / ${fishingEntries.length || 6} species</div><div class="fish-log-grid">${fishingRows}</div></section></div>`;
       keyHelp = '<span><b>Tab / ← →</b> change section</span><span><b>Esc</b> back to the water</span>';
     } else {
       kicker = 'Paused'; title = 'Tower radio'; copy = 'Resume the water, set the rendering budget, or return to the title.';
@@ -335,7 +341,7 @@ export class Game {
       if (this.hasProgress()) systemActions.push(['new', resetArmed ? 'Confirm new game' : 'New game', resetArmed ? 'Select again now to clear jobs, cash, records and world history' : 'Start over at the tower dock; graphics choice is kept', resetArmed ? 'Clear save' : 'Reset', resetArmed]);
       this.systemSel = Math.max(0, Math.min(this.systemSel, systemActions.length - 1));
       const actions = systemActions.map(([action, name, detail, value, danger], i) => `<button type="button" class="system-action ${i === this.systemSel ? 'sel' : ''} ${danger ? 'danger' : ''}" data-action="${action}"><strong>${name}</strong><small>${detail}</small><em>${value}</em></button>`).join('');
-      content = `<div class="menu-grid"><div class="system-list">${actions}</div><aside><section class="menu-card"><div class="h">On the water</div><div class="keys">W / S throttle · A / D rudder<br>Drag to look · wheel to change camera distance<br>L spotlight · Tab chart · M jobs<br>In the air: S nose up · Shift nose down · A / D spin<br>R reset the hull</div></section></aside></div>`;
+      content = `<div class="menu-grid"><div class="system-list">${actions}</div><aside><section class="menu-card"><div class="h">On the water</div><div class="keys">W / S throttle · A / D rudder<br>Drag to look · wheel to change camera distance<br>C cast / reel · X cut or reel in<br>L spotlight · H horn · Tab chart · M jobs<br>In dense fog: H sounds one prolonged blast<br>In the air: S nose up · Shift nose down · A / D spin<br>R reset the hull</div></section></aside></div>`;
       keyHelp = '<span><b>↑ ↓ / Enter</b> choose &nbsp; <b>Tab / ← →</b> change section</span><span><b>Esc</b> resume</span>';
     }
     const tabs = { jobs: ['▤', 'Jobs'], world: ['⌖', 'World'], records: ['△', 'Records'], system: ['⚙', 'System'] };
@@ -391,6 +397,7 @@ export class Game {
     if (this.mapOpen) { if (e.code === 'Escape' || e.code === 'KeyM') this.closeMap(); return; }
     if (e.code === 'KeyM') { this.openMenu('jobs'); return; }
     if (e.code === 'Escape') { this.openMenu('system'); return; }
+    if ((e.code === 'KeyC' || e.code === 'KeyX') && this.fishing?.capturesInput(e)) return;
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.story?.capturesInput(e.code)) return;
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.aftermath?.capturesInput(e.code)) return;
     if (e.code === 'KeyE' && this.navigationAids?.capturesInput(e.code)) return;
@@ -603,7 +610,7 @@ export class Game {
         this.bountyToast(`Lost trap recovered <b>+$40</b> · ${this.save.traps.length} total`); this.bounties.event('trap', 1); this.record('traps', this.save.traps.length);
         this.nearTraps = this.nearTraps.filter(x => x !== tr); break;
       }
-      const nc = this.nearCamp; const slow = this.mph() < 6, freeRide = !this.state && !this.story?.blocking() && !this.aftermath?.blocking() && !this.encounters?.active && !this.life?.traffic?.activeCollision();
+      const nc = this.nearCamp; const slow = this.mph() < 6, freeRide = !this.state && !this.fishing?.blocking() && !this.story?.blocking() && !this.aftermath?.blocking() && !this.encounters?.active && !this.life?.traffic?.activeCollision();
       this.updateNoWake(dt, freeRide);
       this.dockCamp = (freeRide && nc && Math.hypot(nc.camp.tie.x - p.pos.x, nc.camp.tie.z - p.pos.y) < 16 && slow) ? nc.camp : null;
       this.dockJob = null; if (freeRide && slow) { let bd = 14; for (const j of this.jobs) { const d = this.dist(j.x, j.z); if (d < bd) { bd = d; this.dockJob = j; } } }
@@ -666,6 +673,10 @@ export class Game {
       else { tm = `${fmtT(s.t)}<small>elapsed</small>`; e.timer.classList.remove('warn'); }
       setHTML(e.timer, tm);
       setHTML(e.wp, this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '');
+    } else if (this.fishing?.hud()) {
+      const h = this.fishing.hud();
+      setHTML(e.mission, `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`);
+      setHTML(e.timer, h.timer || ''); e.timer.classList.toggle('warn', Boolean(h.warn)); setHTML(e.wp, '');
     } else if (this.story?.hud()) {
       const h = this.story.hud();
       setHTML(e.mission, `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`);
@@ -689,7 +700,7 @@ export class Game {
       const b = this.bounties.today().filter(x => !x.done)[0];
       const nc = this.nearCamp; const known = nc && this.save.camps.includes(nc.camp.key);
       const campLine = nc ? `<div class="obj">${known ? nc.camp.name : 'Unknown camp'} · ${fmtDist(nc.d)}</div>` : '';
-      setHTML(e.mission, `<div class="title">Free ride</div>${campLine}<div class="hint">M · jobs board &nbsp; Tab · chart</div>${b ? `<div class="sub">Bounty · ${b.text} · ${fmtCash(b.pay)}</div>` : ''}`);
+      setHTML(e.mission, `<div class="title">Free ride</div>${campLine}<div class="hint">C · fish &nbsp; M · jobs board &nbsp; Tab · chart</div>${b ? `<div class="sub">Bounty · ${b.text} · ${fmtCash(b.pay)}</div>` : ''}`);
       setHTML(e.timer, ''); setHTML(e.wp, '');
       this.wpTarget = (nc && nc.d > 60 && nc.d < 5000) ? { x: nc.camp.tie.x, z: nc.camp.tie.z, label: known ? nc.camp.name : 'camp' } : null;
     }
@@ -747,6 +758,10 @@ const BOUNTY_POOL = [
   { id: 'deadhead', text: 'Hit a deadhead at 25 mph and stay on the water', kind: 'deadhead', target: 25, pay: 180 },
   { id: 'idlepass', text: 'Idle past an angler', kind: 'idlepass', target: 1, pay: 120 },
   { id: 'charged', text: 'Get charged by the bull and live', kind: 'charged', target: 1, pay: 200 },
+  { id: 'baitwatch', text: 'Hold off a feeding school for six seconds', kind: 'baitwatch', target: 1, pay: 140 },
+  { id: 'dolphinpass', text: 'Keep a steady course when dolphins join the bow', kind: 'dolphinpass', target: 1, pay: 200 },
+  { id: 'catch3', text: 'Land and release three fish', kind: 'catch', target: 1, count: 3, pay: 180 },
+  { id: 'snook', text: 'Land a common snook', kind: 'fishspecies', target: 'common-snook', pay: 220 },
 ];
 class Bounties {
   constructor(G) {

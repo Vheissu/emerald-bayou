@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  canEscapePursuit, pursuitBackupDelay, pursuitLostDistance, pursuitLostTime, pursuitSpeed,
-  pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
+  canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitAviationVisualRange,
+  pursuitBackupDelay, pursuitLostDistance, pursuitLostTime, pursuitSpeed, pursuitSirenLevel, pursuitTactic,
+  pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
 
 test('maps attention to one through five visible wanted stars', () => {
@@ -23,6 +24,28 @@ test('wanted escalation adds a bounded number of physical patrol units', () => {
   assert.equal(pursuitBackupDelay(0, 1), Infinity);
   assert.ok(pursuitBackupDelay(0, 5) < pursuitBackupDelay(0, 2));
   assert.equal(pursuitBackupDelay(1, 3), Infinity); assert.equal(pursuitBackupDelay(1, 5), 9.5);
+});
+
+test('aviation is a delayed five-star response and will not launch into unsafe weather', () => {
+  assert.equal(pursuitAviationAvailable(4, 8, 0), false);
+  assert.equal(pursuitAviationDelay(4, 8, 0), Infinity);
+  assert.equal(pursuitAviationAvailable(5, 12, 0.3), true);
+  assert.equal(pursuitAviationDelay(5, 12, 0.3), 9.5);
+  assert.equal(pursuitAviationAvailable(5, 24, 0.2), false);
+  assert.equal(pursuitAviationAvailable(5, 12, 0.8), false);
+});
+
+test('aviation has finite region and weather visibility with a narrow searchlight reacquisition', () => {
+  const prairie = pursuitAviationVisualRange(5, 0, 0, 'prairie');
+  const cypress = pursuitAviationVisualRange(5, 0, 0, 'cypress');
+  assert.ok(prairie > cypress);
+  assert.ok(pursuitAviationVisualRange(5, 0.8, 0.6, 'cypress') < cypress);
+  assert.equal(pursuitAviationVisualRange(4, 0, 0, 'broad'), 0);
+  assert.equal(pursuitAviationVisualHeld(prairie - 1, Infinity, 5, 0, 0, 'prairie'), true);
+  assert.equal(pursuitAviationVisualHeld(prairie + 1, Infinity, 5, 0, 0, 'prairie'), false);
+  assert.equal(pursuitAviationVisualHeld(Infinity, 12, 5, 0.8, 0.6, 'cypress'), true);
+  assert.equal(pursuitAviationVisualHeld(Infinity, 30, 5, 0, 0, 'prairie'), false);
+  assert.equal(pursuitAviationVisualHeld(20, 2, 5, 0, 0, 'prairie', false), false);
 });
 
 test('backup patrols intercept from opposing sides without all ramming at low heat', () => {
@@ -48,4 +71,13 @@ test('any nearby active unit holds visual during a coordinated pursuit', () => {
   assert.equal(pursuitVisualHeld(74, 180), true);
   assert.equal(pursuitVisualHeld(181, 180), false);
   assert.equal(pursuitVisualHeld(Infinity, 180), false);
+});
+
+test('patrol siren is distance driven, heat aware, and silent outside pursuit', () => {
+  assert.equal(pursuitSirenLevel(20, 1, false), 0);
+  assert.equal(pursuitSirenLevel(Infinity, 5), 0);
+  assert.equal(pursuitSirenLevel(520, 5), 0);
+  assert.ok(pursuitSirenLevel(45, 5) > pursuitSirenLevel(220, 5));
+  assert.ok(pursuitSirenLevel(90, 5) > pursuitSirenLevel(90, 1));
+  assert.ok(pursuitSirenLevel(0, 99) <= 1);
 });

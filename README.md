@@ -54,9 +54,12 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 | `S` / `Shift` in the air | lean back, lean forward |
 | drag | look around |
 | `E` | interact (job posts, docks, traps, field notes, aid reports) |
+| `C` | cast, set the hook, and reel while held |
+| `X` | reel in or cut the line |
 | `M` | jobs board |
 | `Tab` | chart |
 | `L` | spotlight |
+| `H` | horn; one prolonged blast in dense fog |
 | `R` | reset the boat |
 
 ## What's in it
@@ -69,11 +72,23 @@ Between jobs, you can come across dead motors, FWC stops, watched packages, stor
 
 The seven resident crews keep their own schedules, jobs and operator records. They run for shelter when the weather exceeds what their boat can carry, complain about wake over working gear and remember collisions. FWC 27 can break from patrol to answer an emergency tow call when there is a safe approach.
 
+At five wanted stars, a sustained pursuit can bring FWC Air 2 if the wind and storm conditions are flyable. It works from positions called by surface units and its own finite view. Lose both under canopy or in fog and the helicopter circles the last fix while its searchlight sweeps; the chase can still be escaped. The response reuses the Coast Guard helicopter rig, searchlight and rotor audio, so it adds no second aircraft pool. This is based on FWC's description of its [Aviation Unit](https://myfwc.com/law-enforcement/special-programs/) patrolling large areas of land and water as an "Eye in the Sky," and its account of coordinating [air, land and sea assets](https://myfwc.com/about/inside-fwc/le/what-we-do/).
+
 On clear, low-wind nights, dense fog can settle over the backcountry before dawn and burn off after sunrise. Visibility drops to a few hundred metres. Powerboats slow down, show their navigation lights and sound a prolonged blast while making way; every crew keeps its own signal clock.
+
+The horn is live on `H`. It gives a short warning in clear water and a 4.5-second prolonged blast in dense fog. Nearby working boats answer from their real bearing and alter course when the signal catches them closing. Red, green and stern lights disappear outside their legal arcs, so another boat's aspect can be read at night.
 
 The marked channels now match the radio traffic. Red aids carry even numbers, green aids carry odd numbers, and each light keeps its own flash characteristic while the float moves with chop and current. Hail, tropical weather, hurricanes and vessel strikes can leave a marker dim, dark, off station or down. Idle alongside a bad aid to report the exact fix; it stays on the working chart until FWC maintenance clears it.
 
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
+
+Severe tropical bands can now lift loose planks and sheet metal over the channel. They move with the gusts, tumble, become solid only as they drop to cage height, then splash down and remain as floating prop hazards. Logs stay in the water. The behavior follows National Weather Service and National Hurricane Center guidance that tropical-storm and hurricane winds can turn loose outdoor material into [windborne debris](https://www.weather.gov/mhx/hurricaneprep) and [flying missiles](https://www.nhc.noaa.gov/prepare/hazards.php); the debris left obstructing shallow channels follows [NOAA's account of storm-driven marine debris](https://oceanservice.noaa.gov/facts/disaster-debris.html).
+
+The storm system still owns twelve debris bodies and 44 meshes. Sharing their immutable parts cut the pool from 44 geometries and 16 materials to six geometries and seven materials. Its seventeen wake records are reused every frame, and thunder loops the existing engine-noise sample instead of generating a new 2.8 second buffer for every strike.
+
+World sounds follow their sources across the water. Gator bellows, bird calls, fish splashes, duck-blind shots, lightning, fires, patrol sirens and helicopters pan left or right as the camera turns. The siren and rotor beds each keep one stereo panner for their lifetime, while every compound one-shot shares a single short-lived panner. Browsers without stereo panning still get the same sounds in the centre.
+
+A clearing squall can leave a rainbow opposite the low sun. The primary bow carries red on the outside; a faint secondary reverses the colours, with Alexander's dark band between them. It needs recent rain and a break in the cloud, then fades as the rain curtain moves off. Both arcs are drawn inside the existing sky shader and its water reflection, with no extra scene objects, textures or render targets.
 
 The Moon advances through a 29.531-day cycle. Its rise time, crescent or quarter terminator, moonlight and shadows all come from the same phase. New and full moons retain the strongest spring range; quarter moons soften the water and currents into a neap range. Clouds now hide the stars and Moon instead of letting either draw over the weather.
 
@@ -83,9 +98,21 @@ Navigation aids are streamed from seeded 360 m cells and capped at 36 around the
 
 Wildlife lives its own life. Alligators bask on banks and slide in when you get close, and the bull will charge an idle hull inside 16 m. Mullet jump near the boat, bait boils off the bow in the shallows, ibis and pelicans run lines low over the water, and vultures circle high. When you get more than 700 m away it all quietly relocates ahead of you.
 
+On a moving tide, pelicans and the osprey can find a mullet school in open water. Hold 25–65 m off at idle and the bait stays up; drive through it or let your wake reach it and the birds lift while the school goes deep. The event redirects two existing bird flocks and borrows from the fixed fish and spray pools instead of creating another set of wildlife.
+
+Bring the airboat to idle and press `C` to cast. Florida bass, bluegill and bowfin hold in the freshwater backwaters; common snook, juvenile tarpon and red drum work the mangrove and broad-river water. Depth, murk, current, time of day, tide, weather and recent prop wash all change the wait and the species on the line. During the fight, hold `C` to reel and let go when a hard run pushes the tension into the red. Every fish is measured over the gunwale, released, and written into the boat log with its region and personal best.
+
+The habitat split follows Florida Fish and Wildlife Conservation Commission profiles for [Florida bass](https://myfwc.com/wildlifehabitats/profiles/freshwater/largemouth-bass/), [bowfin](https://myfwc.com/wildlifehabitats/profiles/freshwater/bowfin/), [snook](https://myfwc.com/wildlifehabitats/profiles/saltwater/snook/snook/), [tarpon](https://myfwc.com/wildlifehabitats/profiles/saltwater/tarpon/tarpon/) and [red drum](https://myfwc.com/wildlifehabitats/profiles/saltwater/drums/red-drum/). The release animation follows the agency’s [catch-and-release handling guidance](https://myfwc.com/fishing/freshwater/fishing-tips/): short air exposure and head-first return to the water.
+
+Fishing owns one rod, one dynamic line buffer, one lure and one landing fish. Those resources are reused on every cast, and the recent-catch ledger stops at twelve entries.
+
 Rare field signs depend on the place and the water rather than a mission marker. Roseate spoonbills settle in Rookery Lakes around first and last light, and a real player wake reaching the bank will flush them. A tagged smalltooth sawfish moves through Mangrove Reach on a rising tide; its receiver ping closes up as the boat approaches, but the fix only resolves while the hull stays at idle distance. Falling water in Cypress Reach can uncover a logging skiff long enough to copy its builder plate. Successful observations stay in the boat log and on the chart.
 
 On some calm nights, a plankton bloom reaches Mangrove Reach. The water stays black until something moves through it: hull wakes, fish, paddles and splashes leave blue fire behind them. The bloom runs through the existing wake and particle buffers, so it adds no extra scene assets.
+
+Calm banks now carry fireflies after sunset, with the thickest displays in cypress and mangrove water. Heavy rain and hard wind shut them down. A fast engine thins the flashes close to the hull, while the bow spotlight washes out the insects caught in its cone. Each bank is seeded from its world cell, so the same lights remain in place as the boat idles past. The display is one textureless point draw capped at 243 insects; Performance and Balanced draw smaller prefixes, and Fallback skips it.
+
+The timing and wet-bank placement draw on [University of Florida field notes](https://entnemdept.ufl.edu/lloyd/firefly/ffcomp1-1.pdf). The mangrove bias follows the documented habitat of the [Florida intertidal firefly](https://xerces.org/press/first-conservation-status-assessments-published-for-north-american-fireflies), and the weather and light response follows [National Park Service viewing guidance](https://home.nps.gov/cong/fireflies.htm).
 
 People are jointed figures driven by a pose target system rather than baked animation, so a man on a dock will track you as you go past, drink his beer, check his rod, cast, and reel in a fish. Boat ramps run a 150 second cycle where a truck backs down the slab, floats a boat off the trailer, motors out and comes back to winch it on.
 
@@ -115,6 +142,8 @@ src/
   game.js          jobs, bounties, records, save
   discoveries.js   tide, time and region-driven field observations
   navigationaids.js seeded channel markers, light failures and reports
+  fishing.js       boat-bound fishing, habitat, line tension and catch log
+  nocturnal.js     seeded bank fireflies and night disturbance response
   encounters.js    rescues, patrols, races, contraband and wildlife calls
   law.js           wanted attention and pursuit state
   story.js         the channel 68 arc
@@ -139,6 +168,13 @@ __dbg.environment.lunarSnapshot()         // phase, illumination, tide range, al
 __dbg.ecology.setBioluminescence(1, true) // force the disturbed-water glow
 __dbg.discoveries.start('roseate-roost', true, true) // force a nearby field sign
 __dbg.navigationAids.resourceStats()     // active aids, draw calls, faults and reports
+__dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fish budget
+__dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspection
+__dbg.nocturnal.resourceStats()           // point count, draw count and geometry bytes
+__dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
+__dbg.encounters.pursuitSnapshot()        // surface units, shared visual and pooled aviation state
+__dbg.hazards.resourceStats()             // debris pool, shared resources and wake-stamp budget
+__dbg.audio.spatialStats()                 // listener direction and spatial-node allocation totals
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera
 __dbg.terrain.hf.computeBase(x, z)        // { h, s, lake, prairie, hammock }
 ```

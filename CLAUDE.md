@@ -41,7 +41,10 @@ Gameplay (all orchestrated from `main.js` `init()`): `game.js` (missions, save, 
 `npc.js` (traffic), `wildlife.js`, `world.js` + `sites.js` (structures), `law.js` + `pursuit.js` (wanted
 chases), `reputation.js`, `radio.js`, `condition.js`, `regions.js`, `currents.js`, `ecology.js`,
 `stormline.js`/`stormhazards.js`, `wakeconduct.js` (wake-violation escalation), `discoveries.js` (rare
-finds), `navigationaids.js` (channel markers), `racecourse.js` + `raceformats.js` (races).
+finds), `navigationaids.js` (channel markers) + `navigationrules.js` (sound-signal geometry),
+`racecourse.js` + `raceformats.js` (races), `fishing.js` (catch-and-release), `dolphins.js`,
+`nocturnal.js` (fireflies), `trafficresponse.js` (how traffic yields to pursuits),
+`wakestamps.js` (pooled stamps). `cache.js` holds the shared cell-trim / attribute-prefix helpers.
 `hud.js` is the radar; `worldmap.js` the Tab chart — both are 2D canvases fed by worker-rendered tiles.
 
 ## Invariants that are easy to break
@@ -81,8 +84,9 @@ finds), `navigationaids.js` (channel markers), `racecourse.js` + `raceformats.js
   `innerHTML`/`textContent` unconditionally in a per-frame path.
 - No allocation in `update()` paths: scratch vectors/matrices live on the instance (`this._v` style),
   pools are reused (stamps, particles, batches). `new THREE.*` belongs in constructors and builders.
-- Spray/Plume keep a `clean` flag: a fully dead pool skips its walk and GPU uploads. Emitting clears it;
-  keep that true if you touch their buffers.
+- Spray/Plume keep their live particles packed in [0, count): dead ones are swap-removed, the draw range
+  tracks `count`, and only the live prefix of each attribute uploads (`updateAttributePrefix` in `cache.js`).
+  Preserve the compaction if you touch their buffers — cost must stay bounded by live particles, not capacity.
 - Heavy work streams: terrain finalize has a 4 ms budget, vegetation yields per cell, the radar redraws at
   30 Hz and the chart at 15 Hz (`frameNo` cadence in `main.js`). Match that pattern for new systems.
 - Quality tiers own every screen-space budget: the initial tier comes from hardware signals at boot, the

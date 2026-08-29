@@ -1,6 +1,6 @@
-// The map and simulation stay identical at every tier. These profiles only budget GPU-heavy screen-space work.
-// Cinematic is the existing presentation; lower tiers are selected from conservative hardware signals and only
-// reached at runtime after sustained missed frame budgets.
+// The map, physics and living-world simulation stay identical at every tier. These profiles budget GPU presentation:
+// screen-space attachments, reflections, shadows and the visual wake texture. Cinematic is the full presentation;
+// lower tiers are selected from conservative hardware signals or reached after sustained missed frame budgets.
 export const MAX_DEVICE_PIXEL_RATIO = 2;
 export const MAX_DRAW_PIXELS = 3_000_000;
 export const FOUR_SAMPLE_MAX_PIXELS = 1_600_000;
@@ -9,22 +9,22 @@ export const QUALITY_PROFILES = Object.freeze([
   Object.freeze({
     id: 'fallback', label: 'Fallback', maxDrawPixels: 800_000, maxDevicePixelRatio: 1,
     msaaSamples: 0, shadowMapSize: 1024, reflectionScale: 0.25, reflectionInterval: 3,
-    reflectionMipmaps: false, bloom: false, finalPass: false,
+    reflectionMipmaps: false, wakeResolution: 192, wakeMaxStamps: 10, surfaceMist: 0, precipitationRipples: 0, lensWater: 0, fireflyPoints: 0, bloom: false, finalPass: false,
   }),
   Object.freeze({
     id: 'performance', label: 'Performance', maxDrawPixels: 1_250_000, maxDevicePixelRatio: 1.25,
     msaaSamples: 0, shadowMapSize: 1024, reflectionScale: 0.32, reflectionInterval: 2,
-    reflectionMipmaps: false, bloom: false, finalPass: false,
+    reflectionMipmaps: false, wakeResolution: 256, wakeMaxStamps: 14, surfaceMist: 0, precipitationRipples: 0, lensWater: 0, fireflyPoints: 72, bloom: false, finalPass: false,
   }),
   Object.freeze({
     id: 'balanced', label: 'Balanced', maxDrawPixels: 2_000_000, maxDevicePixelRatio: 1.6,
     msaaSamples: 2, shadowMapSize: 2048, reflectionScale: 0.4, reflectionInterval: 2,
-    reflectionMipmaps: false, bloom: true, finalPass: false,
+    reflectionMipmaps: false, wakeResolution: 384, wakeMaxStamps: 18, surfaceMist: 0.65, precipitationRipples: 0.62, lensWater: 0.62, fireflyPoints: 153, bloom: true, finalPass: false,
   }),
   Object.freeze({
     id: 'cinematic', label: 'Cinematic', maxDrawPixels: MAX_DRAW_PIXELS, maxDevicePixelRatio: MAX_DEVICE_PIXEL_RATIO,
     msaaSamples: 4, shadowMapSize: 4096, reflectionScale: 0.5, reflectionInterval: 1,
-    reflectionMipmaps: true, bloom: true, finalPass: true,
+    reflectionMipmaps: true, wakeResolution: 512, wakeMaxStamps: 20, surfaceMist: 1, precipitationRipples: 1, lensWater: 1, fireflyPoints: 243, bloom: true, finalPass: true,
   }),
 ]);
 
@@ -71,7 +71,14 @@ export function initialQualityLevel({ deviceMemory, hardwareConcurrency, maxText
   if (saveData || (Number.isFinite(deviceMemory) && deviceMemory <= 2) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 2) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 2048)) level = 0;
   else if ((Number.isFinite(deviceMemory) && deviceMemory <= 4) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 4) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 4096)) level = 1;
   else if ((Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 6) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 8192)) level = 2;
-  return Math.min(level, gpuQualityCeiling(gpuRenderer));
+  level = Math.min(level, gpuQualityCeiling(gpuRenderer));
+  // Privacy-masked renderer strings are common, and texture limits alone cannot distinguish a modern discrete GPU
+  // from decade-old integrated hardware. Start that ambiguous 8 GB / 8-thread class at Balanced; the adaptive
+  // controller can still promote it after sustained clean frame windows.
+  const detailedRenderer = /intel|nvidia|geforce|quadro|amd|radeon|apple\s+m\d|mali|adreno|powervr|swiftshader|llvmpipe|arc\s+[a-z]?\d|rtx|gtx/i.test(String(gpuRenderer || ''));
+  const strongHost = Number.isFinite(deviceMemory) && deviceMemory >= 8 && Number.isFinite(hardwareConcurrency) && hardwareConcurrency >= 12 && Number.isFinite(maxTextureSize) && maxTextureSize >= 16384;
+  if (level === QUALITY_PROFILES.length - 1 && !detailedRenderer && !strongHost) level--;
+  return level;
 }
 
 export function pixelRatioFor(width, height, devicePixelRatio = 1, maxDrawPixels = MAX_DRAW_PIXELS, maxDevicePixelRatio = MAX_DEVICE_PIXEL_RATIO) {

@@ -35,6 +35,16 @@ function dynamicLine(points, color, opacity = 0.92) {
   return line;
 }
 
+export function setAirRescueRole(rig, role = 'rescue') {
+  const enforcement = role === 'enforcement';
+  rig.role = enforcement ? 'enforcement' : 'rescue';
+  rig.root.name = enforcement ? 'FWC aviation helicopter' : 'Coast Guard rescue helicopter';
+  rig.livery.primary.color.setHex(enforcement ? 0x2d5c4b : 0xe94d20);
+  rig.livery.stripe.color.setHex(enforcement ? 0xdde7df : 0xe7ecea);
+  rig.livery.strobe.color.setHex(enforcement ? 0x267cff : 0xffffff);
+  return rig;
+}
+
 export function makeAirRescueRig(rr, scene) {
   const root = new THREE.Group(); root.name = 'Coast Guard rescue helicopter'; root.visible = false;
   const rescueOrange = new THREE.MeshStandardMaterial({ color: 0xe94d20, roughness: 0.58, metalness: 0.24 });
@@ -108,6 +118,7 @@ export function makeAirRescueRig(rr, scene) {
   return {
     root, rotor, tailRotor, rotorDisc, portLamp, starboardLamp, strobe, target, searchlight, beam, beamMaterial, pool, poolUniforms,
     survivor, swimmer, basket, hoistLine, trailLine, survivorStrobe, survivorBulb, survivorLight,
+    role: 'rescue', livery: { primary: rescueOrange, stripe: white, strobe: strobe.material },
     beamDirection: new THREE.Vector3(), beamQuaternion: new THREE.Quaternion(),
   };
 }
