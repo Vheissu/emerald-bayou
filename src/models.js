@@ -5,7 +5,10 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // shares the geometry and materials. SPEC turns each model's own frame into the game's (bow / head toward -z, metres).
 const loader = new GLTFLoader();
 const cache = new Map();
-const modelRoot = `${import.meta.env.BASE_URL}models/`;
+const deferredQueue = [];
+const deferredByName = new Map();
+let deferOptionalModels = false, modelConcurrency = 2, drainingDeferred = false;
+const modelRoot = `${import.meta.env?.BASE_URL || '/'}models/`;
 export const SPEC = {
   beau_boat: { scale: 2.3, yaw: -Math.PI / 2, y: 0.27, len: 4.4 },
   boat_dreams: { scale: 2.7, yaw: -Math.PI / 2, y: 0.62, len: 5.4 },
@@ -27,13 +30,64 @@ function fit(name, root) {
 }
 export function modelBox(name) { const r = cacheDone.get(name); return r ? fit(name, r) : null; }
 const cacheDone = new Map();
-export function loadModel(name) {
-  if (!cache.has(name)) cache.set(name, loader.loadAsync(`${modelRoot}${name}.glb`).then(g => {
+
+export function configureModelLoading({ deferOptional = false, concurrency = 2 } = {}) {
+  deferOptionalModels = Boolean(deferOptional);
+  modelConcurrency = Math.max(1, Math.min(4, Math.round(Number(concurrency) || 1)));
+}
+
+function fetchModel(name) {
+  return loader.loadAsync(`${modelRoot}${name}.glb`).then(g => {
     const root = g.scene;
     root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; const m = o.material; if (m) { if (m.map) { m.map.anisotropy = 4; m.map.colorSpace = THREE.SRGBColorSpace; } m.roughness = Math.max(m.roughness ?? 1, 0.55); } } });
     cacheDone.set(name, root); fit(name, root);
     return root;
-  }).catch(e => { console.warn('model', name, e); return null; }));
+  }).catch(e => { console.warn('model', name, e); return null; });
+}
+
+function startDeferred(job) {
+  if (job.started) return job.promise;
+  job.started = true; deferredByName.delete(job.name);
+  const load = fetchModel(job.name); load.then(job.resolve); return load;
+}
+
+function idleTurn() {
+  return new Promise(resolve => {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(() => resolve(), { timeout: 900 });
+    else setTimeout(resolve, 80);
+  });
+}
+
+async function drainDeferredModels() {
+  if (drainingDeferred) return; drainingDeferred = true;
+  while (deferredQueue.length) {
+    await idleTurn();
+    const batch = [];
+    while (batch.length < modelConcurrency && deferredQueue.length) {
+      const job = deferredQueue.shift(); if (!job.started) batch.push(job);
+    }
+    if (batch.length) await Promise.all(batch.map(startDeferred));
+  }
+  drainingDeferred = false;
+}
+
+export function releaseDeferredModels() {
+  deferOptionalModels = false; void drainDeferredModels();
+}
+
+export function modelLoadingStats() {
+  return { cached: cache.size, ready: cacheDone.size, queued: deferredByName.size, concurrency: modelConcurrency, deferred: deferOptionalModels };
+}
+
+export function loadModel(name, { immediate = false } = {}) {
+  if (!cache.has(name)) {
+    if (deferOptionalModels && !immediate) {
+      let resolve;
+      const promise = new Promise(done => { resolve = done; });
+      const job = { name, promise, resolve, started: false };
+      cache.set(name, promise); deferredByName.set(name, job); deferredQueue.push(job);
+    } else cache.set(name, fetchModel(name));
+  } else if (immediate && deferredByName.has(name)) startDeferred(deferredByName.get(name));
   return cache.get(name);
 }
 // A group that fills itself with the model when it arrives (until then it is empty, or shows `placeholder`).
@@ -56,4 +110,4 @@ export async function loadGeo(name) {
   geo.rotateY(sp.yaw); geo.scale(sp.scale, sp.scale, sp.scale); geo.translate(0, sp.y, 0); geo.computeBoundingBox();
   return { geo, mat: mesh.material, height: geo.boundingBox.max.y };
 }
-export function preload(names) { return Promise.all(names.map(loadModel)); }
+export function preload(names) { return Promise.all(names.map(name => loadModel(name, { immediate: true }))); }

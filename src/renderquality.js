@@ -33,11 +33,45 @@ export function qualityProfile(level) {
   return QUALITY_PROFILES[index];
 }
 
-export function initialQualityLevel({ deviceMemory, hardwareConcurrency, maxTextureSize, saveData = false } = {}) {
-  if (saveData || (Number.isFinite(deviceMemory) && deviceMemory <= 2) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 2) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 2048)) return 0;
-  if ((Number.isFinite(deviceMemory) && deviceMemory <= 4) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 4) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 4096)) return 1;
-  if ((Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 6) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 8192)) return 2;
+// Thread count is a poor proxy for a decade-old desktop GPU. These narrow renderer-name matches only cap known
+// low-end families; unknown and modern discrete GPUs retain the existing high-end path.
+export function gpuQualityCeiling(rendererName = '') {
+  const name = String(rendererName || '').toLowerCase();
+  if (!name) return QUALITY_PROFILES.length - 1;
+  if (/swiftshader|llvmpipe|softpipe|software raster|microsoft basic render|vmware/.test(name)) return 0;
+
+  if (/intel.*(?:hd graphics|uhd graphics|iris|iris pro|iris plus)/.test(name)) {
+    const model = name.match(/(?:hd graphics|uhd graphics|iris(?: pro| plus)?(?: graphics)?)\s*(\d{3,4})/);
+    if (model && model[1].length >= 4) return 1; // HD/Iris 4000-6200 generation, common in 2012-2015 machines
+    return 2;
+  }
+  if (/geforce\s+(?:8|9)\d{3}m?\b/.test(name)) return 1;
+  const geforce = name.match(/geforce\s+(gtx|gt)\s*(\d{3,4})/);
+  if (geforce) {
+    const model = Number(geforce[2]);
+    if (geforce[1] === 'gt' || model <= 750) return 1;
+    if (model <= 1050) return 2;
+  }
+  if (/radeon\s+hd\s+\d|firepro\s+[dmvw]\d/.test(name)) return 1;
+  if (/radeon\s+(?:r[579]|pro\s+[45]\d\d)\b/.test(name)) return 2;
+  if (/mali-(?:4|t6|t7)|adreno.*\b[34]\d\d\b/.test(name)) return 1;
   return QUALITY_PROFILES.length - 1;
+}
+
+export function webglRendererName(gl) {
+  if (!gl) return '';
+  try {
+    const debug = gl.getExtension?.('WEBGL_debug_renderer_info');
+    return String(gl.getParameter(debug?.UNMASKED_RENDERER_WEBGL || gl.RENDERER) || '');
+  } catch (error) { return ''; }
+}
+
+export function initialQualityLevel({ deviceMemory, hardwareConcurrency, maxTextureSize, saveData = false, gpuRenderer = '' } = {}) {
+  let level = QUALITY_PROFILES.length - 1;
+  if (saveData || (Number.isFinite(deviceMemory) && deviceMemory <= 2) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 2) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 2048)) level = 0;
+  else if ((Number.isFinite(deviceMemory) && deviceMemory <= 4) || (Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 4) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 4096)) level = 1;
+  else if ((Number.isFinite(hardwareConcurrency) && hardwareConcurrency <= 6) || (Number.isFinite(maxTextureSize) && maxTextureSize <= 8192)) level = 2;
+  return Math.min(level, gpuQualityCeiling(gpuRenderer));
 }
 
 export function pixelRatioFor(width, height, devicePixelRatio = 1, maxDrawPixels = MAX_DRAW_PIXELS, maxDevicePixelRatio = MAX_DEVICE_PIXEL_RATIO) {
@@ -65,7 +99,7 @@ export class AdaptiveQualityController {
 
   get profile() { return qualityProfile(this.level); }
 
-  resetWindow() { this.elapsed = 0; this.frames = 0; this.slowFrames = 0; }
+  resetWindow() { this.elapsed = 0; this.frames = 0; this.slowFrames = 0; this.stallFrames = 0; }
 
   reset() { this.resetWindow(); this.headroomWindows = 0; }
 
@@ -79,19 +113,22 @@ export class AdaptiveQualityController {
   }
 
   observe(frameSeconds, active = true) {
-    if (!active || !Number.isFinite(frameSeconds) || frameSeconds <= 0 || frameSeconds > 0.2) { this.resetWindow(); return null; }
-    this.cooldown = Math.max(0, this.cooldown - frameSeconds);
-    this.elapsed += frameSeconds; this.frames++;
+    if (!active || !Number.isFinite(frameSeconds) || frameSeconds <= 0) { this.resetWindow(); return null; }
+    const sampledSeconds = Math.min(frameSeconds, 0.2);
+    this.cooldown = Math.max(0, this.cooldown - sampledSeconds);
+    this.elapsed += sampledSeconds; this.frames++;
     if (frameSeconds > 1 / 45) this.slowFrames++;
+    if (frameSeconds > 0.2) this.stallFrames++;
     if (this.elapsed < this.sampleSeconds) return null;
 
     const averageMs = this.elapsed / Math.max(1, this.frames) * 1000;
     const slowRatio = this.slowFrames / Math.max(1, this.frames);
-    this.lastSample = { averageMs, slowRatio, frames: this.frames };
+    const stallFrames = this.stallFrames;
+    this.lastSample = { averageMs, slowRatio, stallFrames, frames: this.frames };
     this.resetWindow();
 
     let direction = 0;
-    if (this.cooldown <= 0 && this.level > this.minLevel && (averageMs > 23.5 || slowRatio > 0.32)) {
+    if (this.cooldown <= 0 && this.level > this.minLevel && (averageMs > 23.5 || slowRatio > 0.32 || stallFrames >= 2)) {
       direction = -1; this.headroomWindows = 0; this.cooldown = 4;
     } else if (averageMs < 15.5 && slowRatio < 0.04) {
       this.headroomWindows++;
@@ -102,7 +139,7 @@ export class AdaptiveQualityController {
 
     if (!direction) return null;
     this.level += direction;
-    return { level: this.level, profile: this.profile, direction, averageMs, slowRatio };
+    return { level: this.level, profile: this.profile, direction, averageMs, slowRatio, stallFrames };
   }
 
   snapshot() {

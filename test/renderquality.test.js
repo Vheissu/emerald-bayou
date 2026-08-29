@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AdaptiveQualityController, initialQualityLevel, msaaSamplesFor, pixelRatioFor, qualityProfile } from '../src/renderquality.js';
+import { AdaptiveQualityController, gpuQualityCeiling, initialQualityLevel, msaaSamplesFor, pixelRatioFor, qualityProfile, webglRendererName } from '../src/renderquality.js';
 
 test('caps dense displays by drawing-pixel budget', () => {
   assert.equal(pixelRatioFor(1000, 1000, 2), Math.sqrt(3));
@@ -16,6 +16,21 @@ test('starts conservatively only when hardware signals justify it', () => {
   assert.equal(initialQualityLevel({ saveData: true }), 0);
 });
 
+test('caps known old and software GPUs without penalizing modern discrete renderers', () => {
+  assert.equal(gpuQualityCeiling('ANGLE (Intel, Intel(R) HD Graphics 5000 OpenGL Engine)'), 1);
+  assert.equal(gpuQualityCeiling('Intel(R) UHD Graphics 630'), 2);
+  assert.equal(gpuQualityCeiling('ANGLE (NVIDIA, GeForce GTX 960 Direct3D11)'), 2);
+  assert.equal(gpuQualityCeiling('ANGLE (NVIDIA, GeForce RTX 4070 Direct3D11)'), 3);
+  assert.equal(gpuQualityCeiling('Google SwiftShader'), 0);
+  assert.equal(initialQualityLevel({ deviceMemory: 16, hardwareConcurrency: 12, maxTextureSize: 16384, gpuRenderer: 'Intel Iris Pro 5200' }), 1);
+});
+
+test('reads the unmasked renderer when available and fails closed to no name', () => {
+  const gl = { RENDERER: 1, getExtension: () => ({ UNMASKED_RENDERER_WEBGL: 2 }), getParameter: key => key === 2 ? 'Intel HD Graphics 4000' : 'WebGL' };
+  assert.equal(webglRendererName(gl), 'Intel HD Graphics 4000');
+  assert.equal(webglRendererName({ getExtension: () => { throw new Error('blocked'); } }), '');
+});
+
 test('removes multisample attachments on performance profiles', () => {
   assert.equal(msaaSamplesFor(1200, 800, 0), 0);
   assert.equal(msaaSamplesFor(1200, 800, 2), 2);
@@ -29,6 +44,15 @@ test('steps down on sustained missed frames and ignores a background pause', () 
   assert.equal(change?.profile.id, 'balanced');
   assert.equal(quality.observe(1, true), null);
   assert.equal(quality.profile.id, 'balanced');
+});
+
+test('counts repeated foreground stalls instead of discarding them', () => {
+  const quality = new AdaptiveQualityController({ initialLevel: 3, sampleSeconds: 1 });
+  quality.observe(0.3, true); quality.observe(0.3, true);
+  let change = null;
+  for (let i = 0; i < 45; i++) change ||= quality.observe(1 / 60, true);
+  assert.equal(change?.profile.id, 'balanced');
+  assert.equal(change?.stallFrames, 2);
 });
 
 test('requires several clean windows before restoring quality', () => {

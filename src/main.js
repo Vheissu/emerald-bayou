@@ -21,7 +21,7 @@ import { WorldMap } from './worldmap.js';
 import { Life } from './life.js';
 import { pickSite, buildSite } from './sites.js';
 import { person, canoe } from './folk.js';
-import { spawn, preload, loadGeo, loadModel, modelBox } from './models.js';
+import { configureModelLoading, loadGeo, loadModel, modelBox, modelLoadingStats, preload, releaseDeferredModels, spawn } from './models.js';
 import { Environment } from './environment.js';
 import { EncounterDirector } from './encounters.js';
 import { BoatCondition } from './condition.js';
@@ -35,17 +35,19 @@ import { RadioDirector } from './radio.js';
 import { WorldIncidents } from './incidents.js';
 import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
-import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor } from './renderquality.js';
+import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor, webglRendererName } from './renderquality.js';
 import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel, readQualityPreference, writeQualityPreference } from './displaysettings.js';
 import { startupPlan, startupTerrainReady } from './startup.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
+const gpuRenderer = webglRendererName(renderer.getContext());
 const hardwareQualityLevel = initialQualityLevel({
   deviceMemory: navigator.deviceMemory,
   hardwareConcurrency: navigator.hardwareConcurrency,
   maxTextureSize: renderer.capabilities.maxTextureSize,
   saveData: navigator.connection?.saveData === true,
+  gpuRenderer,
 });
 let qualityPreference = readQualityPreference();
 const qualityController = new AdaptiveQualityController(qualityControllerConfig(qualityPreference, hardwareQualityLevel));
@@ -69,6 +71,7 @@ const SUN_DIR = new THREE.Vector3(-0.42, 0.72, -0.55).normalize();
 
 async function init() {
   const startup = startupPlan(renderProfile.id);
+  configureModelLoading({ deferOptional: startup.deferOptionalModels, concurrency: startup.modelConcurrency });
   // ---- sky & lighting ----
   const sky = new Sky(SUN_DIR);
   scene.add(sky.mesh);
@@ -259,9 +262,10 @@ async function init() {
       fishFallbackReleased: life.fish.fallbackReleased,
     },
     chart: worldMap.memoryStats(),
+    models: modelLoadingStats(),
   }) : null;
   window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
-    profile: renderProfile.id, preference: qualityPreference, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
+    profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
 
@@ -355,6 +359,7 @@ async function init() {
   const beginGame = (jobs = false) => {
     audio.start(); started = true; game.playing = true; game.paused = false;
     startEl.classList.add('hidden'); startEl.setAttribute('aria-hidden', 'true');
+    window.setTimeout(() => releaseDeferredModels(), startup.modelReleaseDelayMs);
     if (jobs) game.openMenu('jobs');
   };
   const showTitle = (persist = true) => {

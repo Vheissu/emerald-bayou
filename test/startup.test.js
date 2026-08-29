@@ -10,6 +10,8 @@ test('cinematic hardware keeps the complete shader and model warm-up', () => {
   assert.equal(plan.terrainReadiness, 'settled');
   assert.equal(plan.maxWaitMs, 20000);
   assert.equal(plan.compileDelayMs, 250);
+  assert.equal(plan.deferOptionalModels, false);
+  assert.equal(plan.modelConcurrency, 4);
 });
 
 test('older-hardware profiles do not block on optional models or the full shader warm-up', () => {
@@ -20,6 +22,9 @@ test('older-hardware profiles do not block on optional models or the full shader
     assert.equal(plan.terrainReadiness, 'local');
     assert.ok(plan.maxWaitMs >= 3000 && plan.maxWaitMs <= 6000);
     assert.equal(plan.compileDelayMs, 0);
+    assert.equal(plan.deferOptionalModels, true);
+    assert.ok(plan.modelConcurrency >= 1 && plan.modelConcurrency <= 2);
+    assert.ok(plan.modelReleaseDelayMs >= 300);
   }
 });
 
