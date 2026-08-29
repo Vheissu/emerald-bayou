@@ -160,7 +160,8 @@ export class Waders {
   }
 }
 
-export function wadingBird() {
+let wadingBirdTemplate = null;
+function buildWadingBird() {
   const g = new THREE.Group();
   const white = new THREE.MeshStandardMaterial({ color: 0xf3f1ea, roughness: 0.85 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x2a2a28, roughness: 0.9 });
@@ -169,20 +170,35 @@ export function wadingBird() {
   const neck2 = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3, 6), white); neck2.position.set(0, 1.25, -0.1); neck2.rotation.x = -0.4; g.add(neck2);
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), white); head.scale.set(1, 0.9, 1.6); head.position.set(0, 1.4, -0.16); g.add(head);
   const beak = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.24, 6), new THREE.MeshStandardMaterial({ color: 0xd9b24a })); beak.rotation.x = -Math.PI / 2 - 0.15; beak.position.set(0, 1.38, -0.34); g.add(beak);
-  for (const sx of [-1, 1]) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.72, 4), dark); leg.position.set(sx * 0.05, 0.36, 0.05); g.add(leg); }
+  const legGeometry = new THREE.CylinderGeometry(0.012, 0.012, 0.72, 4);
+  for (const sx of [-1, 1]) { const leg = new THREE.Mesh(legGeometry, dark); leg.position.set(sx * 0.05, 0.36, 0.05); g.add(leg); }
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
 }
 
-export function manateeMesh() {
+// These animals are permanent residents. Clone their transform trees while sharing the immutable geometry and
+// materials, instead of uploading an identical set of buffers for every animal in the population.
+export function wadingBird() {
+  if (!wadingBirdTemplate) wadingBirdTemplate = buildWadingBird();
+  return wadingBirdTemplate.clone(true);
+}
+
+let manateeTemplate = null;
+function buildManatee() {
   const mat = new THREE.MeshStandardMaterial({ color: 0x5e5f5a, roughness: 0.85 });
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.SphereGeometry(0.55, 18, 12), mat); body.scale.set(1, 0.8, 2.6); g.add(body);
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 10), mat); head.position.set(0, -0.02, -1.45); head.scale.set(1, 0.85, 1.1); g.add(head);
   const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.5, 0.9, 12), mat); tail.rotation.x = Math.PI / 2; tail.scale.set(1.6, 1, 0.25); tail.position.set(0, 0, 1.75); g.add(tail);
-  for (const sx of [-1, 1]) { const fl = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), mat); fl.scale.set(0.5, 0.25, 1); fl.position.set(sx * 0.55, -0.2, -0.6); fl.rotation.y = sx * 0.4; g.add(fl); }
+  const flipperGeometry = new THREE.SphereGeometry(0.22, 10, 8);
+  for (const sx of [-1, 1]) { const fl = new THREE.Mesh(flipperGeometry, mat); fl.scale.set(0.5, 0.25, 1); fl.position.set(sx * 0.55, -0.2, -0.6); fl.rotation.y = sx * 0.4; g.add(fl); }
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return g;
+}
+
+export function manateeMesh() {
+  if (!manateeTemplate) manateeTemplate = buildManatee();
+  return manateeTemplate.clone(true);
 }
 
 export class Manatees {
@@ -252,22 +268,31 @@ export class Manatees {
 // ---------------------------------------------------------------------------
 // the Meshy alligator (head toward -z, belly at y = 0) with the old procedural gator as a stand-in while it loads
 export function gatorMesh(scale = 1) { const g = spawn('realistic_alligator', gatorProc()); g.scale.setScalar(scale); return g; }
-function gatorProc() {
+let gatorTemplate = null;
+function buildGator() {
   const g = new THREE.Group();
   const hide = new THREE.MeshStandardMaterial({ color: 0x2e3a26, roughness: 0.92 });
   const belly = new THREE.MeshStandardMaterial({ color: 0x5c6440, roughness: 0.9 });
   const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 14, 10), hide); body.scale.set(1, 0.55, 3.2); g.add(body);
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.2, 0.95), hide); head.position.set(0, 0.02, -1.45); g.add(head);
   const snout = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.13, 0.5), hide); snout.position.set(0, -0.01, -2.1); g.add(snout);
-  for (const sx of [-1, 1]) { const eye = new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 6), hide); eye.position.set(sx * 0.16, 0.14, -1.2); g.add(eye); }
+  const eyeGeometry = new THREE.SphereGeometry(0.065, 8, 6);
+  for (const sx of [-1, 1]) { const eye = new THREE.Mesh(eyeGeometry, hide); eye.position.set(sx * 0.16, 0.14, -1.2); g.add(eye); }
   // scute ridges down the back
-  for (let i = 0; i < 9; i++) for (const sx of [-1, 1]) { const s = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.11, 4), hide); s.position.set(sx * 0.13, 0.17 - i * 0.008, -0.8 + i * 0.22); g.add(s); }
+  const scuteGeometry = new THREE.ConeGeometry(0.05, 0.11, 4);
+  for (let i = 0; i < 9; i++) for (const sx of [-1, 1]) { const s = new THREE.Mesh(scuteGeometry, hide); s.position.set(sx * 0.13, 0.17 - i * 0.008, -0.8 + i * 0.22); g.add(s); }
   const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.3, 2.2, 8), hide); tail.rotation.x = Math.PI / 2; tail.scale.set(1, 1, 0.6); tail.position.set(0, -0.05, 2.0); g.add(tail);
   const under = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), belly); under.scale.set(1, 0.3, 3); under.position.y = -0.12; g.add(under);
-  for (const sx of [-1, 1]) for (const sz of [-0.7, 0.7]) { const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.3, 4, 6), hide); leg.position.set(sx * 0.38, -0.12, sz); leg.rotation.z = sx * 1.2; g.add(leg); }
+  const legGeometry = new THREE.CapsuleGeometry(0.07, 0.3, 4, 6);
+  for (const sx of [-1, 1]) for (const sz of [-0.7, 0.7]) { const leg = new THREE.Mesh(legGeometry, hide); leg.position.set(sx * 0.38, -0.12, sz); leg.rotation.z = sx * 1.2; g.add(leg); }
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   g.position.y = 0.36; // belly on the origin like the model
   return g;
+}
+
+function gatorProc() {
+  if (!gatorTemplate) gatorTemplate = buildGator();
+  return gatorTemplate.clone(true);
 }
 
 // A bank to sun on: low ground with water within a few metres, and the direction to that water.

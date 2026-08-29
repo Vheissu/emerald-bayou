@@ -220,7 +220,24 @@ async function init() {
     });
     return { objects, geometries: geometries.size, materials: materials.size, textures: textures.size };
   } : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, ...pipeline.memoryStats() }) };
+  const debugTreeResources = import.meta.env.DEV ? roots => {
+    const geometries = new Set(), materials = new Set(); let objects = 0;
+    for (const root of roots) root?.traverse?.(object => {
+      objects++; if (object.geometry) geometries.add(object.geometry);
+      if (Array.isArray(object.material)) for (const material of object.material) materials.add(material); else if (object.material) materials.add(object.material);
+    });
+    return { roots: roots.length, objects, geometries: geometries.size, materials: materials.size };
+  } : null;
+  const debugResourceSnapshot = import.meta.env.DEV ? () => ({
+    renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length },
+    graph: debugSceneGraphStats(),
+    wildlife: {
+      waders: debugTreeResources(waders.list.map(w => w.mesh)),
+      manatees: debugTreeResources(manatees.list.map(m => m.mesh)),
+      gators: debugTreeResources(gators.list.map(g => g.mesh)),
+    },
+  }) : null;
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, ...pipeline.memoryStats() }) };
 
   // ---- input ----
   const keys = {};
@@ -233,8 +250,9 @@ async function init() {
       console.info('[emerald-encounter-stress]', JSON.stringify({ iterations: 6000, started, before, after: debugSceneGraphStats(), active: encounters.active, renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length } }));
     }
     if (import.meta.env.DEV && e.code === 'F8' && !e.repeat) {
-      e.preventDefault(); const memory = renderer.info.memory, quality = window.__dbg.renderQuality();
-      console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: debugSceneGraphStats(), fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
+      e.preventDefault(); const memory = renderer.info.memory, quality = window.__dbg.renderQuality(); const snapshot = debugResourceSnapshot();
+      document.documentElement.dataset.emeraldResource = JSON.stringify(snapshot);
+      console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: snapshot.graph, wildlife: snapshot.wildlife, fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
     }
     if (e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
   });
@@ -577,6 +595,7 @@ async function init() {
   await Promise.all([preload(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a']), new Promise(r => { const poll = () => { if ((terrain.settled() && performance.now() - t0 > 800) || performance.now() - t0 > 20000) r(); else setTimeout(poll, 100); }; poll(); })]);
   await new Promise(r => setTimeout(r, 250)); // one more frame with the models in, so their programs are compiled
   scene.remove(warm); encounters.spills[0].uniforms.uAlpha.value = 0; window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false; for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
+  if (import.meta.env.DEV) document.documentElement.dataset.emeraldResource = JSON.stringify(debugResourceSnapshot());
   document.getElementById('loading').remove();
   startEl.classList.remove('hidden');
 }
