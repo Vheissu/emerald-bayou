@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canEscapePursuit, pursuitBackupDelay, pursuitLostDistance, pursuitLostTime, pursuitSpeed,
-  pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
+  pursuitSirenLevel, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
 
 test('maps attention to one through five visible wanted stars', () => {
@@ -48,4 +48,13 @@ test('any nearby active unit holds visual during a coordinated pursuit', () => {
   assert.equal(pursuitVisualHeld(74, 180), true);
   assert.equal(pursuitVisualHeld(181, 180), false);
   assert.equal(pursuitVisualHeld(Infinity, 180), false);
+});
+
+test('patrol siren is distance driven, heat aware, and silent outside pursuit', () => {
+  assert.equal(pursuitSirenLevel(20, 1, false), 0);
+  assert.equal(pursuitSirenLevel(Infinity, 5), 0);
+  assert.equal(pursuitSirenLevel(520, 5), 0);
+  assert.ok(pursuitSirenLevel(45, 5) > pursuitSirenLevel(220, 5));
+  assert.ok(pursuitSirenLevel(90, 5) > pursuitSirenLevel(90, 1));
+  assert.ok(pursuitSirenLevel(0, 99) <= 1);
 });

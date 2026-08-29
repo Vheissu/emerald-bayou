@@ -195,7 +195,7 @@ function animateRamp(g, t, waveFn, ctx) {
     if (vis && speed > 0.05 && d < 90) {
       ctx.ob = Math.max(ctx.ob, speed * Math.max(0, 1 - d / 90));
       const fx = -Math.sin(heading + g.rotation.y), fz = -Math.cos(heading + g.rotation.y);
-      if (d < 75) { ctx.stamps.push({ x: wp.x - fx * 1.8, z: wp.z - fz * 1.8, radius: 1.1, height: 0.5 * speed, foam: 1.4 * speed, foamRadius: 1.0 }); const n = Math.floor(50 * ctx.dt * speed + Math.random()); for (let i = 0; i < n; i++) ctx.plume.emit(wp.x - fx * 2.4 + (Math.random() - 0.5) * 0.8, 0.1, wp.z - fz * 2.4 + (Math.random() - 0.5) * 0.8, -fx * 1.5 + (Math.random() - 0.5), 0.5 + Math.random() * 1.2 * speed, -fz * 1.5 + (Math.random() - 0.5), 0.25 + Math.random() * 0.3, 0.9, 0.6 + Math.random() * 0.5, 0.25); }
+      if (d < 75) { if (ctx.emitStamp) ctx.emitStamp(wp.x - fx * 1.8, wp.z - fz * 1.8, 1.1, 0.5 * speed, 1.4 * speed, 1); else ctx.stamps?.push({ x: wp.x - fx * 1.8, z: wp.z - fz * 1.8, radius: 1.1, height: 0.5 * speed, foam: 1.4 * speed, foamRadius: 1 }); const n = Math.floor(50 * ctx.dt * speed + Math.random()); for (let i = 0; i < n; i++) ctx.plume.emit(wp.x - fx * 2.4 + (Math.random() - 0.5) * 0.8, 0.1, wp.z - fz * 2.4 + (Math.random() - 0.5) * 0.8, -fx * 1.5 + (Math.random() - 0.5), 0.5 + Math.random() * 1.2 * speed, -fz * 1.5 + (Math.random() - 0.5), 0.25 + Math.random() * 0.3, 0.9, 0.6 + Math.random() * 0.5, 0.25); }
     }
     const tw = truck.getWorldPosition(_v3b); const dT = Math.hypot(tw.x - ctx.bx, tw.z - ctx.bz);
     if (dT < 90) ctx.truck = Math.max(ctx.truck, (moving ? 1 : 0.25) * Math.max(0, 1 - dT / 90));

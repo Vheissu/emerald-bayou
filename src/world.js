@@ -8,6 +8,7 @@ import { SITE_CELL, pickSite, buildSite, animateSite, wideHere } from './sites.j
 import { person, cooler, bucket, fishingLine } from './folk.js';
 import { spawn } from './models.js';
 import { trimOldest } from './cache.js';
+import { WakeStampPool } from './wakestamps.js';
 
 // The things scattered through the endless bayou: fish camps on the channel banks (one per ~1.6 km cell, seeded, so
 // they are the same for everyone every time) and lost crab-trap floats drifting in the back pools. Everything is
@@ -44,7 +45,9 @@ export class World {
     this.cellCacheEvictions = { camps: 0, sites: 0, traps: 0 };
     this.checkT = 0; this.collected = new Set(); this.phys = null; this.wind = null;
     this.fx = null; // { plume, spray, audio, fish, playerWakeAt } from main
-    this.stampList = []; this.obLevel = 0; this.truckLevel = 0; this.onShot = null;
+    this.stampPool = new WakeStampPool(24); this.obLevel = 0; this.truckLevel = 0; this.onShot = null;
+    this.emitStamp = (x, z, radius, height, foam, foamRadius) => this.stampPool.emit(x, z, radius, height, foam, foamRadius);
+    this.context = { bx: 0, bz: 0, speed: 0, dt: 0, emitStamp: this.emitStamp, plume: null, spray: null, audio: null, fish: null, playerWakeAt: null, ob: 0, truck: 0, onShot: null, humanActivity: 1, heightAt: (x, z) => this.T.heightAt(x, z) };
     this.disposedGeometries = 0;
   }
   releaseGeometry(root) { const n = disposeDetachedGeometries(root, this.scene); this.disposedGeometries += n; return n; }
@@ -178,7 +181,7 @@ export class World {
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const tr = this.trapAt(i, j); if (tr && !this.collected.has(tr.key) && Math.hypot(tr.x - x, tr.z - z) <= r) out.push(tr); }
     return out;
   }
-  stamps(out) { for (const s of this.stampList) out.push(s); }
+  stamps(out) { this.stampPool.appendTo(out); }
   collectTrap(tr) {
     this.collected.add(tr.key);
     const live = this.liveTraps.get(tr.key); if (live) { this.scene.remove(live); this.releaseGeometry(live); this.liveTraps.delete(tr.key); }
@@ -199,9 +202,9 @@ export class World {
       for (const [key, m] of this.liveTraps) { const tr = this.trapCells.get(key); if (Math.hypot(tr.x - bx, tr.z - bz) > 620) { this.scene.remove(m); this.releaseGeometry(m); this.liveTraps.delete(key); } }
     }
     for (const [key, m] of this.liveTraps) { const tr = this.trapCells.get(key); m.position.y = this.waveFn(tr.x, tr.z, t) - 0.12; m.rotation.z = Math.sin(t * 1.3 + tr.ph) * 0.12; m.rotation.x = Math.cos(t * 0.9 + tr.ph) * 0.1; }
-    this.stampList.length = 0;
+    this.stampPool.reset();
     const P = this.phys; const fx = this.fx || {};
-    const ctx = { bx, bz, speed: P ? P.speed : 0, dt, stamps: this.stampList, plume: fx.plume, spray: fx.spray, audio: fx.audio, fish: fx.fish, playerWakeAt: fx.playerWakeAt, ob: 0, truck: 0, onShot: this.onShot, humanActivity: this.humanActivity ?? 1, heightAt: (x, z) => this.T.heightAt(x, z) };
+    const ctx = this.context; ctx.bx = bx; ctx.bz = bz; ctx.speed = P ? P.speed : 0; ctx.dt = dt; ctx.plume = fx.plume; ctx.spray = fx.spray; ctx.audio = fx.audio; ctx.fish = fx.fish; ctx.playerWakeAt = fx.playerWakeAt; ctx.ob = 0; ctx.truck = 0; ctx.onShot = this.onShot; ctx.humanActivity = this.humanActivity ?? 1;
     for (const g of this.liveCamps.values()) animateSite(g, t, this.waveFn, this.wind, ctx);
     for (const l of this.liveSites.values()) animateSite(l.g, t, this.waveFn, this.wind, ctx);
     this.obLevel = ctx.ob; this.truckLevel = ctx.truck;

@@ -61,6 +61,15 @@ export function pursuitLostTime(attention, restrictedVisibility = 0) {
   return clamp(4.2 + wantedLevel(attention) * 1.35 - clamp(restrictedVisibility, 0, 1) * 1.4, 3.2, 11);
 }
 
+export function pursuitSirenLevel(distance, attention, active = true) {
+  if (!active) return 0;
+  const d = Number(distance);
+  if (!Number.isFinite(d) || d < 0 || d >= 520) return 0;
+  const audible = 1 - clamp((d - 22) / 498, 0, 1);
+  const heat = 0.76 + wantedLevel(attention) * 0.048;
+  return clamp(audible * audible * heat, 0, 1);
+}
+
 export function canEscapePursuit(attention, elapsed, lostFor, restrictedVisibility = 0) {
   const minimumRun = 9 + wantedLevel(attention) * 3.2;
   return elapsed >= minimumRun && lostFor >= pursuitLostTime(attention, restrictedVisibility);

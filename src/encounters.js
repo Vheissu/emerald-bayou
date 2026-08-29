@@ -10,7 +10,7 @@ import { makeAirRescueRig, updateAirRescueAircraft, updateAirRescueBeam } from '
 import { WORLD_HALF } from './heightfield.js';
 import { buildRaceCourse } from './racecourse.js';
 import {
-  canEscapePursuit, pursuitBackupDelay, pursuitLostDistance, pursuitSpeed, pursuitTactic,
+  canEscapePursuit, pursuitBackupDelay, pursuitLostDistance, pursuitSirenLevel, pursuitSpeed, pursuitTactic,
   pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from './pursuit.js';
 
@@ -1432,6 +1432,7 @@ export class EncounterDirector {
     if (e.type === 'fire' && e.aboard) this.phys.loaded = 0;
     if (e.type === 'grounding') this.phys.towDrag = 0;
     if (e.type === 'airrescue') this.audio.helicopter(0);
+    if (e.type === 'patrol') this.audio.patrolSiren(0);
     if (this.law) this.law.setPursuit(false);
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
     this.active = null;
@@ -2089,6 +2090,7 @@ export class EncounterDirector {
       if (this.law) this.law.setPursuit(true);
       this.attemptPatrolRam(e, this.rigs.patrol, 0, d, heat, stars);
       let nearest = d; for (const R of this.rigs.patrolBackups) nearest = Math.min(nearest, this.updatePatrolBackup(e, R, dt, t, heat, stars, e.visual));
+      this.audio.patrolSiren(pursuitSirenLevel(nearest, heat, true), heat);
       const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0), visual = pursuitVisualHeld(nearest, lostDistance);
       e.visual = visual; if (visual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; }
       const stopped = nearest < 19 && p.speed * MPH < 4.5 && !p.airborne && p.wipeT <= 0;
@@ -2271,6 +2273,7 @@ export class EncounterDirector {
   update(dt, t, enabled = true) {
     this.enabled = enabled; this.obs.length = 0;
     this.audio.helicopter(0);
+    this.audio.patrolSiren(0);
     this.updateSpills(this.game.paused ? 0 : dt);
     if (!enabled) { if (this.distressEcho) this.clearDistressEcho(); this.interact = false; this.alternate = false; return; }
     const missionPursuit = this.game.state && this.active?.type === 'patrol' && this.active.state === 'pursuit';

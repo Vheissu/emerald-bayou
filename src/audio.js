@@ -205,6 +205,25 @@ export class EngineAudio {
     h.beat.frequency.setTargetAtTime(18.5 * pitch, now, 0.16); h.harmonic.frequency.setTargetAtTime(37.2 * pitch, now, 0.16);
     h.lp.frequency.setTargetAtTime(210 + audible * 180, now, 0.24); h.wash.frequency.setTargetAtTime(170 + audible * 160, now, 0.24);
   }
+  // A single marine-patrol siren bed follows the closest active unit. It is created on first audible pursuit and then
+  // reused, so a long chase changes AudioParams rather than creating oscillators every frame.
+  patrolSiren(level = 0, heat = 1) {
+    if (!this.ctx || (!this.siren && level <= 0.001)) return; const ctx = this.ctx, now = ctx.currentTime;
+    if (!this.siren) {
+      const low = ctx.createOscillator(); low.type = 'sawtooth'; low.frequency.value = 610;
+      const high = ctx.createOscillator(); high.type = 'triangle'; high.frequency.value = 940;
+      const sweep = ctx.createOscillator(); sweep.type = 'sine'; sweep.frequency.value = 0.58;
+      const sweepDepth = ctx.createGain(); sweepDepth.gain.value = 185; sweep.connect(sweepDepth); sweepDepth.connect(low.frequency); sweepDepth.connect(high.frequency);
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 880; bp.Q.value = 0.72;
+      const gain = ctx.createGain(); gain.gain.value = 0; low.connect(bp); high.connect(bp); bp.connect(gain); gain.connect(this.sfx);
+      low.start(); high.start(); sweep.start(); this.siren = { low, high, sweep, sweepDepth, bp, gain };
+    }
+    const s = this.siren, audible = Math.max(0, Math.min(1, Number(level) || 0)), wanted = Math.max(1, Math.min(5, Number(heat) || 1));
+    s.gain.gain.setTargetAtTime(audible * 0.095, now, audible > 0 ? 0.12 : 0.28);
+    s.low.frequency.setTargetAtTime(585 + wanted * 9, now, 0.3); s.high.frequency.setTargetAtTime(910 + wanted * 12, now, 0.3);
+    s.sweep.frequency.setTargetAtTime(0.52 + wanted * 0.035, now, 0.45); s.sweepDepth.gain.setTargetAtTime(165 + wanted * 9, now, 0.45);
+    s.bp.frequency.setTargetAtTime(760 + audible * 250, now, 0.25);
+  }
   // a diesel pickup idling and pulling on a ramp
   truck(level) {
     if (!this.ctx) return; const ctx = this.ctx, now = ctx.currentTime;
