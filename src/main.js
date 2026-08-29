@@ -194,7 +194,7 @@ async function init() {
   const encounters = new EncounterDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, plume, spray, law, reputation });
   game.encounters = encounters;
   law.onAttention = () => { if (!game.state) encounters.next = Math.min(encounters.next, 12); };
-  const condition = new BoatCondition({ game, phys, water, environment, audio, startX, startZ }); game.condition = condition;
+  const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); game.condition = condition;
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   environment.onLightning = strike => hazards.lightning(strike);
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, audio });
@@ -361,6 +361,7 @@ async function init() {
     if (phys.rpm > 0.01) boat.prop.rotation.z += dt * (8 + phys.rpm * 95);
     boat.blur.material.opacity = Math.min(0.35, phys.rpm * 0.4);
     for (const r of boat.rudders) r.rotation.y = -phys.steer * 0.55;
+    condition.updateEffects(dt, time, started && !game.paused);
 
     // camera
     if (!dragging) { idle += dt; if (idle > 2.5) { camYaw *= Math.exp(-dt * 1.2); camPitch *= Math.exp(-dt * 1.2); } }

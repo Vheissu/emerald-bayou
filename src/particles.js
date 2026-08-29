@@ -87,7 +87,7 @@ export class Plume {
       vertexShader: `
         attribute vec3 aPos; attribute vec4 aData; attribute float aAlpha; attribute vec3 aVel;
         uniform vec3 camVel;
-        varying vec2 vUv; varying vec2 vOff; varying float vAge, vSeed, vAlpha, vZ;
+        varying vec2 vUv; varying vec2 vOff; varying float vAge, vSeed, vAlpha, vZ, vSmoke;
         void main() {
           vUv = uv; vAge = aData.y; vSeed = aData.w;
           float c = cos(aData.z), s = sin(aData.z);
@@ -103,14 +103,16 @@ export class Plume {
           vOff = off * 2.0;
           mv.xy += off * aData.x;
           vZ = -mv.z;
-          vAlpha = aAlpha * smoothstep(1.5, 4.5, vZ);
+          // Negative alpha is an allocation-free type bit for dark engine smoke. The magnitude remains opacity.
+          vSmoke = 1.0 - step(0.0, aAlpha);
+          vAlpha = abs(aAlpha) * smoothstep(1.5, 4.5, vZ);
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: `
         precision highp float;
         uniform sampler2D tSprite, tNoise, tDepth; uniform vec2 resolution; uniform float near, far, uTime;
         uniform vec3 sunView, sunCol, skyCol;
-        varying vec2 vUv; varying vec2 vOff; varying float vAge, vSeed, vAlpha, vZ;
+        varying vec2 vUv; varying vec2 vOff; varying float vAge, vSeed, vAlpha, vZ, vSmoke;
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
         void main() {
           float shape = texture2D(tSprite, vUv).a;
@@ -131,6 +133,8 @@ export class Plume {
           vec3 col = mix(skyCol, sunCol, lit * 0.7 + 0.22);
           col += sunCol * thin * 0.1;
           col *= 0.9 + 0.1 * n;
+          vec3 soot = mix(vec3(0.075, 0.082, 0.08), vec3(0.23, 0.235, 0.22), lit * 0.22 + thin * 0.12);
+          col = mix(col, soot, vSmoke);
           gl_FragColor = vec4(col, a);
         }`,
       transparent: true, depthWrite: false, depthTest: true, blending: THREE.NormalBlending,
@@ -138,13 +142,14 @@ export class Plume {
     this.mesh = new THREE.Mesh(geo, this.mat); this.mesh.frustumCulled = false; this.mesh.renderOrder = 1;
     this.head = 0;
   }
-  emit(x, y, z, vx, vy, vz, size, grow, life, alpha = 0.5) {
+  emit(x, y, z, vx, vy, vz, size, grow, life, alpha = 0.5, smoke = false) {
     const i = this.head; this.head = (this.head + 1) % this.max;
     this.pos[i * 3] = x; this.pos[i * 3 + 1] = y; this.pos[i * 3 + 2] = z;
     this.vel[i * 3] = vx; this.vel[i * 3 + 1] = vy; this.vel[i * 3 + 2] = vz;
     this.life[i] = life; this.maxLife[i] = life; this.size[i] = size; this.grow[i] = grow;
     this.rot[i] = Math.random() * 6.283; this.rotV[i] = (Math.random() - 0.5) * 1.2;
-    this.seed[i] = Math.random(); this.alpha[i] = alpha; this.baseAlpha[i] = alpha;
+    const encodedAlpha = smoke ? -Math.abs(alpha) : Math.abs(alpha);
+    this.seed[i] = Math.random(); this.alpha[i] = encodedAlpha; this.baseAlpha[i] = encodedAlpha;
   }
   update(dt, t) {
     const p = this.pos, v = this.vel, d = this.data;
@@ -152,12 +157,15 @@ export class Plume {
     for (let i = 0; i < this.max; i++) {
       if (this.life[i] <= 0) { this.alpha[i] = 0; d[i * 4] = 0; p[i * 3 + 1] = -100; continue; }
       this.life[i] -= dt;
-      v[i * 3 + 1] -= 0.55 * dt;
-      const drag = Math.exp(-dt * 1.7);
+      const smoke = this.baseAlpha[i] < 0;
+      v[i * 3 + 1] += (smoke ? 0.32 : -0.55) * dt;
+      const drag = Math.exp(-dt * (smoke ? 0.58 : 1.7));
       v[i * 3] *= drag; v[i * 3 + 2] *= drag; v[i * 3 + 1] *= Math.exp(-dt * 1.2);
       p[i * 3] += v[i * 3] * dt; p[i * 3 + 1] += v[i * 3 + 1] * dt; p[i * 3 + 2] += v[i * 3 + 2] * dt;
-      const floor = 0.05 + this.size[i] * 0.35;
-      if (p[i * 3 + 1] < floor) { p[i * 3 + 1] += (floor - p[i * 3 + 1]) * Math.min(1, dt * 6); v[i * 3 + 1] = Math.max(v[i * 3 + 1], 0); }
+      if (!smoke) {
+        const floor = 0.05 + this.size[i] * 0.35;
+        if (p[i * 3 + 1] < floor) { p[i * 3 + 1] += (floor - p[i * 3 + 1]) * Math.min(1, dt * 6); v[i * 3 + 1] = Math.max(v[i * 3 + 1], 0); }
+      }
       this.size[i] += this.grow[i] * dt; this.rot[i] += this.rotV[i] * dt;
       const age = 1 - this.life[i] / this.maxLife[i];
       d[i * 4] = this.size[i]; d[i * 4 + 1] = age; d[i * 4 + 2] = this.rot[i]; d[i * 4 + 3] = this.seed[i];

@@ -245,7 +245,7 @@ export class AirboatPhysics {
     this.lastFloat = new THREE.Vector2(x, z);
     this.loaded = 0; // passenger / cargo mass factor
     this.towDrag = 0; // extra quadratic drag from something on a rope behind the boat
-    this.powerScale = 1; this.steerScale = 1; this.damageLoad = 0;
+    this.powerScale = 1; this.steerScale = 1; this.damageLoad = 0; this.damageList = 0; this.damageTrim = 0;
     this.landedFrame = false; this.takeoffFrame = false;
     this.landQuality = ''; // '', 'clean', 'hard', 'stuffed', 'wipeout' on the landing frame
     this.noseIn = 0; this.tailIn = 0; this.wipeT = 0; this.stuffT = 0;
@@ -458,8 +458,8 @@ export class AirboatPhysics {
       tgtPitch = Math.atan2(this.vy, Math.max(this.speed, 3)) * 0.25;
       tgtRoll = this.angVel * 0.08;
     } else {
-      tgtPitch = accelF * 0.012 * wet + Math.min(vf, 14) * 0.0035 * wet + surfPitch;
-      tgtRoll = -vl * 0.02 * wet + this.angVel * vf * 0.012 + waveRoll + landRoll;
+      tgtPitch = accelF * 0.012 * wet + Math.min(vf, 14) * 0.0035 * wet + surfPitch + (this.damageTrim || 0) * wet;
+      tgtRoll = -vl * 0.02 * wet + this.angVel * vf * 0.012 + waveRoll + landRoll + (this.damageList || 0) * wet;
     }
     const spring = (v, tgt, vel, k, d) => { const a = (tgt - v) * k - vel * d; return vel + a * dt; };
     if (this.takeoffFrame) {

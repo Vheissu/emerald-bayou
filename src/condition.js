@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 
@@ -13,6 +15,12 @@ export class BoatCondition {
     };
     this.maxFuel = 18; this.enabled = false; this.serviceHere = null; this.towPending = false;
     this.damageCd = 0; this.persistT = 8; this.hudT = 0; this.misfireT = 4; this.powerCut = 0; this.warned = {};
+    // Floodwater settles to one side of the hull. Keep the side deterministic across reloads without adding save data.
+    this.listSide = Math.sin((this.startX || 0) * 0.19 + (this.startZ || 0) * 0.13) >= 0 ? 1 : -1;
+    this.smokeCarry = 0; this.pumpCarry = 0; this.smokeSerial = 0; this.hadPowerCut = false;
+    this.visualState = { engineSmoke: false, bilgePump: false, smokeRate: 0, pumpRate: 0, list: 0, trim: 0, vibration: 0 };
+    this._fxLocal = new THREE.Vector3(); this._fxWorld = new THREE.Vector3();
+    this._forward = new THREE.Vector2(); this._right = new THREE.Vector2();
     this.el = document.getElementById('boatState'); this.promptEl = document.getElementById('servicePrompt');
     this.keyHandler = e => this.onKey(e); window.addEventListener('keydown', this.keyHandler);
     this.render();
@@ -133,6 +141,77 @@ export class BoatCondition {
     const disabled = this.needsTow(), health = clamp(S.engine / 100);
     const engine = disabled ? 0 : (0.38 + 0.62 * health) * (this.powerCut > 0 ? 0.34 : 1) * (1 - S.bilge * 0.28);
     p.powerScale = clamp(engine); p.steerScale = clamp(0.55 + health * 0.45); p.damageLoad = S.bilge * 0.65;
+    // The extra mass already lowers the simulated waterline. Uneven water also gives the hull a persistent list and stern-heavy trim.
+    p.damageList = this.listSide * Math.pow(S.bilge, 1.35) * 0.065;
+    p.damageTrim = Math.pow(S.bilge, 1.2) * 0.035;
+    this.visualState.list = p.damageList; this.visualState.trim = p.damageTrim;
+  }
+
+  updateEffects(dt, t, enabled = true) {
+    const S = this.state, p = this.phys;
+    const damage = clamp((72 - S.engine) / 60);
+    const running = enabled && p.rpm > 0.055 && S.fuel > 0.03 && S.engine > 4 && damage > 0;
+    const pumping = enabled && p.wet > 0.3 && !p.airborne && S.bilge > 0.08 && S.fuel > 0.03 && S.engine > 8;
+    const cut = running && this.powerCut > 0;
+    const smokeRate = running ? (0.35 + damage * 8) * (0.55 + p.rpm * 1.35) : 0;
+    const pumpRate = pumping ? 8 + clamp((S.bilge - 0.08) / 0.72) * 38 : 0;
+    const vibration = running ? damage * Math.max(0.12, p.rpm) * (cut ? 0.012 : 0.0038) : 0;
+    this.visualState.engineSmoke = running; this.visualState.bilgePump = pumping;
+    this.visualState.smokeRate = smokeRate; this.visualState.pumpRate = pumpRate; this.visualState.vibration = vibration;
+
+    if (running) this.smokeCarry += smokeRate * dt + (cut && !this.hadPowerCut ? 4 : 0);
+    else this.smokeCarry = 0;
+    if (pumping) this.pumpCarry += pumpRate * dt;
+    else this.pumpCarry = 0;
+    this.hadPowerCut = cut;
+
+    const smokeN = Math.min(8, Math.floor(this.smokeCarry));
+    const pumpN = Math.min(10, Math.floor(this.pumpCarry));
+    // Engine and cage move as one hull-mounted mass. Main resets this transform every frame, so the shudder cannot drift.
+    this.boat.rotation.x += Math.sin(t * 43) * vibration;
+    this.boat.rotation.z += Math.sin(t * 57 + 0.8) * vibration;
+    if (!smokeN && !pumpN) return;
+    this.smokeCarry -= smokeN; this.pumpCarry -= pumpN;
+    this.boat.updateMatrixWorld(true);
+    p.forward(this._forward); p.right(this._right);
+
+    const wind = this.environment.windDir;
+    const windSpeed = Math.min(1.65, (this.environment.values.wind || 0) * (this.environment.gust || 1) * 0.038);
+    for (let i = 0; i < smokeN; i++) {
+      const bank = this.smokeSerial++ & 1 ? -1 : 1;
+      // The engine sits behind an alpha-tested grille. Start the visible puff where the exhaust clears the cage crown;
+      // otherwise soft-particle depth correctly hides the entire column inside the machinery.
+      this._fxLocal.set(bank * 0.3 + (Math.random() - 0.5) * 0.1, 3.02 + Math.random() * 0.1, 1.68 + (Math.random() - 0.5) * 0.2);
+      this._fxWorld.copy(this._fxLocal).applyMatrix4(this.boat.matrixWorld);
+      const back = 0.35 + p.rpm * 1.25;
+      this.plume.emit(
+        this._fxWorld.x, this._fxWorld.y, this._fxWorld.z,
+        p.vel.x * 0.34 + wind.x * windSpeed - this._forward.x * back + (Math.random() - 0.5) * 0.22,
+        0.55 + damage * 0.25 + Math.random() * 0.4,
+        p.vel.y * 0.34 + wind.z * windSpeed - this._forward.y * back + (Math.random() - 0.5) * 0.22,
+        0.2 + damage * 0.2 + Math.random() * 0.09,
+        0.16 + damage * 0.2,
+        1.2 + damage * 0.9 + Math.random() * 0.3,
+        0.32 + damage * 0.65,
+        true,
+      );
+    }
+
+    // A working automatic bilge pump spits a narrow stream out of the starboard hull when flooding is high.
+    for (let i = 0; i < pumpN; i++) {
+      this._fxLocal.set(1.22, 0.35 + Math.random() * 0.08, 1.02 + (Math.random() - 0.5) * 0.08);
+      this._fxWorld.copy(this._fxLocal).applyMatrix4(this.boat.matrixWorld);
+      const out = 1.35 + Math.random() * 0.75;
+      this.spray.emit(
+        this._fxWorld.x, this._fxWorld.y, this._fxWorld.z,
+        p.vel.x * 0.18 + this._right.x * out + (Math.random() - 0.5) * 0.12,
+        0.16 + Math.random() * 0.38,
+        p.vel.y * 0.18 + this._right.y * out + (Math.random() - 0.5) * 0.12,
+        0.013 + Math.random() * 0.014,
+        0.32 + Math.random() * 0.22,
+        0.62,
+      );
+    }
   }
 
   update(dt, t, enabled = true) {
