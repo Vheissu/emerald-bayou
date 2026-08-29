@@ -79,6 +79,15 @@ export class EngineAudio {
   countdown(final = false) { this.tone(final ? 1046 : 660, final ? 0.5 : 0.15, 0.22, 'square'); }
   pickup() { this.tone(988, 0.08, 0.16, 'square'); this.tone(1480, 0.16, 0.14, 'square', 0.06); }
   warn() { this.tone(440, 0.12, 0.2, 'square'); this.tone(440, 0.12, 0.2, 'square', 0.18); }
+  // Thunder reuses the engine's two-second noise buffer. BufferSource nodes are one-shot Web Audio objects, but
+  // looping the retained sample avoids building and filling a new multi-second AudioBuffer for every lightning strike.
+  thunder(strength = 1) {
+    if (!this.ctx || !this.noiseBuf) return; const ctx = this.ctx, now = ctx.currentTime, dur = 2.8;
+    const src = ctx.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true;
+    const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = 210; low.Q.value = 0.7;
+    const gain = ctx.createGain(); gain.gain.setValueAtTime(0.0001, now); gain.gain.exponentialRampToValueAtTime(0.32 * clampAudio(strength), now + 0.05); gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    src.connect(low); low.connect(gain); gain.connect(this.sfx); src.start(now, Math.random() * 1.6); src.stop(now + dur);
+  }
   // One reel bed is created on the first hooked fish and then reused. Holding the reel changes AudioParams only;
   // releasing the key fades the same graph instead of starting another source every frame.
   fishingReel(level = 0, tension = 0) {

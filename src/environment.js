@@ -310,14 +310,7 @@ export class Environment {
   }
 
   thunder(strength = 1) {
-    const ctx = this.audio && this.audio.ctx; if (!ctx) return;
-    const dur = 2.8, buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate), data = buffer.getChannelData(0);
-    let brown = 0;
-    for (let i = 0; i < data.length; i++) { brown = brown * 0.985 + (Math.random() * 2 - 1) * 0.12; const t = i / data.length; data[i] = brown * Math.exp(-t * 4.2) * (0.7 + 0.3 * Math.sin(t * 51)); }
-    const src = ctx.createBufferSource(); src.buffer = buffer;
-    const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = 210; low.Q.value = 0.7;
-    const gain = ctx.createGain(); const now = ctx.currentTime; gain.gain.setValueAtTime(0.0001, now); gain.gain.exponentialRampToValueAtTime(0.32 * strength, now + 0.05); gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-    src.connect(low).connect(gain).connect(ctx.destination); src.start();
+    this.audio?.thunder?.(strength);
   }
 
   updateSettlementLights(dt, night) {

@@ -2,17 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EngineAudio } from '../src/audio.js';
 
-const audioParam = (value = 0) => ({ value, setTargetAtTime(next) { this.value = next; } });
+const audioParam = (value = 0) => ({
+  value,
+  setTargetAtTime(next) { this.value = next; },
+  setValueAtTime(next) { this.value = next; },
+  exponentialRampToValueAtTime(next) { this.value = next; },
+});
 
 function mockAudioContext() {
   const counts = { oscillators: 0, gains: 0, filters: 0 };
+  const allocations = { buffers: 0, sources: [] };
   const connectable = extras => ({ ...extras, connect() { return this; } });
   return {
     currentTime: 0,
-    counts,
+    counts, allocations,
     createOscillator() { counts.oscillators++; return connectable({ type: 'sine', frequency: audioParam(), start() {} }); },
     createGain() { counts.gains++; return connectable({ gain: audioParam() }); },
     createBiquadFilter() { counts.filters++; return connectable({ type: 'lowpass', frequency: audioParam(), Q: audioParam() }); },
+    createBuffer() { allocations.buffers++; return { getChannelData: () => new Float32Array(1) }; },
+    createBufferSource() { const source = connectable({ buffer: null, loop: false, start() {}, stop() {} }); allocations.sources.push(source); return source; },
   };
 }
 
@@ -42,4 +50,14 @@ test('night-life ambience changes the existing bed without allocating another gr
   audio.nightLife(2); assert.equal(audio.nightLifeLevel, 1);
   audio.nightLife(-1); assert.equal(audio.nightLifeLevel, 0);
   assert.deepEqual(ctx.counts, { oscillators: 0, gains: 0, filters: 0 });
+});
+
+test('thunder loops the retained noise sample without allocating another audio buffer', () => {
+  const audio = new EngineAudio(), ctx = mockAudioContext(), retained = { id: 'noise' };
+  audio.ctx = ctx; audio.sfx = {}; audio.noiseBuf = retained;
+  audio.thunder(0.8); audio.thunder(1);
+  assert.equal(ctx.allocations.buffers, 0);
+  assert.equal(ctx.allocations.sources.length, 2);
+  for (const source of ctx.allocations.sources) { assert.equal(source.buffer, retained); assert.equal(source.loop, true); }
+  assert.deepEqual(ctx.counts, { oscillators: 0, gains: 2, filters: 2 });
 });

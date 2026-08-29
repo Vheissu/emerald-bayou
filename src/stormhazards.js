@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { sharedResource } from './cache.js';
+import { WORLD_HALF } from './heightfield.js';
+import { WakeStampPool } from './wakestamps.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -7,33 +10,58 @@ const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t *
 
 const fmtDist = metres => metres < 305 ? `${Math.max(1, Math.round(metres * 3.28084))} ft` : `${(metres / 1609.34).toFixed(2)} mi`;
 
-function stormMaterial(color, roughness = 0.9, metalness = 0) {
-  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+export function stormDebrisFlightChance(kind, storm = 0, wind = 0) {
+  const lift = kind === 'sheet' ? 0.82 : kind === 'plank' ? 0.52 : 0;
+  return lift * smooth(0.78, 1, Number(storm) || 0) * smooth(17.5, 30, Number(wind) || 0);
 }
+
+export function stormDebrisCanFly(kind, storm = 0, wind = 0, roll = 1) {
+  const sample = Number(roll);
+  return clamp(Number.isFinite(sample) ? sample : 1) < stormDebrisFlightChance(kind, storm, wind);
+}
+
+function stormMaterial(color, roughness = 0.9, metalness = 0) {
+  return sharedResource(new THREE.MeshStandardMaterial({ color, roughness, metalness }));
+}
+
+const DEBRIS_GEO = Object.freeze({
+  trunk: sharedResource(new THREE.CylinderGeometry(0.11, 0.19, 1, 7)),
+  twig: sharedResource(new THREE.CylinderGeometry(0.035, 0.07, 1.15, 6)),
+  plank: sharedResource(new THREE.BoxGeometry(3.1, 0.13, 0.48)),
+  split: sharedResource(new THREE.BoxGeometry(1.35, 0.09, 0.3)),
+  sheet: sharedResource(new THREE.BoxGeometry(2.1, 0.07, 1.05)),
+  rib: sharedResource(new THREE.BoxGeometry(0.035, 0.055, 1.06)),
+});
+
+const DEBRIS_MAT = Object.freeze({
+  bark: [stormMaterial(0x5a402a, 1), stormMaterial(0x4b3424, 1)],
+  wood: [stormMaterial(0x6b5138, 0.96), stormMaterial(0x806546, 0.96)],
+  tin: [stormMaterial(0x59696c, 0.48, 0.55), stormMaterial(0x68777a, 0.48, 0.55)],
+  rib: stormMaterial(0x879294, 0.38, 0.7),
+});
 
 function makeDebrisMesh(index) {
   const g = new THREE.Group();
   if (index % 3 === 0) {
-    const bark = stormMaterial(index % 2 ? 0x4b3424 : 0x5a402a, 1);
+    const bark = DEBRIS_MAT.bark[index % 2];
     const len = 2.7 + (index % 4) * 0.34;
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.19, len, 7), bark);
-    trunk.rotation.z = Math.PI / 2; g.add(trunk);
+    const trunk = new THREE.Mesh(DEBRIS_GEO.trunk, bark);
+    trunk.scale.y = len; trunk.rotation.z = Math.PI / 2; g.add(trunk);
     for (const side of [-1, 1]) {
-      const twig = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.07, 1.15, 6), bark);
+      const twig = new THREE.Mesh(DEBRIS_GEO.twig, bark);
       twig.position.set(side * len * 0.27, 0.05, side * 0.23); twig.rotation.set(side * 0.35, 0, side * 0.78); g.add(twig);
     }
-    g.userData.radius = len * 0.45;
+    g.userData.radius = len * 0.45; g.userData.kind = 'log';
   } else if (index % 3 === 1) {
-    const wood = stormMaterial(index % 2 ? 0x806546 : 0x6b5138, 0.96);
-    const plank = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.13, 0.48), wood); g.add(plank);
-    const split = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.09, 0.3), wood); split.position.set(0.65, 0.1, 0.35); split.rotation.y = -0.18; g.add(split);
-    g.userData.radius = 1.35;
+    const wood = DEBRIS_MAT.wood[index % 2];
+    const plank = new THREE.Mesh(DEBRIS_GEO.plank, wood); g.add(plank);
+    const split = new THREE.Mesh(DEBRIS_GEO.split, wood); split.position.set(0.65, 0.1, 0.35); split.rotation.y = -0.18; g.add(split);
+    g.userData.radius = 1.35; g.userData.kind = 'plank';
   } else {
-    const tin = stormMaterial(index % 2 ? 0x68777a : 0x59696c, 0.48, 0.55);
-    const sheet = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.07, 1.05), tin); g.add(sheet);
-    const ribMat = stormMaterial(0x879294, 0.38, 0.7);
-    for (let i = -2; i <= 2; i++) { const rib = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.055, 1.06), ribMat); rib.position.set(i * 0.4, 0.065, 0); g.add(rib); }
-    g.userData.radius = 1.25;
+    const tin = DEBRIS_MAT.tin[index % 2];
+    const sheet = new THREE.Mesh(DEBRIS_GEO.sheet, tin); g.add(sheet);
+    for (let i = -2; i <= 2; i++) { const rib = new THREE.Mesh(DEBRIS_GEO.rib, DEBRIS_MAT.rib); rib.position.set(i * 0.4, 0.065, 0); g.add(rib); }
+    g.userData.radius = 1.25; g.userData.kind = 'sheet';
   }
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   g.visible = false; return g;
@@ -112,17 +140,24 @@ export class StormHazards {
     Object.assign(this, o); // scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray
     this.debris = Array.from({ length: 12 }, (_, i) => {
       const mesh = makeDebrisMesh(i); this.scene.add(mesh);
-      const d = { mesh, active: false, x: 0, z: 0, vx: 0, vz: 0, heading: 0, spin: 0, phase: Math.random() * 6.28, life: 0, hitCd: 0, radius: mesh.userData.radius };
+      const d = {
+        mesh, kind: mesh.userData.kind, active: false, airborne: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
+        heading: 0, pitch: 0, roll: 0, spin: 0, tumbleX: 0, tumbleZ: 0, lift: 0, flightT: 0,
+        phase: Math.random() * 6.28, life: 0, hitCd: 0, radius: mesh.userData.radius,
+      };
       d.obs = { x: 0, z: 0, r: d.radius, tag: 'storm-debris', onHit: (into, nx, nz, p) => this.hitDebris(d, into, nx, nz, p) };
       return d;
     });
     this.obstacles = []; this.phys.addObs('storm-hazards', this.obstacles);
     this.spout = makeSpout(); this.scene.add(this.spout.group);
     this.strikes = Array.from({ length: 4 }, () => makeStrike(this.scene));
-    this.spawnT = 6; this.spoutT = 28 + Math.random() * 32; this.noticeT = 0; this.noticeTitle = ''; this.noticeLine = ''; this.hudT = 0;
+    this.spawnT = 6; this.spoutT = 28 + Math.random() * 32; this.noticeT = 0; this.noticeTitle = ''; this.noticeLine = ''; this.hudT = 0; this.airNoticeT = 0;
     this.enabled = false; this.debugIndex = 0; this._f = new THREE.Vector2(); this._r = new THREE.Vector2(); this._flow = new THREE.Vector2();
+    this.spoutMarker = { kind: 'hazard', x: 0, z: 0, color: '#d7f1f4', r: 6, clamp: false };
+    this.stampPool = new WakeStampPool(17);
     this.el = document.getElementById('hazardState');
     this.stats = this.game.save.weatherHazards || { debrisHits: 0, nearStrikes: 0, spouts: 0 };
+    this.stats.airborneSpawns = Math.max(0, Number(this.stats.airborneSpawns) || 0); this.stats.airborneHits = Math.max(0, Number(this.stats.airborneHits) || 0);
     this.game.save.weatherHazards = this.stats;
     this.keyHandler = e => {
       if (!import.meta.env.DEV || e.code !== 'F3' || e.repeat || !this.enabled) return;
@@ -130,7 +165,7 @@ export class StormHazards {
       if (e.shiftKey) this.spawnSpout(true, true);
       else {
         const kind = this.debugIndex++ % 3;
-        if (kind === 0) this.spawnDebris(true);
+        if (kind === 0) this.spawnDebris(true, true);
         else if (kind === 1) this.forceLightning();
         else this.spawnSpout(true, false);
       }
@@ -155,35 +190,74 @@ export class StormHazards {
     this.noticeTitle = title; this.noticeLine = line; this.noticeT = seconds; this.hudT = 0;
   }
 
-  spawnDebris(debug = false) {
-    const d = this.debris.find(q => !q.active); if (!d) return false;
-    const at = debug ? this.waterSpot(18, 27, 8, true) : this.waterSpot(42, 210, 175); if (!at) return false;
-    const wind = this.environment.values.wind;
+  windborneSpot(debug = false) {
+    const p = this.phys;
+    if (debug) {
+      const f = p.forward(this._f), r = p.right(this._r), ahead = 22 + Math.random() * 6, side = (Math.random() - 0.5) * 7;
+      return { x: clamp(p.pos.x + f.x * ahead + r.x * side, -WORLD_HALF + 45, WORLD_HALF - 45), z: clamp(p.pos.y + f.y * ahead + r.y * side, -WORLD_HALF + 45, WORLD_HALF - 45) };
+    }
+    const wind = this.environment.windDir, distance = 65 + Math.random() * 80, side = (Math.random() - 0.5) * 130;
+    return {
+      x: clamp(p.pos.x - wind.x * distance - wind.z * side, -WORLD_HALF + 45, WORLD_HALF - 45),
+      z: clamp(p.pos.y - wind.z * distance + wind.x * side, -WORLD_HALF + 45, WORLD_HALF - 45),
+    };
+  }
+
+  spawnDebris(debug = false, forceAirborne = false) {
+    const d = forceAirborne ? this.debris.find(q => !q.active && q.kind !== 'log') : this.debris.find(q => !q.active); if (!d) return false;
+    const V = this.environment.values, wind = Math.max(0, (Number(V.wind) || 0) * (Number(this.environment.gust) || 1));
+    const airborne = forceAirborne || stormDebrisCanFly(d.kind, V.storm, wind, Math.random());
+    const at = airborne ? this.windborneSpot(debug) : debug ? this.waterSpot(18, 27, 8, true) : this.waterSpot(42, 210, 175); if (!at) return false;
+    const flightSpeed = 4.2 + wind * 0.2;
     Object.assign(d, {
-      active: true, x: at.x, z: at.z,
-      vx: this.environment.windDir.x * (0.25 + wind * 0.035) + (Math.random() - 0.5) * 0.5,
-      vz: this.environment.windDir.z * (0.25 + wind * 0.035) + (Math.random() - 0.5) * 0.5,
-      heading: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 0.42, life: debug ? 75 : 55 + Math.random() * 65, hitCd: 0,
+      active: true, airborne, x: at.x, y: airborne ? this.water.level + 6 + Math.random() * 10 : this.water.level, z: at.z,
+      vx: this.environment.windDir.x * (airborne ? flightSpeed : 0.25 + wind * 0.035) + (Math.random() - 0.5) * (airborne ? 2.2 : 0.5),
+      vy: airborne ? 0.8 + Math.random() * 2 : 0,
+      vz: this.environment.windDir.z * (airborne ? flightSpeed : 0.25 + wind * 0.035) + (Math.random() - 0.5) * (airborne ? 2.2 : 0.5),
+      heading: Math.random() * Math.PI * 2, pitch: Math.random() * Math.PI * 2, roll: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * (airborne ? 1.8 : 0.42), tumbleX: 1.5 + Math.random() * 2.5, tumbleZ: (Math.random() < 0.5 ? -1 : 1) * (1.5 + Math.random() * 2.5),
+      lift: d.kind === 'sheet' ? 1 : d.kind === 'plank' ? 0.62 : 0, flightT: airborne ? 3.5 + Math.random() * 4 : 0,
+      life: debug ? 75 : 55 + Math.random() * 65, hitCd: 0,
     });
-    d.mesh.visible = true;
-    if (debug) { this.alert('Storm debris', 'Wind-thrown material is crossing the channel.', 4); this.game.toast('Debris in the channel', 'Slow down. It can get into the prop.', 2.7); }
+    d.mesh.visible = true; d.mesh.position.set(d.x, d.y, d.z); d.mesh.rotation.set(d.pitch, d.heading, d.roll, 'YXZ');
+    if (airborne) {
+      this.stats.airborneSpawns++;
+      if (debug || this.airNoticeT <= 0) {
+        this.alert('Windborne debris', d.kind === 'sheet' ? 'Loose sheet metal is crossing the water.' : 'Loose lumber is crossing the water.', 4);
+        this.airNoticeT = 14;
+      }
+    }
+    if (debug) this.game.toast(airborne ? 'Debris in the air' : 'Debris in the channel', airborne ? 'Keep the cage pointed into it.' : 'Slow down. It can get into the prop.', 2.7);
     return true;
   }
 
-  deactivateDebris(d) { d.active = false; d.mesh.visible = false; }
+  landDebris(d, t, strength = 0) {
+    d.airborne = false; d.flightT = 0; d.vy = 0; d.pitch = 0; d.roll = 0; d.vx *= 0.24; d.vz *= 0.24;
+    d.y = this.water.waveHeight(d.x, d.z, t) - 0.04; d.mesh.position.set(d.x, d.y, d.z);
+    if (strength <= 0 || Math.hypot(d.x - this.phys.pos.x, d.z - this.phys.pos.y) > 170) return;
+    const amount = Math.min(20, 8 + Math.round(strength * 1.5));
+    for (let i = 0; i < amount; i++) this.spray.emit(d.x + (Math.random() - 0.5) * 1.6, this.water.level + 0.08, d.z + (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * strength, 0.5 + Math.random() * (1.2 + strength * 0.22), (Math.random() - 0.5) * strength, 0.014 + Math.random() * 0.022, 0.3 + Math.random() * 0.3, 0.58);
+    if (Math.hypot(d.x - this.phys.pos.x, d.z - this.phys.pos.y) < 80) this.audio.splash(clamp(strength / 12, 0.12, 0.42));
+  }
 
-  hitDebris(d, into, nx, nz) {
+  deactivateDebris(d) { d.active = false; d.airborne = false; d.mesh.visible = false; }
+
+  hitDebris(d, into, nx, nz, boat = null) {
     if (d.hitCd > 0 || into < 1.5) return;
-    d.hitCd = 0.75; d.vx -= nx * into * 0.42; d.vz -= nz * into * 0.42; d.spin += (Math.random() - 0.5) * into * 0.22;
-    this.audio.knock(clamp(into / 8, 0.2, 0.9)); this.game.shake = Math.max(this.game.shake, clamp(into / 14, 0.08, 0.45));
-    this.alert('Debris strike', into > 5 ? 'Check the prop and hull.' : 'Something hard passed under the cage.', 2.6);
-    if (into > 3) this.game.toast('Storm debris', into > 6 ? 'Hard hit. The prop took some of it.' : 'Branches under the hull.', 2.3);
+    const wasAirborne = d.airborne, impact = wasAirborne ? Math.max(into, 5.2 + Math.abs(d.vy) * 0.35) : into;
+    if (boat && wasAirborne) { boat.hit = Math.max(boat.hit, impact); boat.hitTag = 'storm-debris'; boat.hitObj = d.obs; }
+    if (wasAirborne) { this.landDebris(d, 0); this.stats.airborneHits++; }
+    d.hitCd = 0.75; d.vx -= nx * impact * 0.42; d.vz -= nz * impact * 0.42; d.spin += (Math.random() - 0.5) * impact * 0.22;
+    this.audio.knock(clamp(impact / 8, 0.2, 0.9)); this.game.shake = Math.max(this.game.shake, clamp(impact / 14, 0.08, 0.45));
+    this.alert(wasAirborne ? 'Flying debris' : 'Debris strike', wasAirborne ? (d.kind === 'sheet' ? 'Sheet metal hit the cage.' : 'Lumber hit the cage.') : impact > 5 ? 'Check the prop and hull.' : 'Something hard passed under the cage.', 2.6);
+    if (impact > 3) this.game.toast(wasAirborne ? 'Windborne strike' : 'Storm debris', wasAirborne ? 'The cage took the impact.' : impact > 6 ? 'Hard hit. The prop took some of it.' : 'Branches under the hull.', 2.3);
     for (let i = 0; i < 18; i++) this.spray.emit(d.x + (Math.random() - 0.5) * 2, this.water.level + 0.08, d.z + (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 3, 0.8 + Math.random() * 2, (Math.random() - 0.5) * 3, 0.018 + Math.random() * 0.025, 0.35 + Math.random() * 0.35, 0.65);
     this.stats.debrisHits = (this.stats.debrisHits || 0) + 1; this.game.persist();
   }
 
   updateDebris(dt, t) {
-    const V = this.environment.values, severity = smooth(0.5, 1, V.storm) * smooth(9, 30, V.wind);
+    const V = this.environment.values, wind = Math.max(0, (Number(V.wind) || 0) * (Number(this.environment.gust) || 1));
+    const severity = smooth(0.5, 1, V.storm) * smooth(9, 30, wind);
     const target = Math.round(severity * this.debris.length);
     this.spawnT -= dt;
     let active = 0;
@@ -193,9 +267,28 @@ export class StormHazards {
     for (const d of this.debris) {
       if (!d.active) continue;
       d.hitCd = Math.max(0, d.hitCd - dt); d.life -= dt * (severity > 0.2 ? 1 : 3.5);
+      if (d.airborne) {
+        d.flightT -= dt;
+        const support = (d.flightT > 0 ? smooth(17.5, 32, wind) * d.lift * 10.2 : 0), flightSpeed = 4.2 + wind * 0.2;
+        const follow = 1 - Math.exp(-dt * 1.15);
+        d.vx += (this.environment.windDir.x * flightSpeed - d.vx) * follow; d.vz += (this.environment.windDir.z * flightSpeed - d.vz) * follow;
+        d.vy += (support - 8.4 - d.vy * 0.18 + Math.sin(t * 3.7 + d.phase) * support * 0.16) * dt;
+        d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt; d.heading += d.spin * dt; d.pitch += d.tumbleX * dt; d.roll += d.tumbleZ * dt;
+        if (Math.max(Math.abs(d.x), Math.abs(d.z)) > WORLD_HALF - 35) { this.deactivateDebris(d); continue; }
+        const waterY = this.water.waveHeight(d.x, d.z, t), ground = this.terrain.heightAt(d.x, d.z), blocked = this.world && this.world.blockedAt(d.x, d.z);
+        if (ground > this.water.level + 0.12 && d.y <= ground + 0.16) { this.deactivateDebris(d); continue; }
+        if (d.y <= waterY + 0.08) {
+          if (ground < -0.45 && !blocked) this.landDebris(d, t, Math.hypot(d.vx, d.vy, d.vz)); else this.deactivateDebris(d);
+          if (!d.active) continue;
+        }
+        d.mesh.position.set(d.x, d.y, d.z); d.mesh.rotation.set(d.pitch, d.heading, d.roll, 'YXZ');
+        if (d.airborne && d.y - waterY < 3.2) { d.obs.x = d.x; d.obs.z = d.z; this.obstacles.push(d.obs); }
+        if (d.life <= 0 || Math.hypot(d.x - this.phys.pos.x, d.z - this.phys.pos.y) > 540) this.deactivateDebris(d);
+        continue;
+      }
       const flow = this.currents ? this.currents.flowAt(d.x, d.z, this._flow) : null;
-      const targetVx = this.environment.windDir.x * (0.22 + V.wind * 0.038) + (flow ? flow.x : 0);
-      const targetVz = this.environment.windDir.z * (0.22 + V.wind * 0.038) + (flow ? flow.y : 0);
+      const targetVx = this.environment.windDir.x * (0.22 + wind * 0.038) + (flow ? flow.x : 0);
+      const targetVz = this.environment.windDir.z * (0.22 + wind * 0.038) + (flow ? flow.y : 0);
       d.vx += (targetVx - d.vx) * (1 - Math.exp(-dt * 0.38)); d.vz += (targetVz - d.vz) * (1 - Math.exp(-dt * 0.38));
       const nx = d.x + d.vx * dt, nz = d.z + d.vz * dt;
       if (this.terrain.heightAt(nx, nz) > -0.45 || (this.world && this.world.blockedAt(nx, nz))) { d.vx *= -0.58; d.vz *= -0.58; d.heading += 1.7; }
@@ -297,7 +390,7 @@ export class StormHazards {
         this.game.toast('Inside the spray ring', 'The funnel is pulling the stern around.', 2.2);
       }
     }
-    this.game.mapMarkers.push({ kind: 'hazard', x: S.x, z: S.z, color: '#d7f1f4', r: 6, clamp: d < 520 });
+    this.spoutMarker.x = S.x; this.spoutMarker.z = S.z; this.spoutMarker.clamp = d < 520; this.game.mapMarkers.push(this.spoutMarker);
     if (S.life <= 0 || Math.hypot(S.x - this.phys.pos.x, S.z - this.phys.pos.y) > 620) this.endSpout();
   }
 
@@ -315,16 +408,33 @@ export class StormHazards {
   update(dt, t, enabled = true) {
     this.enabled = enabled;
     if (!enabled) { this.obstacles.length = 0; if (this.el) this.el.classList.remove('on'); return; }
-    this.noticeT = Math.max(0, this.noticeT - dt);
+    this.noticeT = Math.max(0, this.noticeT - dt); this.airNoticeT = Math.max(0, this.airNoticeT - dt);
     this.updateDebris(dt, t); this.updateStrikes(dt); this.updateSpout(dt, t);
     this.hudT -= dt; if (this.hudT <= 0) { this.hudT = 0.12; this.render(); }
   }
 
   stamps(out) {
+    this.stampPool.reset();
     if (this.spout.active) {
-      const S = this.spout; out.push({ x: S.x, z: S.z, radius: 7.8, height: -1.5, foam: 3.6, foamRadius: 8.6 });
-      for (let i = 0; i < 4; i++) { const a = S.spin + i * Math.PI / 2; out.push({ x: S.x + Math.cos(a) * 7, z: S.z + Math.sin(a) * 7, radius: 2.2, height: 0.3, foam: 1.1, foamRadius: 2.4 }); }
+      const S = this.spout; this.stampPool.emit(S.x, S.z, 7.8, -1.5, 3.6, 8.6);
+      for (let i = 0; i < 4; i++) { const a = S.spin + i * Math.PI / 2; this.stampPool.emit(S.x + Math.cos(a) * 7, S.z + Math.sin(a) * 7, 2.2, 0.3, 1.1, 2.4); }
     }
-    for (const d of this.debris) if (d.active && Math.hypot(d.x - this.phys.pos.x, d.z - this.phys.pos.y) < 90) out.push({ x: d.x, z: d.z, radius: 0.65, height: -0.12, foam: 0.12, foamRadius: 0.7 });
+    for (const d of this.debris) if (d.active && !d.airborne && Math.hypot(d.x - this.phys.pos.x, d.z - this.phys.pos.y) < 90) this.stampPool.emit(d.x, d.z, 0.65, -0.12, 0.12, 0.7);
+    this.stampPool.appendTo(out);
+  }
+
+  resourceStats() {
+    const geometries = new Set(), materials = new Set(); let objects = 0, meshes = 0, active = 0, airborne = 0;
+    for (const d of this.debris) {
+      if (d.active) active++; if (d.airborne) airborne++;
+      d.mesh.traverse(object => {
+        objects++; if (object.isMesh) meshes++; if (object.geometry) geometries.add(object.geometry);
+        if (Array.isArray(object.material)) for (const material of object.material) materials.add(material); else if (object.material) materials.add(object.material);
+      });
+    }
+    return {
+      pool: this.debris.length, active, airborne, objects, meshes, geometries: geometries.size, materials: materials.size,
+      wakeStamps: { active: this.stampPool.count, capacity: this.stampPool.capacity, droppedFrame: this.stampPool.droppedFrame, droppedTotal: this.stampPool.droppedTotal },
+    };
   }
 }

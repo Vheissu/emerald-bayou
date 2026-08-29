@@ -79,6 +79,10 @@ The marked channels now match the radio traffic. Red aids carry even numbers, gr
 
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
 
+Severe tropical bands can now lift loose planks and sheet metal over the channel. They move with the gusts, tumble, become solid only as they drop to cage height, then splash down and remain as floating prop hazards. Logs stay in the water. The behavior follows National Weather Service and National Hurricane Center guidance that tropical-storm and hurricane winds can turn loose outdoor material into [windborne debris](https://www.weather.gov/mhx/hurricaneprep) and [flying missiles](https://www.nhc.noaa.gov/prepare/hazards.php); the debris left obstructing shallow channels follows [NOAA's account of storm-driven marine debris](https://oceanservice.noaa.gov/facts/disaster-debris.html).
+
+The storm system still owns twelve debris bodies and 44 meshes. Sharing their immutable parts cut the pool from 44 geometries and 16 materials to six geometries and seven materials. Its seventeen wake records are reused every frame, and thunder loops the existing engine-noise sample instead of generating a new 2.8 second buffer for every strike.
+
 The Moon advances through a 29.531-day cycle. Its rise time, crescent or quarter terminator, moonlight and shadows all come from the same phase. New and full moons retain the strongest spring range; quarter moons soften the water and currents into a neap range. Clouds now hide the stars and Moon instead of letting either draw over the weather.
 
 The renderer budgets its internal drawing buffer instead of blindly doubling every Retina dimension. Performance profiles release the full-size optional post targets, reduce reflection and shadow work, and defer optional GLB decoding until the dock scene is playable. The map, streaming distance and simulation stay unchanged while the largest HDR and depth attachments remain bounded.
@@ -161,6 +165,7 @@ __dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fi
 __dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspection
 __dbg.nocturnal.resourceStats()           // point count, draw count and geometry bytes
 __dbg.encounters.pursuitSnapshot()        // surface units, shared visual and pooled aviation state
+__dbg.hazards.resourceStats()             // debris pool, shared resources and wake-stamp budget
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera
 __dbg.terrain.hf.computeBase(x, z)        // { h, s, lake, prairie, hammock }
 ```

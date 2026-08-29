@@ -303,6 +303,7 @@ async function init() {
       plume: { active: plume.count, capacity: plume.max },
       rain: { active: environment.precip.rain.geo.drawRange.count / 2, capacity: environment.precip.rain.count },
       hail: { active: environment.precip.hail.geo.drawRange.count, capacity: environment.precip.hail.count },
+      stormHazards: hazards.resourceStats(),
       wakeStamps: {
         life: { active: life.stampPool.count, capacity: life.stampPool.capacity, droppedFrame: life.stampPool.droppedFrame, droppedTotal: life.stampPool.droppedTotal },
         world: { active: world.stampPool.count, capacity: world.stampPool.capacity, droppedFrame: world.stampPool.droppedFrame, droppedTotal: world.stampPool.droppedTotal },
