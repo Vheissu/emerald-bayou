@@ -71,7 +71,8 @@ export class Terrain {
     this.hooks = { ready: null, done: null, dispose: null };
     this.queue = []; this.finalize = []; this.building = null;
     this.streamT = 0; this.camPos = new THREE.Vector2();
-    this.visible = new Set();
+    this.visible = new Set(); this.nextVisible = new Set();
+    this.streamNodes = []; this.streamNodeCount = 0;
     this.stats = { chunks: 0, visible: 0, inFlight: 0 };
     this.indices = new Map();
   }
@@ -211,12 +212,23 @@ export class Terrain {
     c.prio = dist / c.size;
     if (!c.requested) { c.requested = true; this.queue.push(c); }
   }
+  streamNode() {
+    let node = this.streamNodes[this.streamNodeCount++];
+    if (!node) {
+      node = { leaf: false, kids: [], ready: false, c: null, level: 0, i: 0, j: 0, d: 0 };
+      this.streamNodes.push(node);
+    }
+    node.leaf = false; node.kids.length = 0; node.ready = false; node.c = null;
+    return node;
+  }
   // pass 1: make sure every desired leaf exists / is requested; returns whether the subtree is fully ready
   prepare(level, i, j, now) {
     const size = SIZE(level), x0 = i * size, z0 = j * size;
     const d = this.boxDist(x0, z0, size);
-    if (d > FAR || x0 >= WORLD_HALF || z0 >= WORLD_HALF || x0 + size <= -WORLD_HALF || z0 + size <= -WORLD_HALF) return { ready: true, node: null };
+    if (d > FAR || x0 >= WORLD_HALF || z0 >= WORLD_HALF || x0 + size <= -WORLD_HALF || z0 + size <= -WORLD_HALF) return null;
     const leaf = level === 0 || d >= size * SPLIT_K[level];
+    const node = this.streamNode();
+    node.level = level; node.i = i; node.j = j; node.d = d;
     if (leaf) {
       const c = this.ensure(level, i, j); c.used = now;
       if (!c.ready) {
@@ -229,11 +241,16 @@ export class Terrain {
         if (cx0 >= WORLD_HALF || cz0 >= WORLD_HALF || cx0 + cs <= -WORLD_HALF || cz0 + cs <= -WORLD_HALF) continue;
         const cc = this.ensure(level - 1, i * 2 + a, j * 2 + b); cc.used = now; if (!cc.ready) this.request(cc, this.boxDist(cx0, cz0, cs) + size);
       }
-      return { ready: c.ready, node: { c, leaf: true, ready: c.ready, level, i, j, d } };
+      node.c = c; node.leaf = true; node.ready = c.ready;
+      return node;
     }
-    const kids = []; let ready = true;
-    for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) { const r = this.prepare(level - 1, i * 2 + a, j * 2 + b, now); if (r.node) { kids.push(r.node); ready = ready && r.ready; } }
-    return { ready, node: { leaf: false, kids, ready, level, i, j, d } };
+    let ready = true;
+    for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) {
+      const child = this.prepare(level - 1, i * 2 + a, j * 2 + b, now);
+      if (child) { node.kids.push(child); ready = ready && child.ready; }
+    }
+    node.ready = ready;
+    return node;
   }
   // pass 2: choose what to draw. Every point of ground is covered by exactly one chunk. A quad whose leaves are
   // still building shows its own (one level coarser) chunk instead; the fallback never climbs higher than that,
@@ -254,15 +271,15 @@ export class Terrain {
   touch(node, now) { if (node.leaf) { node.c.used = now; return; } for (const k of node.kids) this.touch(k, now); }
 
   stream(now) {
-    const vis = new Set();
+    const vis = this.nextVisible; vis.clear(); this.streamNodeCount = 0;
     const roots = Math.ceil(WORLD_HALF / ROOT);
     for (let j = -roots; j < roots; j++) for (let i = -roots; i < roots; i++) {
-      const r = this.prepare(LEVELS - 1, i, j, now);
-      this.select(r.node, now, vis);
+      const root = this.prepare(LEVELS - 1, i, j, now);
+      this.select(root, now, vis);
     }
     for (const c of this.visible) if (!vis.has(c)) { if (c.mesh) c.mesh.visible = false; if (c.veg) c.veg.visible = false; }
     for (const c of vis) { if (c.mesh) c.mesh.visible = true; if (c.veg) c.veg.visible = true; }
-    this.visible = vis;
+    this.nextVisible = this.visible; this.visible = vis;
     // drop chunks nobody has wanted for a while
     for (const c of this.chunks.values()) {
       if (vis.has(c) || now - c.used < 5000) continue;
@@ -336,7 +353,7 @@ export class Terrain {
       terrainGrid += grid; terrainGeometry += geometry; vegetation += veg; vegetationInstances += instances; vegetationMeshes += meshes; colliders += c.colliders.length;
       l.terrainGrid += grid; l.terrainGeometry += geometry; l.vegetation += veg; l.vegetationInstances += instances; l.vegetationMeshes += meshes; l.colliders += c.colliders.length;
     }
-    return { chunks: this.chunks.size, visible: this.visible.size, terrainGrid, terrainGeometry, vegetation, vegetationInstances, vegetationMeshes, colliders, levels };
+    return { chunks: this.chunks.size, visible: this.visible.size, terrainGrid, terrainGeometry, vegetation, vegetationInstances, vegetationMeshes, colliders, streamNodes: { active: this.streamNodeCount, capacity: this.streamNodes.length }, levels };
   }
   finish(c) {
     this.building = null; c.build = null; c.ready = true;

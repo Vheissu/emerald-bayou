@@ -24,8 +24,15 @@ test('older-hardware profiles do not block on optional models or the full shader
     assert.equal(plan.compileDelayMs, 0);
     assert.equal(plan.deferOptionalModels, true);
     assert.ok(plan.modelConcurrency >= 1 && plan.modelConcurrency <= 2);
-    assert.ok(plan.modelReleaseDelayMs >= 300);
+    assert.ok(plan.modelReleaseDelayMs >= 700);
+    assert.ok(plan.modelBatchDelayMs >= 0);
+    assert.ok(plan.modelIdleTimeoutMs >= 900);
   }
+  const fallback = startupPlan('fallback'), performance = startupPlan('performance'), balanced = startupPlan('balanced');
+  assert.ok(fallback.modelReleaseDelayMs > performance.modelReleaseDelayMs);
+  assert.ok(performance.modelReleaseDelayMs > balanced.modelReleaseDelayMs);
+  assert.ok(fallback.modelBatchDelayMs > performance.modelBatchDelayMs);
+  assert.ok(performance.modelBatchDelayMs > balanced.modelBatchDelayMs);
 });
 
 test('older-hardware profiles allocate smaller bounded weather and spray pools', () => {
@@ -57,4 +64,20 @@ test('local startup only opens on terrain that is actually visible under the doc
   assert.equal(Terrain.prototype.visibleAt.call(terrain, -20, -20), true);
   assert.equal(Terrain.prototype.visibleAt.call(terrain, 20, 20), false);
   assert.equal(Terrain.prototype.visibleAt.call(terrain, 140, 140), false);
+});
+
+test('terrain streaming reuses its quadtree scratch graph and visibility sets', () => {
+  const terrain = Object.assign(Object.create(Terrain.prototype), {
+    camPos: { x: 0, y: 0 }, chunks: new Map(), queue: [], finalize: [], building: null,
+    visible: new Set(), nextVisible: new Set(), streamNodes: [], streamNodeCount: 0,
+    hooks: { dispose: null },
+  });
+  terrain.stream(1000);
+  const nodes = terrain.streamNodes.slice(), visible = terrain.visible, spare = terrain.nextVisible;
+  assert.equal(nodes.length, 304);
+  terrain.stream(1200);
+  assert.equal(terrain.streamNodes.length, nodes.length);
+  assert.ok(terrain.streamNodes.every((node, index) => node === nodes[index]));
+  assert.equal(terrain.visible, spare);
+  assert.equal(terrain.nextVisible, visible);
 });

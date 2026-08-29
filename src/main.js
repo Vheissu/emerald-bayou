@@ -73,7 +73,12 @@ const SUN_DIR = new THREE.Vector3(-0.42, 0.72, -0.55).normalize();
 
 async function init() {
   const startup = startupPlan(renderProfile.id);
-  configureModelLoading({ deferOptional: startup.deferOptionalModels, concurrency: startup.modelConcurrency });
+  configureModelLoading({
+    deferOptional: startup.deferOptionalModels,
+    concurrency: startup.modelConcurrency,
+    batchDelayMs: startup.modelBatchDelayMs,
+    idleTimeoutMs: startup.modelIdleTimeoutMs,
+  });
   // ---- sky & lighting ----
   const sky = new Sky(SUN_DIR);
   scene.add(sky.mesh);

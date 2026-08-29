@@ -7,7 +7,12 @@ const loader = new GLTFLoader();
 const cache = new Map();
 const deferredQueue = [];
 const deferredByName = new Map();
-let deferOptionalModels = false, modelConcurrency = 2, drainingDeferred = false;
+const DEFERRED_PRIORITY = Object.freeze({
+  beau_boat: 0, boat_dreams: 0, sandbox_boat: 1,
+  fish_a: 2, turtle_boat: 2, realistic_alligator: 3,
+  tree_c: 10,
+});
+let deferOptionalModels = false, modelConcurrency = 2, modelBatchDelayMs = 0, modelIdleTimeoutMs = 900, drainingDeferred = false, drainPromise = null, requestOrder = 0;
 const modelRoot = `${import.meta.env?.BASE_URL || '/'}models/`;
 export const SPEC = {
   beau_boat: { scale: 2.3, yaw: -Math.PI / 2, y: 0.27, len: 4.4 },
@@ -31,9 +36,17 @@ function fit(name, root) {
 export function modelBox(name) { const r = cacheDone.get(name); return r ? fit(name, r) : null; }
 const cacheDone = new Map();
 
-export function configureModelLoading({ deferOptional = false, concurrency = 2 } = {}) {
+export function configureModelLoading({ deferOptional = false, concurrency = 2, batchDelayMs = 0, idleTimeoutMs = 900 } = {}) {
   deferOptionalModels = Boolean(deferOptional);
   modelConcurrency = Math.max(1, Math.min(4, Math.round(Number(concurrency) || 1)));
+  modelBatchDelayMs = Math.max(0, Math.min(5000, Math.round(Number(batchDelayMs) || 0)));
+  modelIdleTimeoutMs = Math.max(250, Math.min(5000, Math.round(Number(idleTimeoutMs) || 900)));
+}
+
+const deferredPriority = name => DEFERRED_PRIORITY[name] ?? 5;
+const compareDeferredJobs = (a, b) => deferredPriority(a.name) - deferredPriority(b.name) || a.order - b.order;
+export function orderDeferredModelNames(names) {
+  return names.map((name, order) => ({ name, order })).sort(compareDeferredJobs).map(job => job.name);
 }
 
 function fetchModel(name) {
@@ -53,26 +66,58 @@ function startDeferred(job) {
 
 function idleTurn() {
   return new Promise(resolve => {
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(() => resolve(), { timeout: 900 });
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(() => resolve(), { timeout: modelIdleTimeoutMs });
     else setTimeout(resolve, 80);
   });
 }
 
+function visibleTurn() {
+  const doc = globalThis.document;
+  if (!doc || doc.visibilityState !== 'hidden') return Promise.resolve();
+  return new Promise(resolve => {
+    const onVisibility = () => {
+      if (doc.visibilityState === 'hidden') return;
+      doc.removeEventListener('visibilitychange', onVisibility);
+      resolve();
+    };
+    doc.addEventListener('visibilitychange', onVisibility);
+  });
+}
+
+const delayTurn = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function compactDeferredQueue() {
+  let write = 0;
+  for (const job of deferredQueue) if (!job.started) deferredQueue[write++] = job;
+  deferredQueue.length = write;
+  deferredQueue.sort(compareDeferredJobs);
+}
+
 async function drainDeferredModels() {
   if (drainingDeferred) return; drainingDeferred = true;
-  while (deferredQueue.length) {
-    await idleTurn();
-    const batch = [];
-    while (batch.length < modelConcurrency && deferredQueue.length) {
-      const job = deferredQueue.shift(); if (!job.started) batch.push(job);
+  let batchIndex = 0;
+  try {
+    while (deferredQueue.length) {
+      compactDeferredQueue(); if (!deferredQueue.length) break;
+      await visibleTurn();
+      if (batchIndex && modelBatchDelayMs) await delayTurn(modelBatchDelayMs);
+      await visibleTurn();
+      await idleTurn();
+      compactDeferredQueue(); if (!deferredQueue.length) break;
+      const batch = [];
+      while (batch.length < modelConcurrency && deferredQueue.length) batch.push(deferredQueue.shift());
+      if (batch.length) { await Promise.all(batch.map(startDeferred)); batchIndex++; }
     }
-    if (batch.length) await Promise.all(batch.map(startDeferred));
+  } finally {
+    deferOptionalModels = false;
+    drainingDeferred = false;
   }
-  drainingDeferred = false;
 }
 
 export function releaseDeferredModels() {
-  deferOptionalModels = false; void drainDeferredModels();
+  if (!deferOptionalModels && !drainingDeferred) return Promise.resolve();
+  if (!drainPromise) drainPromise = drainDeferredModels().finally(() => { drainPromise = null; });
+  return drainPromise;
 }
 
 export function modelLoadingStats() {
@@ -84,7 +129,7 @@ export function loadModel(name, { immediate = false } = {}) {
     if (deferOptionalModels && !immediate) {
       let resolve;
       const promise = new Promise(done => { resolve = done; });
-      const job = { name, promise, resolve, started: false };
+      const job = { name, promise, resolve, started: false, order: requestOrder++ };
       cache.set(name, promise); deferredByName.set(name, job); deferredQueue.push(job);
     } else cache.set(name, fetchModel(name));
   } else if (immediate && deferredByName.has(name)) startDeferred(deferredByName.get(name));
