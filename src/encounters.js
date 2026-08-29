@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { buildSkiff } from './npc.js';
 import { person, animatePerson, wave } from './folk.js';
-import { fuelDrum, wreck } from './markers.js';
+import { crabFloat, fuelDrum, wreck } from './markers.js';
+import { manateeMesh } from './wildlife.js';
 import { mulberry32 } from './noise.js';
 import { fmtDist } from './game.js';
 
@@ -10,7 +11,8 @@ const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
-const DEBUG_ORDER = ['distress', 'fire', 'patrol', 'smuggler', 'salvage', 'netline'];
+const MANATEE_PROBES = [0, -0.42, 0.42, -0.86, 0.86, -1.32, 1.32];
+const DEBUG_ORDER = ['distress', 'fire', 'manatee', 'patrol', 'smuggler', 'salvage', 'netline'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
 const SPILL_POOL_SIZE = 3;
 
@@ -144,6 +146,16 @@ function animateEngineFire(group, t, strength, flash = 0) {
   fire.light.intensity = 45 * strength + 280 * flash; fire.light.distance = 22 + strength * 18 + flash * 20;
 }
 
+function makeEntangledManatee() {
+  const animal = manateeMesh(); animal.name = 'entangled manatee'; animal.visible = false;
+  const buoy = crabFloat(); buoy.name = 'towed crab float'; buoy.scale.setScalar(0.72); buoy.visible = false;
+  const ropeGeometry = new THREE.BufferGeometry();
+  ropeGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6 * 3), 3));
+  const rope = new THREE.Line(ropeGeometry, new THREE.LineBasicMaterial({ color: 0xc49b54, transparent: true, opacity: 0.86, depthWrite: false }));
+  rope.name = 'crab trap line'; rope.frustumCulled = false; rope.visible = false;
+  return { animal, buoy, rope };
+}
+
 function boatAgent(mesh) {
   return { mesh, x: 0, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: 0, targetZ: 0, decisionT: 0, active: false };
 }
@@ -164,6 +176,8 @@ export class EncounterDirector {
       e.hitCd = 2.2; e.burn = Math.min(e.limit, e.burn + into * 0.9); this.game.shake = Math.max(this.game.shake, Math.min(0.34, into * 0.035));
       this.game.toast('Contact with the burning skiff', 'The fuel tank shifted. Back off and come alongside at idle.', 2.8);
     } };
+    this.manateeObs = { x: 0, z: 0, r: 2.15, tag: 'entangled manatee', onHit: into => this.hitEntangledManatee(into) };
+    this.manateeLineObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.16, tag: 'crab trap line', onHit: into => this.hitManateeLine(into) };
     this.phys.addObs('encounters', this.obs);
     this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.smuggler.agent, this.rigs.distress.echoAgent];
     this.salvagePieces = this.rigs.salvage.drums.map((mesh, index) => ({ mesh, index, x: 0, z: 0, vx: 0, vz: 0, found: false, ruptured: false, resolved: false, hitCd: 0, sinkT: 0, ph: index * 2.3 }));
@@ -174,7 +188,10 @@ export class EncounterDirector {
       if (e.code === 'KeyF' && !e.repeat) this.alternate = true;
       if (import.meta.env.DEV && e.code === 'F9' && !e.repeat && this.enabled && !this.game.state) { e.preventDefault(); this.start(DEBUG_ORDER[this.debugIndex++ % DEBUG_ORDER.length], true); }
       if (import.meta.env.DEV && e.code === 'F10' && !e.repeat && this.enabled && this.active) { e.preventDefault(); this.debugApproach(); }
-      if (import.meta.env.DEV && e.code === 'F11' && !e.repeat && this.enabled && this.active?.type === 'fire' && !this.active.fireOut && !this.active.burned) { e.preventDefault(); this.active.burn = this.active.limit; }
+      if (import.meta.env.DEV && e.code === 'F11' && !e.repeat && this.enabled && this.active) {
+        if (this.active.type === 'fire' && !this.active.fireOut && !this.active.burned) { e.preventDefault(); this.active.burn = this.active.limit; }
+        else if (this.active.type === 'manatee') { e.preventDefault(); this.debugAdvanceManatee(); }
+      }
     };
     window.addEventListener('keydown', this.keyHandler);
     this.game.save.encounters ??= {};
@@ -211,8 +228,9 @@ export class EncounterDirector {
     const fireOperator = person(rr, { pose: 'stand', hat: false, vest: true }); fireOperator.position.set(-0.08, 0.5, -0.8); fireOperator.rotation.y = Math.PI; fireBoat.add(fireOperator);
     const fire = makeEngineFire(); fire.position.set(0.34, 0.52, 1.5); fireBoat.add(fire);
     const swimmer = person(rr, { pose: 'sitEdge', hat: false, vest: true }); swimmer.visible = false; this.scene.add(swimmer);
+    const manatee = makeEntangledManatee(); this.scene.add(manatee.animal, manatee.buoy, manatee.rope);
 
-    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, patrol, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire } };
+    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, patrol, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire }, manatee };
   }
 
   spot(min = 160, max = 300, sideMax = 170) {
@@ -232,21 +250,22 @@ export class EncounterDirector {
     const heat = this.law ? this.law.attention : 0;
     const runners = this.reputation ? this.reputation.score('runners') : 0, fwc = this.reputation ? this.reputation.score('fwc') : 0;
     const region = this.regions && this.regions.current ? this.regions.current.encounters : {};
-    const weights = { distress: 0.29, fire: 0.12, patrol: 0.24, salvage: 0.12, smuggler: 0.14, netline: 0.09 };
+    const weights = { distress: 0.27, fire: 0.11, manatee: 0.11, patrol: 0.22, salvage: 0.11, smuggler: 0.11, netline: 0.07 };
     weights.patrol *= (region.law ?? 1) * (1 + heat * 1.75) * (1 + Math.max(0, -fwc) * 0.16);
     weights.smuggler *= (region.runners ?? 1) * (night ? 1.9 : 1) * (1 + Math.max(0, -runners) * 0.2);
     weights.netline *= (0.72 + (region.runners ?? 1) * 0.38) * (night ? 1.24 : 1);
     weights.distress *= region.danger ?? 1;
     weights.fire *= (region.danger ?? 1) * (0.82 + Math.min(1.25, (this.environment.values.wind || 0) * 0.045));
+    weights.manatee *= (night ? 0.42 : 1) * (1 - clamp((this.environment.values.storm || 0) - 0.45, 0, 0.86));
     weights.salvage *= 0.7 + (region.danger ?? 1) * 0.45;
     if (weather === 'hurricane' || weather === 'tropical' || weather === 'thunderstorm') {
-      weights.distress *= 1.8; weights.fire *= 1.35; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
+      weights.distress *= 1.8; weights.fire *= 1.35; weights.manatee *= 0.08; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
     } else if (weather === 'squall' || weather === 'hail') {
-      weights.distress *= 1.4; weights.fire *= 1.2; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
+      weights.distress *= 1.4; weights.fire *= 1.2; weights.manatee *= 0.35; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
     }
     if (heat >= 3) weights.patrol *= 2.1;
     let roll = Math.random() * Object.values(weights).reduce((a, n) => a + n, 0);
-    for (const type of ['distress', 'fire', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
+    for (const type of ['distress', 'fire', 'manatee', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
     return 'distress';
   }
 
@@ -255,6 +274,7 @@ export class EncounterDirector {
     const at = nearby ? this.spot(42, 62, 38) : this.spot(); if (!at) { this.next = 20; return false; }
     if (type === 'distress') this.startDistress(at);
     else if (type === 'fire') this.startFire(at);
+    else if (type === 'manatee') this.startManatee(at);
     else if (type === 'patrol') this.startPatrol(at);
     else if (type === 'smuggler') this.startSmuggler(at);
     else if (type === 'netline') this.startNetline(at);
@@ -383,6 +403,140 @@ export class EncounterDirector {
     );
   }
 
+  startManatee(at) {
+    const R = this.rigs.manatee, heading = at.heading + (Math.random() - 0.5) * 0.7;
+    R.animal.visible = true; R.buoy.visible = true; R.rope.visible = true; R.rope.material.opacity = 0.86;
+    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false;
+    this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0;
+    this.active = {
+      type: 'manatee', x: at.x, z: at.z, heading, navHeading: heading, speed: 0.46, state: 'waiting', t: 0, known: false,
+      navT: 0, ph: Math.random() * Math.PI * 2, surfaced: false, spook: 0, warnT: 0, hitCd: 0, lineHitCd: 0,
+      buoyX: at.x, buoyZ: at.z, fixX: at.x, fixZ: at.z, fixAge: 0, visualT: 0, lostT: 0,
+      cutT: 0, rescueT: 0, resolveT: 0, releaseT: 0, struck: false,
+    };
+    this.updateManateeRig(this.active, 0, 0);
+  }
+
+  updateManateeRig(e, dt, t) {
+    const R = this.rigs.manatee;
+    e.spook = Math.max(0, e.spook - dt); e.warnT = Math.max(0, e.warnT - dt); e.hitCd = Math.max(0, e.hitCd - dt); e.lineHitCd = Math.max(0, e.lineHitCd - dt);
+    e.navT -= dt;
+    if (e.navT <= 0) {
+      e.navT = 0.55 + Math.random() * 0.35; let best = e.heading, bestScore = -1e9;
+      for (const da of MANATEE_PROBES) {
+        const h = e.heading + da, fx = -Math.sin(h), fz = -Math.cos(h);
+        const x1 = e.x + fx * 13, z1 = e.z + fz * 13, x2 = e.x + fx * 28, z2 = e.z + fz * 28;
+        const d1 = -this.terrain.heightAt(x1, z1), d2 = -this.terrain.heightAt(x2, z2);
+        if (d1 < 0.72 || d2 < 0.72 || d1 > 6.2 || d2 > 6.2 || this.world.blockedAt(x1, z1)) continue;
+        const score = Math.min(d1, d2) - Math.abs(d1 - 2.2) * 0.16 - Math.abs(da) * 0.3 + Math.random() * 0.08;
+        if (score > bestScore) { bestScore = score; best = h; }
+      }
+      e.navHeading = bestScore > -1e8 ? best : e.heading + Math.PI * 0.7;
+    }
+    const dh = Math.atan2(Math.sin(e.navHeading - e.heading), Math.cos(e.navHeading - e.heading));
+    e.heading += clamp(dh, -dt * 0.48, dt * 0.48);
+    const targetSpeed = e.spook > 0 ? 1.45 : e.state === 'rescue' ? 0.08 : e.state === 'released' ? 1.05 : e.state === 'struck' ? 0.8 : e.state === 'cutting' ? 0.3 : 0.48;
+    e.speed += (targetSpeed - e.speed) * (1 - Math.exp(-dt * (e.spook > 0 ? 2.4 : 0.8)));
+    const fx = -Math.sin(e.heading), fz = -Math.cos(e.heading), flow = this.currents ? this.currents.flowAt(e.x, e.z, this._flow) : null;
+    e.x += (fx * e.speed + (flow ? flow.x * 0.45 : 0)) * dt; e.z += (fz * e.speed + (flow ? flow.y * 0.45 : 0)) * dt;
+
+    const wave = this.water.waveHeight(e.x, e.z, t), breath = Math.sin(t * 0.72 + e.ph), lift = Math.max(0, breath - 0.35) * 0.24;
+    R.animal.position.set(e.x, wave - 0.66 + lift - (e.spook > 0 ? 0.22 : 0), e.z);
+    R.animal.rotation.set(-0.04 + Math.sin(t * 0.46 + e.ph) * 0.035, e.heading, Math.sin(t * 0.61 + e.ph) * 0.025, 'YXZ');
+    const surfaced = breath > 0.78 && e.spook <= 0;
+    if (surfaced && !e.surfaced && dt > 0) {
+      this.audio.splash(0.18);
+      for (let i = 0; i < 7; i++) this.spray.emit(e.x + (Math.random() - 0.5) * 1.2, wave + 0.04, e.z + (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.4, 0.35 + Math.random() * 1.2, (Math.random() - 0.5) * 1.4, 0.012 + Math.random() * 0.014, 0.3 + Math.random() * 0.25, 0.55);
+    }
+    e.surfaced = surfaced;
+
+    if (R.buoy.visible) {
+      const trail = 5.7 + Math.sin(t * 0.37 + e.ph) * 0.35;
+      e.buoyX = e.x + Math.sin(e.heading) * trail; e.buoyZ = e.z + Math.cos(e.heading) * trail;
+      const buoyY = this.water.waveHeight(e.buoyX, e.buoyZ, t) - 0.16;
+      R.buoy.position.set(e.buoyX, buoyY, e.buoyZ); R.buoy.rotation.set(Math.sin(t * 1.12 + e.ph) * 0.08, e.heading, Math.cos(t * 0.83 + e.ph) * 0.1, 'YXZ');
+      const sideX = Math.cos(e.heading) * 0.38, sideZ = -Math.sin(e.heading) * 0.38;
+      const sx = e.x + sideX, sz = e.z + sideZ, sy = wave - 0.32, arr = R.rope.geometry.attributes.position.array;
+      for (let i = 0; i < 6; i++) {
+        const k = i / 5, q = i * 3; arr[q] = lerp(sx, e.buoyX, k); arr[q + 1] = lerp(sy, buoyY + 0.18, k) - Math.sin(k * Math.PI) * 0.42; arr[q + 2] = lerp(sz, e.buoyZ, k);
+      }
+      R.rope.geometry.attributes.position.needsUpdate = true;
+    }
+  }
+
+  reportManatee(e) {
+    if (!e || e.type !== 'manatee' || !['waiting', 'cutting'].includes(e.state)) return;
+    const at = this.spot(135, 205, 150) || { x: e.x + 170, z: e.z + 40 }, A = this.rigs.patrol.agent;
+    const heading = Math.atan2(-(e.x - at.x), -(e.z - at.z));
+    Object.assign(A, { x: at.x, z: at.z, heading, speed: 5.2, want: 8, turn: 0, decisionT: 0, active: true });
+    A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.set(0, heading, 0); A.mesh.visible = true;
+    e.state = 'reported'; e.fixX = e.x; e.fixZ = e.z; e.fixAge = 0; e.visualT = 0; e.lostT = 0; e.cutT = 0;
+    this.clearPrompt(); this.audio.checkpoint(); this.game.toast('Wildlife Alert notified', 'Keep visual, update the exact position, and do not touch the gear.', 3.5);
+  }
+
+  beginManateeCut(e) {
+    if (e.state !== 'waiting') return;
+    e.state = 'cutting'; e.cutT = 0; this.clearPrompt(); this.audio.warn();
+    this.game.toast('Cutting the float line', 'The wrap may be embedded. FWC says leave the gear in place.', 3.2);
+  }
+
+  improperManateeCut(e) {
+    const R = this.rigs.manatee; R.buoy.visible = false; R.rope.visible = false;
+    e.state = 'cut'; e.resolveT = 4.8; e.spook = 9; e.navHeading = e.heading + (Math.random() < 0.5 ? -1 : 1) * 0.75;
+    this.game.save.manateeBadCuts = (this.game.save.manateeBadCuts || 0) + 1;
+    if (this.law) this.law.add(0.55, 'interfering with an entangled manatee', false);
+    if (this.reputation) {
+      this.reputation.change('fwc', -0.9, 'manatee-line-cut', 'You cut away the locator float before trained rescuers could remove the embedded wrap.', true);
+      this.reputation.change('locals', -0.25, 'manatee-line-cut', 'The camps heard the entangled manatee lost its float before the rescue boat arrived.', false);
+    }
+    this.game.persist(); this.audio.warn(); this.game.toast('Only the float came free', 'The line is still around the flipper and the animal is now harder to find.', 3.8);
+  }
+
+  releaseManatee(e) {
+    if (e.state === 'released') return;
+    const R = this.rigs.manatee; R.buoy.visible = false; R.rope.visible = false; e.state = 'released'; e.releaseT = 0; e.spook = 0;
+    this.game.save.manateeRescues = (this.game.save.manateeRescues || 0) + 1;
+    if (this.reputation) {
+      this.reputation.change('fwc', 1.45, 'manatee-rescue', 'Your location updates kept an entangled manatee in sight until trained rescuers removed the wrap.', true);
+      this.reputation.change('locals', 0.45, 'manatee-rescue', 'The camps heard the tower boat held visual for a manatee rescue.', false);
+    }
+    if (this.law) this.law.cool(0.35);
+    this.game.persist(); this.audio.checkpoint(); this.game.toast('Wrap removed', 'The flipper is clear. The biologist is releasing the animal on site.', 3.8);
+  }
+
+  hitManateeLine(into) {
+    const e = this.active; if (!e || e.type !== 'manatee' || !this.rigs.manatee.rope.visible || e.lineHitCd > 0 || into < 1.4) return;
+    e.lineHitCd = 2.4; e.spook = Math.max(e.spook, 5.5); e.navHeading = Math.atan2(-(e.x - this.phys.pos.x), -(e.z - this.phys.pos.y));
+    if (this.condition) this.condition.damage(0.2 + Math.min(0.8, into * 0.08), 0.7 + Math.min(2.8, into * 0.25));
+    this.audio.warn(); this.game.shake = Math.max(this.game.shake, Math.min(0.28, into * 0.035));
+    this.game.toast('Crab line under the hull', 'Kill the throttle. The float line is pulling tight against the animal.', 3.1);
+  }
+
+  hitEntangledManatee(into) {
+    const e = this.active; if (!e || e.type !== 'manatee' || e.hitCd > 0 || e.state === 'released' || e.state === 'cut' || e.state === 'struck' || into < 1.1) return;
+    e.hitCd = 3; e.spook = Math.max(e.spook, 7); e.navHeading = Math.atan2(-(e.x - this.phys.pos.x), -(e.z - this.phys.pos.y));
+    this.audio.thud(Math.min(1.2, 0.35 + into * 0.1)); this.game.shake = Math.max(this.game.shake, Math.min(0.58, 0.16 + into * 0.06));
+    if (into < 3.4) { this.game.toast('Manatee under the chine', 'Prop to idle. Let it move clear before you turn.', 3); return; }
+    if (!this.rigs.patrol.agent.active) this.reportManatee(e);
+    e.state = 'struck'; e.struck = true; e.resolveT = 4.2;
+    this.game.save.manateeEntanglementStrikes = (this.game.save.manateeEntanglementStrikes || 0) + 1;
+    if (this.law) { this.law.stats.manateeStrikes = (this.law.stats.manateeStrikes || 0) + 1; this.law.add(1.65, 'protected manatee strike', false); }
+    if (this.reputation) {
+      this.reputation.change('fwc', -1.15, 'manatee-strike', 'FWC logged a strike on the entangled manatee before the rescue boat reached it.', true);
+      this.reputation.change('locals', -0.4, 'manatee-strike', 'The tower hull hit the animal it was meant to protect.', false);
+    }
+    this.game.persist(); this.game.toast('Protected animal struck', 'Hold position. The rescue team is now responding to an injured manatee.', 3.8);
+  }
+
+  debugAdvanceManatee() {
+    const e = this.active; if (!e || e.type !== 'manatee') return;
+    if (e.state === 'waiting' || e.state === 'cutting') this.reportManatee(e);
+    else if (e.state === 'reported') {
+      const A = this.rigs.patrol.agent; Object.assign(A, { x: e.x + 10, z: e.z + 2, heading: e.heading, speed: 0.5, active: true });
+      A.mesh.visible = true; e.fixX = e.x; e.fixZ = e.z; e.visualT = 10; e.lostT = 0;
+    } else if (e.state === 'rescue') e.rescueT = 8.8;
+  }
+
   startPatrol(at) {
     const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: 4, want: 8, active: true });
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading;
@@ -509,7 +663,7 @@ export class EncounterDirector {
     else if (e.type === 'salvage') target = e.pieces.find(q => !q.resolved) || e;
     else if (e.type === 'fire' && e.aboard && (e.fireOut || e.burned) && e.drop) target = e.drop;
     const dx = target.x - p.pos.x, dz = target.z - p.pos.y, d = Math.hypot(dx, dz) || 1;
-    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
+    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'manatee' ? (e.state === 'cutting' ? 5.5 : 19) : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
     const x = target.x - dx / d * gap, z = target.z - dz / d * gap;
     p.reset(x, z, p.heading); p.y = this.water.waveHeight(x, z, 0);
   }
@@ -598,6 +752,7 @@ export class EncounterDirector {
     this.rigs.salvage.wreck.visible = false; for (const d of this.rigs.salvage.drums) d.visible = false;
     this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
     this.rigs.fire.boat.visible = false; this.rigs.fire.operator.visible = true; this.rigs.fire.swimmer.visible = false; animateEngineFire(this.rigs.fire.fire, 0, 0, 0);
+    this.rigs.manatee.animal.visible = false; this.rigs.manatee.buoy.visible = false; this.rigs.manatee.rope.visible = false; this.rigs.manatee.rope.material.opacity = 0.86;
     if (e.type === 'fire' && e.aboard) this.phys.loaded = 0;
     if (this.law) this.law.setPursuit(false);
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
@@ -767,6 +922,97 @@ export class EncounterDirector {
     } else if (e.known) {
       if (e.overboard) this.point(e.swimmerX, e.swimmerZ, 'operator in the water', '#ff5a36');
       else this.point(e.x, e.z, e.fireOut ? 'disabled skiff' : 'burning skiff', e.fireOut ? '#7be08a' : '#ff5a36');
+    }
+  }
+
+  updateManatee(e, dt, t) {
+    const R = this.rigs.manatee, A = this.rigs.patrol.agent, p = this.phys;
+    this.updateManateeRig(e, dt, t);
+    const d = Math.hypot(e.x - p.pos.x, e.z - p.pos.y), mph = p.speed * MPH;
+    if (d < 138) this.known(e, 'Entangled manatee', 'A manatee is towing a numbered crab float. The line is tight around a flipper.');
+    if (e.known && e.state !== 'released') {
+      if (e.state === 'reported' && e.lostT > 6) this.point(e.fixX, e.fixZ, 'last manatee position', '#e5c063');
+      else this.point(e.x, e.z, e.state === 'struck' ? 'injured manatee' : 'entangled manatee', e.state === 'struck' ? '#ff5a36' : '#7be08a');
+    }
+
+    if (d < 88 && e.state !== 'released' && e.state !== 'cut') {
+      this.manateeObs.x = e.x; this.manateeObs.z = e.z; this.obs.push(this.manateeObs);
+      if (R.rope.visible) {
+        this.manateeLineObs.ax = e.x; this.manateeLineObs.az = e.z; this.manateeLineObs.bx = e.buoyX; this.manateeLineObs.bz = e.buoyZ; this.obs.push(this.manateeLineObs);
+      }
+    }
+    if (d < 18 && mph > 7 && e.state !== 'released' && e.state !== 'cut' && e.state !== 'struck') {
+      e.spook = Math.max(e.spook, 5.5); e.navHeading = Math.atan2(-(e.x - p.pos.x), -(e.z - p.pos.y));
+      if (e.warnT <= 0) { e.warnT = 4; this.audio.warn(); this.game.toast('Manatee diving under the wake', 'Throttle to idle and hold the last position. Do not chase it.', 3.1); }
+    }
+
+    if (e.state === 'waiting') {
+      if (d < 22 && mph < 6.5 && this.canInteract()) {
+        this.setPrompt('report the entanglement to FWC <i>· F cut the float line yourself</i>');
+        if (this.interact) this.reportManatee(e); else if (this.alternate) this.beginManateeCut(e);
+      }
+      return;
+    }
+
+    if (e.state === 'cutting') {
+      if (d < 7 && mph < 4.5) {
+        e.cutT += dt; this.setPrompt(`hold beside the flipper while cutting <i>· ${Math.round(clamp(e.cutT / 4.5) * 100)}% · E stop and report</i>`, 'F');
+      } else {
+        e.cutT = Math.max(0, e.cutT - dt * 0.8); this.setPrompt(`get within 23 ft at idle to reach the float line <i>· E report instead</i>`, 'F');
+      }
+      if (this.interact) { this.reportManatee(e); return; }
+      if (e.cutT >= 4.5) { this.improperManateeCut(e); return; }
+      return;
+    }
+
+    if (A.active) {
+      const blink = Math.floor(t * 2.2) % 2; this.rigs.patrol.blue.light.intensity = blink ? 54 : 3; this.rigs.patrol.red.light.intensity = blink ? 3 : 38;
+    }
+
+    if (e.state === 'reported') {
+      const visual = d < 78 && mph < 11;
+      e.fixAge += dt;
+      if (visual) { e.fixX = e.x; e.fixZ = e.z; e.fixAge = 0; e.lostT = 0; e.visualT = Math.min(20, e.visualT + dt); }
+      else { e.lostT += dt; e.visualT = Math.max(0, e.visualT - dt * 0.35); }
+      const search = e.lostT > 7 ? 8 + Math.min(26, e.lostT * 0.45) : 0;
+      this.updateAgent(A, dt, t, e.fixX + Math.sin(t * 0.25) * search, e.fixZ + Math.cos(t * 0.25) * search, e.lostT > 7 ? 4.6 : 8.2, e.lostT > 7 ? 12 : 7);
+      this.addBoatObstacle(A, 'FWC rescue skiff');
+      const rescueD = Math.hypot(A.x - e.x, A.z - e.z);
+      if (visual && d > 12 && d < 75) this.setPrompt(`keep the animal in sight for the rescue skiff <i>· ${fmtDist(rescueD)}</i>`, 'VISUAL');
+      if (rescueD < 15.5 && e.visualT > 4 && e.lostT < 3) { e.state = 'rescue'; e.rescueT = 0; A.speed *= 0.25; this.audio.checkpoint(); this.game.toast('Rescue skiff has visual', 'Hold outside their stern and keep your prop stopped.', 3.4); }
+      return;
+    }
+
+    if (e.state === 'rescue') {
+      const rescueD = Math.hypot(A.x - e.x, A.z - e.z);
+      this.updateAgent(A, dt, t, e.x + Math.cos(e.heading) * 5.6, e.z - Math.sin(e.heading) * 5.6, 1.15, 8);
+      this.addBoatObstacle(A, 'FWC rescue skiff');
+      if (e.spook > 0 || (d < 11 && mph > 5)) {
+        e.state = 'reported'; e.rescueT = 0; e.visualT = 1; e.lostT = 0; e.fixX = e.x; e.fixZ = e.z;
+        this.audio.warn(); this.game.toast('Rescue approach broken off', 'Wake crossed the animal. Back out and let it surface again.', 3.2); return;
+      }
+      if (rescueD < 16 && d > 13) e.rescueT += dt; else e.rescueT = Math.max(0, e.rescueT - dt * 0.3);
+      R.rope.material.opacity = 0.86 * (1 - smooth(5.5, 8.8, e.rescueT));
+      this.setPrompt(`biologists working the wrap <i>· ${Math.round(clamp(e.rescueT / 9) * 100)}% · hold clear</i>`, 'FWC');
+      if (e.rescueT >= 9) this.releaseManatee(e);
+      return;
+    }
+
+    if (e.state === 'released') {
+      e.releaseT += dt; this.updateAgent(A, dt, t, e.x + Math.sin(e.heading) * 220, e.z + Math.cos(e.heading) * 220, 7.6); this.addBoatObstacle(A, 'FWC rescue skiff');
+      if (e.releaseT >= 5.5) { this.complete('Manatee released', 'The crab line is aboard the rescue skiff. The animal is swimming on its own.', 0, 0, '', 'manatee-rescued'); return; }
+      return;
+    }
+
+    if (e.state === 'cut') {
+      e.resolveT -= dt;
+      if (e.resolveT <= 0) { this.complete('Locator float lost', 'FWC has the last position, but the embedded wrap is still on the animal.', 0, 0, '', 'manatee-line-cut'); return; }
+      return;
+    }
+
+    if (e.state === 'struck') {
+      e.resolveT -= dt; this.updateAgent(A, dt, t, e.x, e.z, 7.4, 11); this.addBoatObstacle(A, 'FWC rescue skiff');
+      if (e.resolveT <= 0) { this.complete('Wildlife response inbound', 'FWC has the injured animal and the tower hull in its incident log.', 0, 0, '', 'manatee-struck'); return; }
     }
   }
 
@@ -986,6 +1232,7 @@ export class EncounterDirector {
     const e = this.active; e.t += dt; this.clearPrompt();
     if (e.type === 'distress') this.updateDistress(e, dt, t);
     else if (e.type === 'fire') this.updateFire(e, dt, t);
+    else if (e.type === 'manatee') this.updateManatee(e, dt, t);
     else if (e.type === 'patrol') this.updatePatrol(e, dt, t);
     else if (e.type === 'smuggler') this.updateSmuggler(e, dt, t);
     else if (e.type === 'netline') this.updateNetline(e, dt, t);
