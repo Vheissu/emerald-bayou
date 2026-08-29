@@ -12,10 +12,10 @@ globalThis.document = {
 const { Traffic } = await import('../src/life.js');
 if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument;
 
-function boat(id, { x = 0, z = 0, heading = 0, speed = 8, state = 'transit' } = {}) {
+function boat(id, { x = 0, z = 0, heading = 0, speed = 8, max = 12, state = 'transit' } = {}) {
   return {
     active: true, assisting: false, collision: { active: false }, kind: 'john', profile: { id },
-    x, z, heading, speed, state, navigation: createNavigationEncounter(), navTargetBoat: null,
+    x, z, heading, speed, max, state, navigation: createNavigationEncounter(), navTargetBoat: null,
     navEvalT: 0, navSignalT: 0, navSignalState: 0, navSignalTarget: '', hornT: 0,
   };
 }
@@ -24,7 +24,7 @@ function trafficWith(boats, hornCalls = []) {
   const traffic = Object.create(Traffic.prototype);
   traffic.boats = boats; traffic._navigationCandidate = createNavigationEncounter();
   traffic.phys = { pos: { x: 250, y: 0 }, heading: 0, speed: 0, vel: { x: 0, y: 0 } };
-  traffic.fx = { audio: { maneuverHorn: (blasts, volume, x, z) => hornCalls.push({ blasts, volume, x, z }) } };
+  traffic.fx = { waveFn: () => 0, audio: { maneuverHorn: (blasts, volume, x, z) => hornCalls.push({ blasts, volume, x, z }) } };
   return traffic;
 }
 
@@ -47,4 +47,15 @@ test('ambient power traffic gives way to another boat actively working fishing g
   const result = traffic.updateNavigationResponse(own, 250, 0.1, false);
   assert.equal(result.kind, 'fishing-give-way'); assert.equal(result.role, 'give-way');
   assert.equal(own.navTargetBoat, fishing); assert.ok(result.speedScale < 1);
+});
+
+test('a resident hull rides the retained wake field from another traffic boat without sampling itself', () => {
+  const source = boat('bay-star', { speed: 10 });
+  const receiver = boat('marsh-ice', { x: 14.7, z: 40, speed: 0 });
+  const traffic = trafficWith([source, receiver]); traffic.fx.waveFn = () => 0.4;
+
+  const peerWake = traffic.wakeHeightAt(receiver.x, receiver.z, 0, receiver);
+  assert.ok(Math.abs(peerWake) > 0.02);
+  assert.equal(traffic.surfaceHeightAt(receiver.x, receiver.z, 0, receiver), 0.4 + peerWake);
+  assert.equal(traffic.wakeHeightAt(receiver.x, receiver.z, 0, source), 0);
 });

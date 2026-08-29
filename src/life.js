@@ -17,6 +17,7 @@ import {
   evaluateNavigationEncounter, navigationEncounterOutranks, navigationLightVisibility,
 } from './navigationrules.js';
 import { waterspoutAvoidanceStrength, waterspoutProbeScore, waterspoutReactionReady } from './waterspout.js';
+import { sampleTrafficWake, wakeSampleAt } from './wakefield.js';
 
 // The bayou's small life: mullet jumping, bait boiling away from the bow, deadhead logs and dead snags in the still
 // water (with an anhinga drying its wings), other boats running the channels, and anglers anchored in the pools who
@@ -308,17 +309,6 @@ const searchBeamMaterial = color => new THREE.ShaderMaterial({
 });
 const SEARCH_BEAM_MATS = { patrol: searchBeamMaterial(0xd9efff), courier: searchBeamMaterial(0xffe1b5) };
 const shiftOn = (hour, duty) => duty[0] < duty[1] ? hour >= duty[0] && hour < duty[1] : hour >= duty[0] || hour < duty[1];
-function wakeSampleAt(sx, sz, heading, speed, maxSpeed, scale, x, z, t) {
-  const strength = Math.max(0, Math.min(1, (speed - 2.2) / Math.max(1, maxSpeed - 2.2))); if (strength <= 0) return 0;
-  const fx = -Math.sin(heading), fz = -Math.cos(heading), rx = -Math.cos(heading), rz = Math.sin(heading);
-  const dx = x - sx, dz = z - sz, aft = -(dx * fx + dz * fz); if (aft < 1.5 || aft > 95) return 0;
-  const lateral = Math.abs(dx * rx + dz * rz), arm = 1.1 + aft * 0.34, width = 0.7 + aft * 0.025;
-  const edge = Math.abs(lateral - arm), ridge = Math.exp(-(edge * edge) / (width * width));
-  const centerWidth = 1.4 + aft * 0.055, trough = Math.exp(-(lateral * lateral) / (centerWidth * centerWidth));
-  if (ridge < 0.002 && trough < 0.002) return 0;
-  const phase = t * (4.2 + strength * 0.8) - aft * (0.46 + strength * 0.08) + (sx + sz) * 0.013;
-  return scale * strength * strength * Math.exp(-aft / 85) * (ridge * Math.sin(phase) - trough * 0.27 * Math.sin(phase * 0.73 + 1.2));
-}
 const RECOLOR_MATERIALS = new Map();
 function recolor(group, from, to) {
   if (from === to) return;
@@ -912,17 +902,13 @@ export class Traffic {
     }
     return calls;
   }
-  wakeHeightAt(x, z, t) {
-    let height = 0;
-    for (const b of this.boats) if (b.active && b.kind !== 'canoe') {
-      const scale = b.kind === 'air' ? 0.18 : b.kind === 'cruiser' ? 0.13 : 0.105;
-      height += wakeSampleAt(b.x, b.z, b.heading, b.speed, b.max, scale, x, z, t);
-    }
-    return Math.max(-0.24, Math.min(0.24, height));
-  }
+  wakeHeightAt(x, z, t, excludeBoat = null) { return sampleTrafficWake(this.boats, x, z, t, excludeBoat); }
   playerWakeAt(x, z, t) {
     const P = this.phys;
     return wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, 0.22, x, z, t);
+  }
+  surfaceHeightAt(x, z, t, excludeBoat = null) {
+    return this.fx.waveFn(x, z, t) + this.playerWakeAt(x, z, t) + this.wakeHeightAt(x, z, t, excludeBoat);
   }
   snapshot() {
     return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, weatherSpeedScale: b.weatherSpeedScale, pursuitYield: b.pursuitYield, waterspoutAvoidance: b.spoutAvoidance, waterspoutDistance: b.spoutDistance, hornYield: b.signalYield, hornReplyIn: b.signalReplyT, fogSignalIn: b.fogHornT, navigation: b.navigation.role === NAVIGATION_ROLE.CLEAR ? null : { kind: b.navigation.kind, role: b.navigation.role, target: b.navTargetBoat ? b.navTargetBoat.profile.id : 'player', risk: b.navigation.risk, emergency: b.navigation.emergency, closestApproach: b.navigation.closestApproach, timeToClosest: b.navigation.timeToClosest, signalBlasts: b.navigation.signalBlasts }, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled, wakeComplaints: b.record.wakeComplaints, wakeReports: b.record.wakeReports, shiftWakeComplaints: b.record.wakeShiftComplaints }));
@@ -950,13 +936,13 @@ export class Traffic {
     const line = new THREE.Mesh(ANGLER_GEO.anchorLine, ANGLER_MAT.anchorLine); line.position.set(0, -0.4, -2.6); line.rotation.x = 0.5; g.add(line);
     const cooler = new THREE.Mesh(ANGLER_GEO.cooler, ANGLER_MAT.cooler); cooler.position.set(-0.4, 0.3, -0.8); g.add(cooler);
     const bob = new THREE.Mesh(ANGLER_GEO.bobber, ANGLER_MAT.bobber); bob.position.set(1.6, 0, -3.6); g.add(bob); g.userData.bob = bob;
-    g.position.set(a.x, 0, a.z); g.rotation.y = a.heading;
+    g.position.set(a.x, 0, a.z); g.rotation.order = 'YXZ'; g.rotation.y = a.heading;
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     a.obs = { ax: a.x - Math.sin(a.heading) * 2, az: a.z - Math.cos(a.heading) * 2, bx: a.x + Math.sin(a.heading) * 2, bz: a.z + Math.cos(a.heading) * 2, r: 1.1, tag: 'angler', angler: a, onHit: (into) => { if (into > 2 && a.said !== 2) { a.said = 2; this.fx.game.anglerSay(a, YELLS[Math.floor(Math.random() * YELLS.length)]); } } };
     return g;
   }
   update(dt, t, fish) {
-    const P = this.phys, bx = P.pos.x, bz = P.pos.y, waveFn = this.fx.waveFn;
+    const P = this.phys, bx = P.pos.x, bz = P.pos.y;
     const pf = P.forward(this._pf);
     if (this.law?.pursuit) this.pursuitClearT = 0;
     else { this.pursuitClearT += dt; if (this.pursuitClearT > 4) this.pursuitCallMade = false; }
@@ -1093,17 +1079,18 @@ export class Traffic {
       if (b.shelter.active) b.shelter.distance = Math.hypot(b.shelter.x - b.x, b.shelter.z - b.z);
       const sk = Math.exp(-dt * 2); b.shx *= sk; b.shz *= sk;
       const gh = this.T.heightAt(b.x, b.z); b.ground = gh > -0.5 ? b.ground + dt : 0; if (gh > -0.5) b.speed *= 0.9;
-      const wy = waveFn(b.x, b.z, t) + playerWake;
-      const wakeSide = Math.sign((b.x - bx) * -Math.cos(P.heading) + (b.z - bz) * Math.sin(P.heading));
+      const wy = this.surfaceHeightAt(b.x, b.z, t, b);
       const halfLength = b.kind === 'canoe' ? 1.45 : b.kind === 'cruiser' ? 2.7 : b.kind === 'air' ? 2.45 : 2.05;
       const halfBeam = b.kind === 'canoe' ? 0.34 : b.kind === 'cruiser' ? 1.25 : b.kind === 'air' ? 1.05 : 0.74;
       const rx = Math.cos(b.heading), rz = -Math.sin(b.heading);
-      const bowH = waveFn(b.x + fx * halfLength, b.z + fz * halfLength, t), sternH = waveFn(b.x - fx * halfLength, b.z - fz * halfLength, t);
-      const rightH = waveFn(b.x + rx * halfBeam, b.z + rz * halfBeam, t), leftH = waveFn(b.x - rx * halfBeam, b.z - rz * halfBeam, t);
+      const bowH = this.surfaceHeightAt(b.x + fx * halfLength, b.z + fz * halfLength, t, b);
+      const sternH = this.surfaceHeightAt(b.x - fx * halfLength, b.z - fz * halfLength, t, b);
+      const rightH = this.surfaceHeightAt(b.x + rx * halfBeam, b.z + rz * halfBeam, t, b);
+      const leftH = this.surfaceHeightAt(b.x - rx * halfBeam, b.z - rz * halfBeam, t, b);
       b.waterPitch = Math.max(-0.2, Math.min(0.2, Math.atan2(bowH - sternH, halfLength * 2)));
       b.waterRoll = Math.max(-0.2, Math.min(0.2, Math.atan2(rightH - leftH, halfBeam * 2)));
-      b.roll += ((-b.turn * b.speed * 0.02 + b.waterRoll + playerWake * wakeSide * 0.52) - b.roll) * (1 - Math.exp(-dt * 4));
-      b.pitch += ((b.speed * (b.kind === 'air' ? 0.004 : 0.007) + b.waterPitch + playerWake * 0.18) - b.pitch) * (1 - Math.exp(-dt * 3));
+      b.roll += ((-b.turn * b.speed * 0.02 + b.waterRoll) - b.roll) * (1 - Math.exp(-dt * 4));
+      b.pitch += ((b.speed * (b.kind === 'air' ? 0.004 : 0.007) + b.waterPitch) - b.pitch) * (1 - Math.exp(-dt * 3));
       b.mesh.position.set(b.x, wy + (b.kind === 'air' ? -0.27 : b.kind === 'john' || b.kind === 'canoe' ? -0.05 : 0), b.z); b.mesh.rotation.set(b.pitch, b.heading, b.roll, 'YXZ');
       if (b.kind === 'air') { if (!b.collision.active) b.prop.rotation.z += dt * (8 + b.speed * 8); b.blur.material.opacity = b.collision.active ? 0 : Math.min(0.35, b.speed / b.max * 0.4); for (const r of b.rudders) r.rotation.y = -b.turn * 0.25; }
       else if (b.kind === 'john') { const motor = b.mesh.userData.motor; motor.rotation.y = -b.turn * 0.3; if (!b.collision.active) motor.userData.prop.rotation.z += dt * (6 + b.speed * 5); }
@@ -1144,7 +1131,14 @@ export class Traffic {
     }
     for (const { a, g } of this.liveAnglers.values()) {
       const d = Math.hypot(a.x - bx, a.z - bz);
-      g.position.y = waveFn(a.x, a.z, t) - 0.05; g.rotation.z = Math.sin(t * 0.8 + a.ph) * 0.02 + (d < 25 ? Math.sin(t * 2.4) * Math.min(0.1, P.speed * 0.006) : 0);
+      const afx = -Math.sin(a.heading), afz = -Math.cos(a.heading), arx = Math.cos(a.heading), arz = -Math.sin(a.heading);
+      const centerH = this.surfaceHeightAt(a.x, a.z, t);
+      const bowH = this.surfaceHeightAt(a.x + afx * 2.05, a.z + afz * 2.05, t), sternH = this.surfaceHeightAt(a.x - afx * 2.05, a.z - afz * 2.05, t);
+      const rightH = this.surfaceHeightAt(a.x + arx * 0.74, a.z + arz * 0.74, t), leftH = this.surfaceHeightAt(a.x - arx * 0.74, a.z - arz * 0.74, t);
+      const waterPitch = Math.max(-0.22, Math.min(0.22, Math.atan2(bowH - sternH, 4.1)));
+      const waterRoll = Math.max(-0.24, Math.min(0.24, Math.atan2(rightH - leftH, 1.48))) + Math.sin(t * 0.8 + a.ph) * 0.008;
+      const settle = 1 - Math.exp(-dt * 4.2); g.position.y = centerH - 0.05;
+      g.rotation.x += (waterPitch - g.rotation.x) * settle; g.rotation.z += (waterRoll - g.rotation.z) * settle;
       g.userData.man.userData.rod.rotation.x = -1.0 + Math.sin(t * 1.1 + a.ph) * 0.04;
       if (d < 60) this.obs.push(a.obs);
       if (d < 13 && a.said === 0) { a.said = 1; const mph = P.speed * 2.23694; if (mph > 8) this.fx.game.anglerSay(a, ANGLER_WAKE[Math.floor(Math.random() * ANGLER_WAKE.length)], true); else { this.fx.game.anglerSay(a, ANGLER_SLOW[Math.floor(Math.random() * ANGLER_SLOW.length)]); this.idlePasses++; this.fx.game.bounties.event('idlepass', 1); } }
