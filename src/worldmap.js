@@ -1,6 +1,7 @@
 import { WORLD_HALF, HOME_X, HOME_Z } from './heightfield.js';
 import { fmtDist } from './game.js';
 import { REGIONS, regionAt } from './regions.js';
+import { MAX_DRAW_PIXELS, pixelRatioFor } from './renderquality.js';
 
 const MILE = 1609.344;
 const REGION_LABEL_OFFSET = {
@@ -21,6 +22,7 @@ export class WorldMap {
     this.legend = document.getElementById('bigmapLegend');
     this.tiles = new Map(); this.inFlight = 0;
     this.open = false; this.scale = 0.04; this.cx = 0; this.cz = 0; this.follow = true;
+    this.dpr = 1;
     this.drag = null;
     this.canvas.addEventListener('wheel', e => { e.preventDefault(); const k = Math.exp(-e.deltaY * 0.0015); this.zoomAt(e.clientX, e.clientY, k); });
     this.canvas.addEventListener('mousedown', e => { this.drag = { x: e.clientX, y: e.clientY, cx: this.cx, cz: this.cz }; });
@@ -28,14 +30,26 @@ export class WorldMap {
     window.addEventListener('mouseup', () => { this.drag = null; });
     window.addEventListener('resize', () => { if (this.open) this.fit(); });
   }
-  fit() { this.canvas.width = innerWidth * devicePixelRatio; this.canvas.height = innerHeight * devicePixelRatio; this.canvas.style.width = innerWidth + 'px'; this.canvas.style.height = innerHeight + 'px'; this.render(); }
+  fit() {
+    this.dpr = pixelRatioFor(innerWidth, innerHeight, devicePixelRatio);
+    this.canvas.width = Math.max(1, Math.floor(innerWidth * this.dpr)); this.canvas.height = Math.max(1, Math.floor(innerHeight * this.dpr));
+    this.canvas.style.width = innerWidth + 'px'; this.canvas.style.height = innerHeight + 'px'; this.render();
+  }
   zoomAt(px, py, k) {
     const ns = Math.max(0.018, Math.min(2.5, this.scale * k));
     const wx = this.cx + (px - innerWidth / 2) / this.scale, wz = this.cz + (py - innerHeight / 2) / this.scale;
     this.scale = ns; this.cx = wx - (px - innerWidth / 2) / ns; this.cz = wz - (py - innerHeight / 2) / ns; this.follow = false; this.render();
   }
   show() { this.open = true; this.follow = true; const p = this.G.phys.pos; this.cx = p.x; this.cz = p.y; this.el.classList.remove('hidden'); this.fit(); }
-  hide() { this.open = false; this.el.classList.add('hidden'); }
+  hide() {
+    this.open = false; this.el.classList.add('hidden');
+    // The chart can otherwise keep an 8K RGBA canvas alive for the rest of the session after being opened once.
+    this.canvas.width = 1; this.canvas.height = 1; this.dpr = 1;
+  }
+  memoryStats() {
+    const width = this.canvas.width, height = this.canvas.height, pixels = width * height;
+    return { open: this.open, width, height, pixels, pixelRatio: this.dpr, maxPixels: MAX_DRAW_PIXELS, estimatedBackingBytes: pixels * 4 };
+  }
   tile(i, j) {
     const key = `${i},${j}`;
     let t = this.tiles.get(key); if (t) return t.canvas;
@@ -49,7 +63,7 @@ export class WorldMap {
   }
   render() {
     if (!this.open) return;
-    const c = this.ctx, W = this.canvas.width, H = this.canvas.height, dpr = devicePixelRatio;
+    const c = this.ctx, W = this.canvas.width, H = this.canvas.height, dpr = this.dpr;
     const p = this.G.phys;
     if (this.follow) { this.cx = p.pos.x; this.cz = p.pos.y; }
     c.setTransform(1, 0, 0, 1, 0, 0);

@@ -243,6 +243,7 @@ async function init() {
       shoreFolk: { live: life.folk.live.size, cachedCells: life.folk.cells.size, cacheEvictions: life.folk.cacheEvictions, disposedLineGeometries: life.folk.disposedLineGeometries },
       fishFallbackReleased: life.fish.fallbackReleased,
     },
+    chart: worldMap.memoryStats(),
   }) : null;
   window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, ...pipeline.memoryStats() }) };
 
@@ -271,7 +272,7 @@ async function init() {
     if (import.meta.env.DEV && e.code === 'F8' && !e.repeat) {
       e.preventDefault(); const memory = renderer.info.memory, quality = window.__dbg.renderQuality(); const snapshot = debugResourceSnapshot();
       document.documentElement.dataset.emeraldResource = JSON.stringify(snapshot);
-      console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: snapshot.graph, wildlife: snapshot.wildlife, fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
+      console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: snapshot.graph, wildlife: snapshot.wildlife, chart: snapshot.chart, fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
     }
     if (e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
   });
