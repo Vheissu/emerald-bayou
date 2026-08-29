@@ -6,7 +6,9 @@ export class Tricks {
     this.chain = []; this.chainT = 0; this.mult = 1; this.chainPts = 0;
     this.total = 0; this.session = 0;
     this.airHeadStart = 0; this.drift = 0; this.driftT = 0; this.mud = 0; this.mudT = 0;
-    this.nearSeen = new Map();
+    // Trunks belong to streamed terrain chunks. Weak keys let an evicted chunk and its collider objects be collected
+    // instead of retaining every tree that has ever produced a near miss during a long crossing of the map.
+    this.nearSeen = new WeakMap();
     this.onBank = null; this.onEvent = null;
   }
   award(text, pts, kind = '', value = 0) {

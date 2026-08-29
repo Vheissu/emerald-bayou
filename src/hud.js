@@ -3,6 +3,7 @@
 // when it is off the radar, job posts with their glyphs, camps and homesteads, ramps, other boats (pointed the way
 // they are going), anglers, the bull, traps within reach, home.
 const TILE = 200, TILE_PX = 100; // 0.5 px per metre
+const TILE_LIMIT = 256, TILE_TRIM = 64;
 const FONT = '"Avenir Next Condensed", "Avenir Next", "Arial Narrow", sans-serif';
 const INK = 'rgba(8,20,15,0.85)';
 
@@ -11,7 +12,7 @@ export class Minimap {
     this.T = terrain;
     this.canvas = document.getElementById('minimapCanvas');
     this.ctx = this.canvas.getContext('2d');
-    this.tiles = new Map(); this.inFlight = 0; this.order = [];
+    this.tiles = new Map(); this.inFlight = 0;
     this.speedEl = document.getElementById('speedVal');
     this.scale = 0.62; // canvas px per metre (drifts down with speed)
     this.pulse = 0;
@@ -27,9 +28,11 @@ export class Minimap {
       const c = document.createElement('canvas'); c.width = TILE_PX; c.height = TILE_PX;
       c.getContext('2d').putImageData(new ImageData(rgba, TILE_PX, TILE_PX), 0, 0);
       t.canvas = c;
-      if (this.tiles.size > 400) { // drop the stalest tiles
-        const list = [...this.tiles.entries()].sort((a, b) => a[1].used - b[1].used);
-        for (let k = 0; k < 100; k++) this.tiles.delete(list[k][0]);
+      if (this.tiles.size > TILE_LIMIT) { // drop the stalest completed tiles and release their canvas backing stores
+        const list = [...this.tiles.entries()].filter(([, v]) => v.canvas).sort((a, b) => a[1].used - b[1].used);
+        for (let k = 0; k < Math.min(TILE_TRIM, list.length); k++) {
+          const [oldKey, old] = list[k]; old.canvas.width = 0; old.canvas.height = 0; this.tiles.delete(oldKey);
+        }
       }
     });
     return null;

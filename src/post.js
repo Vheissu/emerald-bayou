@@ -18,7 +18,10 @@ export class Pipeline {
     const depthA = new THREE.DepthTexture(w, h); depthA.format = THREE.DepthFormat; depthA.type = THREE.UnsignedIntType;
     this.sceneRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthTexture: depthA, depthBuffer: true, samples: 4 });
     const depthB = new THREE.DepthTexture(w, h); depthB.format = THREE.DepthFormat; depthB.type = THREE.UnsignedIntType;
-    this.compRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthTexture: depthB, depthBuffer: true, samples: 4 });
+    // The opaque scene has already been resolved from 4x MSAA before it reaches this target. Water and spray are
+    // full-screen or alpha-soft, and the composite is followed by FXAA, so a second multisample colour + depth pair
+    // only duplicates a very large set of GPU attachments (about 169 MiB at a 2560x1440 drawing buffer).
+    this.compRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthTexture: depthB, depthBuffer: true });
     this.ldrRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.UnsignedByteType, depthBuffer: false });
     this.aaRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.UnsignedByteType, depthBuffer: false });
     const bw = Math.floor(w / 4), bh = Math.floor(h / 4);

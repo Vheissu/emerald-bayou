@@ -1,6 +1,7 @@
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const pick = list => list[Math.floor(Math.random() * list.length)];
 const esc = value => String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+const RECENT_LIMIT = 256;
 
 const WEATHER_CALLS = {
   fair: ['MARINE WX-3', 'Small-craft advisory cancelled. Storm water may still be high in the back cuts.'],
@@ -117,7 +118,9 @@ export class RadioDirector {
     const id = key || `${speaker}:${text}`;
     const heard = this.recent.get(id);
     if (heard != null && this.clock - heard < cooldown) return false;
+    if (heard != null) this.recent.delete(id); // refresh insertion order before applying the bound
     this.recent.set(id, this.clock);
+    while (this.recent.size > RECENT_LIMIT) this.recent.delete(this.recent.keys().next().value);
     const msg = { channel, speaker, text, priority, key: id, queuedAt: this.clock, duration: duration || clamp(3.4 + text.length * 0.028, 4.4, 7.6) };
     if (this.current && priority >= 3 && priority > this.current.priority) {
       this.audio.radio(false, this.current.priority); this.current = null; this.airT = 0; this.gapT = 0; this.el && this.el.classList.remove('on');
