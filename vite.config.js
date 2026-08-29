@@ -19,6 +19,9 @@ function copyRuntimeAssets(from, to) {
 }
 
 export default defineConfig({
+  // Relative URLs keep the production build portable while GitHub Pages serves it
+  // from the repository subpath (/emerald-bayou/).
+  base: './',
   build: { copyPublicDir: false },
   plugins: [{
     name: 'copy-runtime-public-assets',

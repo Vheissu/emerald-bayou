@@ -200,7 +200,7 @@ export function buildAirboat() {
 // geometry and material instead of paying that GPU cost again for every working boat.
 let driverTemplatePromise = null;
 function driverTemplate() {
-  if (!driverTemplatePromise) driverTemplatePromise = new GLTFLoader().loadAsync('/models/driver.glb').then(gltf => {
+  if (!driverTemplatePromise) driverTemplatePromise = new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/driver.glb`).then(gltf => {
     const root = gltf.scene; root.name = 'seated driver template';
     root.traverse(o => {
       if (!o.isMesh) return;

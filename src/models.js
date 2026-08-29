@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // shares the geometry and materials. SPEC turns each model's own frame into the game's (bow / head toward -z, metres).
 const loader = new GLTFLoader();
 const cache = new Map();
+const modelRoot = `${import.meta.env.BASE_URL}models/`;
 export const SPEC = {
   beau_boat: { scale: 2.3, yaw: -Math.PI / 2, y: 0.27, len: 4.4 },
   boat_dreams: { scale: 2.7, yaw: -Math.PI / 2, y: 0.62, len: 5.4 },
@@ -27,7 +28,7 @@ function fit(name, root) {
 export function modelBox(name) { const r = cacheDone.get(name); return r ? fit(name, r) : null; }
 const cacheDone = new Map();
 export function loadModel(name) {
-  if (!cache.has(name)) cache.set(name, loader.loadAsync(`/models/${name}.glb`).then(g => {
+  if (!cache.has(name)) cache.set(name, loader.loadAsync(`${modelRoot}${name}.glb`).then(g => {
     const root = g.scene;
     root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; const m = o.material; if (m) { if (m.map) { m.map.anisotropy = 4; m.map.colorSpace = THREE.SRGBColorSpace; } m.roughness = Math.max(m.roughness ?? 1, 0.55); } } });
     cacheDone.set(name, root); fit(name, root);
