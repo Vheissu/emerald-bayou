@@ -45,6 +45,7 @@ import { Fishing } from './fishing.js';
 import { NocturnalWetland } from './nocturnal.js';
 import { WakeStampPool } from './wakestamps.js';
 import { bindPageLifecycle } from './pagelifecycle.js';
+import { CHASE_CAMERA_SAMPLES, chaseCameraBoomLimit, chaseCameraBoomStep } from './chasecamera.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -451,12 +452,17 @@ async function init() {
   // ---- camera state ----
   const camPos = new THREE.Vector3(startX, 4, startZ + 10);
   const camTarget = new THREE.Vector3(startX, 1, startZ);
-  const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3(), audioForward = new THREE.Vector3();
+  const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3(), camPivot = new THREE.Vector3(), audioForward = new THREE.Vector3();
+  const cameraHeightAt = (x, z) => terrain.heightAt(x, z);
+  const cameraCollision = {
+    startX: 0, startY: 0, startZ: 0, endX: 0, endY: 0, endZ: 0,
+    waterLevel: 0, clearance: 0.9, minFraction: 0.22, safetyMargin: 0.035, samples: CHASE_CAMERA_SAMPLES,
+  };
   const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2(), skiffForward = new THREE.Vector2();
   const input = { throttle: 0, steer: 0, pitch: 0 };
   const boatWetnessConditions = { dt: 0, rain: 0, spray: 0, splash: 0, wind: 0, speed: 0, daylight: 0, windScreen: 0 };
   const clock = new THREE.Timer(); clock.connect(document);
-  let time = 0, splashStamp = 0, slowT = 0, slowK = 1, fovKick = 0, airCam = 0, frameNo = 0;
+  let time = 0, splashStamp = 0, slowT = 0, slowK = 1, fovKick = 0, airCam = 0, cameraBoom = 1, frameNo = 0;
   const stamps = new WakeStampPool(MAX_WAKE_STAMPS);
   const hullPoint = { x: 0, z: 0 };
   const splashPts = [{ x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }];
@@ -590,11 +596,22 @@ async function init() {
     airCam += ((phys.airborne ? Math.min(1, phys.airTime * 1.5) : 0) - airCam) * (1 - Math.exp(-dt * (phys.airborne ? 3 : 5)));
     const cd = camDist + airCam * 2.4;
     camDesired.set(phys.pos.x, 3.9 + cd * Math.sin(camPitch) * 1.2 + Math.max(0, phys.y) * 0.2 + airCam * 1.2, phys.pos.y).addScaledVector(camBack, cd * Math.cos(camPitch));
-    // keep camera above ground / water
-    const gh = terrain.heightAt(camDesired.x, camDesired.z);
-    camDesired.y = Math.max(camDesired.y, gh + 1.8, 1.2);
-    camPos.lerp(camDesired, 1 - Math.exp(-dt * 5.5));
-    camAim.set(phys.pos.x - fwd2.x * -4.5, 1.2 + Math.max(0, phys.y) * 0.9, phys.pos.y - fwd2.y * -4.5);
+    camAim.set(phys.pos.x + fwd2.x * 4.5, Math.max(1.2 + Math.max(0, phys.y) * 0.9, water.level + 1), phys.pos.y + fwd2.y * 4.5);
+    camPivot.set(phys.pos.x, Math.max(2.1 + Math.max(0, phys.y) * 0.75, water.level + 1.2), phys.pos.y);
+    // Keep the ideal endpoint above surge, then retract the entire boom when a bank lies between it and the hull.
+    camDesired.y = Math.max(camDesired.y, water.level + 1.2);
+    cameraCollision.startX = camPivot.x; cameraCollision.startY = camPivot.y; cameraCollision.startZ = camPivot.z;
+    cameraCollision.endX = camDesired.x; cameraCollision.endY = camDesired.y; cameraCollision.endZ = camDesired.z;
+    cameraCollision.waterLevel = water.level;
+    const boomLimit = chaseCameraBoomLimit(cameraCollision, cameraHeightAt), previousBoom = cameraBoom;
+    cameraBoom = chaseCameraBoomStep(cameraBoom, boomLimit, dtRaw);
+    camDesired.x = camPivot.x + (camDesired.x - camPivot.x) * cameraBoom;
+    camDesired.y = camPivot.y + (camDesired.y - camPivot.y) * cameraBoom;
+    camDesired.z = camPivot.z + (camDesired.z - camPivot.z) * cameraBoom;
+    camDesired.y = Math.max(camDesired.y, terrain.heightAt(camDesired.x, camDesired.z) + 0.9, water.level + 0.9);
+    const cameraCut = boomLimit < previousBoom - 0.01 || camPos.distanceToSquared(camDesired) > 6400;
+    if (cameraCut) camPos.copy(camDesired); else camPos.lerp(camDesired, 1 - Math.exp(-dt * 5.5));
+    camPos.y = Math.max(camPos.y, terrain.heightAt(camPos.x, camPos.z) + 0.9, water.level + 0.9);
     camTarget.lerp(camAim, 1 - Math.exp(-dt * 7));
     camera.position.copy(camPos);
     if (game.shake > 0.01) { const sh = game.shake * 0.35; camera.position.x += (Math.random() - 0.5) * sh; camera.position.y += (Math.random() - 0.5) * sh; camera.position.z += (Math.random() - 0.5) * sh; }
