@@ -6,10 +6,12 @@
 // of rivers and creeks, low-frequency noise opens lakes, wide sawgrass prairie flats with hammocks (tree islands) sit
 // between them, and the main river keeps running north-south through all of it.
 import { Simplex2, mulberry32 } from './noise.js';
+import { trimOldest } from './cache.js';
 
 export const WORLD_HALF = 12800; // playable half-extent in metres: 25.6 km square (~655 km2)
 export const HOME_X = 20, HOME_Z = -120; // centre of the hand-tuned area
 const BAR_CELL = 400; // procedural sandbars are generated per 400 m cell
+const BAR_CACHE_LIMIT = 1536;
 
 const smooth = (e0, e1, x) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
 const hash2 = (i, j) => { let h = (i * 374761393 + j * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return (h ^ (h >>> 16)) >>> 0; };
@@ -23,6 +25,7 @@ export class WorldHeight {
     this.lagoon = { x: 55, y: -220 };
     this.island = { x: 85, y: -235 };
     this.barCells = new Map();
+    this.barCacheEvictions = 0;
     this.buildHomeBars(seed);
   }
   smooth(e0, e1, x) { return smooth(e0, e1, x); }
@@ -90,6 +93,7 @@ export class WorldHeight {
       }
     }
     this.barCells.set(key, list);
+    this.barCacheEvictions += trimOldest(this.barCells, BAR_CACHE_LIMIT);
     return list;
   }
   barsNear(x, z, out) {

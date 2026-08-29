@@ -8,6 +8,7 @@ import * as TEX from './textures.js';
 import { spawn, loadGeo, SPEC } from './models.js';
 import { person, animatePerson, wave, pair, walkAlong, canoe, paddleAnim, cooler, bucket, fishingLine } from './folk.js';
 import { animateSite } from './sites.js';
+import { trimOldest } from './cache.js';
 
 // The bayou's small life: mullet jumping, bait boiling away from the bow, deadhead logs and dead snags in the still
 // water (with an anhinga drying its wings), other boats running the channels, and anglers anchored in the pools who
@@ -16,6 +17,7 @@ import { animateSite } from './sites.js';
 const hash2 = (i, j) => { let h = (i * 374761393 + j * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return (h ^ (h >>> 16)) >>> 0; };
 const jitter = () => Math.random() - 0.5;
 const homeDist = (x, z) => Math.hypot(x - HOME_X, z - HOME_Z);
+const DEBRIS_CACHE_LIMIT = 384, ANGLER_CACHE_LIMIT = 192, FOLK_CACHE_LIMIT = 192;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Fish
@@ -128,7 +130,7 @@ function anhinga() {
 export class Debris {
   constructor(terrain, scene, phys) {
     this.T = terrain; this.scene = scene; this.phys = phys;
-    this.cells = new Map(); this.live = new Map(); this.checkT = 0;
+    this.cells = new Map(); this.live = new Map(); this.checkT = 0; this.cacheEvictions = 0;
     const bark = TEX.bark();
     this.logMats = [new THREE.MeshStandardMaterial({ map: bark, color: 0x7d7368, roughness: 0.95 }), new THREE.MeshStandardMaterial({ map: bark, color: 0x5e5148, roughness: 0.95 })];
     this.snagMat = new THREE.MeshStandardMaterial({ map: bark, color: 0x6a6358, roughness: 0.95 });
@@ -152,7 +154,7 @@ export class Debris {
         out.push({ kind: 'snag', key: `${key}:s`, x, z, h, hgt: 2.5 + rr() * 3.5, ang: rr() * 6.28, v: Math.floor(rr() * 2), bird: rr() < 0.6, ph: rr() * 6, fly: 0, gone: 0 }); break;
       }
     }
-    this.cells.set(key, out); return out;
+    this.cells.set(key, out); this.cacheEvictions += trimOldest(this.cells, DEBRIS_CACHE_LIMIT, this.live); return out;
   }
   near(x, z, r) {
     const out = []; const i0 = Math.floor((x - r) / DEB_CELL), i1 = Math.floor((x + r) / DEB_CELL), j0 = Math.floor((z - r) / DEB_CELL), j1 = Math.floor((z + r) / DEB_CELL);
@@ -334,7 +336,7 @@ export class Traffic {
     this.obs = []; phys.addObs('traffic', this.obs);
     this.activity = 1; this.anglerActivity = 1;
     // anchored anglers
-    this.anglerCells = new Map(); this.liveAnglers = new Map(); this.checkT = 0;
+    this.anglerCells = new Map(); this.liveAnglers = new Map(); this.checkT = 0; this.anglerCacheEvictions = 0;
     this.idlePasses = 0; this._flow = new THREE.Vector2(); this._pf = new THREE.Vector2();
   }
   addWorkingDetails(b, profileIndex) {
@@ -517,7 +519,7 @@ export class Traffic {
       const rr = mulberry32(hash2(ci + 909, cj + 77) ^ 0x51ac);
       if (rr() < 0.4) { const hf = this.T.hf; for (let t = 0; t < 20; t++) { const x = cx + rr() * C, z = cz + rr() * C; const h = hf.compute(x, z); if (h > -1.1 || h < -3.2) continue; ang = { key, x, z, heading: rr() * 6.283, seed: rr() * 1e9 | 0, ph: rr() * 6, said: 0, biteT: 8 + rr() * 20 }; break; } }
     }
-    this.anglerCells.set(key, ang); return ang;
+    this.anglerCells.set(key, ang); this.anglerCacheEvictions += trimOldest(this.anglerCells, ANGLER_CACHE_LIMIT, this.liveAnglers); return ang;
   }
   anglersNear(x, z, r) {
     const out = [], C = 600; const i0 = Math.floor((x - r) / C), i1 = Math.floor((x + r) / C), j0 = Math.floor((z - r) / C), j1 = Math.floor((z + r) / C);
@@ -650,7 +652,7 @@ export class Traffic {
 const FOLK_CELL = 500;
 const SHORE_WAKE = ['Hey! Idle speed along the bank!', 'You are putting the fish down!', 'Slow it down, son!', 'Real nice. Real nice.'];
 export class Folk {
-  constructor(terrain, scene, fx) { this.T = terrain; this.scene = scene; this.fx = fx; this.cells = new Map(); this.live = new Map(); this.checkT = 0; this.activity = 1; }
+  constructor(terrain, scene, fx) { this.T = terrain; this.scene = scene; this.fx = fx; this.cells = new Map(); this.live = new Map(); this.checkT = 0; this.activity = 1; this.cacheEvictions = 0; }
   at(ci, cj) {
     const key = `${ci},${cj}`; if (this.cells.has(key)) return this.cells.get(key);
     let f = null; const cx = ci * FOLK_CELL, cz = cj * FOLK_CELL;
@@ -662,7 +664,7 @@ export class Folk {
         for (let a0 = rr() * 6.28, k = 0; k < 8; k++) { const a = a0 + k * Math.PI / 4; const wx = x + Math.cos(a) * 5, wz = z + Math.sin(a) * 5; if (hf.compute(wx, wz) < -0.9 && hf.computeBase(wx, wz).s > 0.5 && hf.compute(x + Math.cos(a) * 2, z + Math.sin(a) * 2) > -0.4) { f = { key, x, z, h, ang: a, seed: rr() * 1e9 | 0, two: rr() < 0.5, said: 0 }; break; } }
       } }
     }
-    this.cells.set(key, f); return f;
+    this.cells.set(key, f); this.cacheEvictions += trimOldest(this.cells, FOLK_CACHE_LIMIT, this.live); return f;
   }
   near(x, z, r) { const out = [], C = FOLK_CELL; const i0 = Math.floor((x - r) / C), i1 = Math.floor((x + r) / C), j0 = Math.floor((z - r) / C), j1 = Math.floor((z + r) / C); for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const f = this.at(i, j); if (f && Math.hypot(f.x - x, f.z - z) <= r) out.push(f); } return out; }
   build(f) {

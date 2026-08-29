@@ -7,11 +7,13 @@ import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
 import { SITE_CELL, pickSite, buildSite, animateSite, wideHere } from './sites.js';
 import { person, cooler, bucket, fishingLine } from './folk.js';
 import { spawn } from './models.js';
+import { trimOldest } from './cache.js';
 
 // The things scattered through the endless bayou: fish camps on the channel banks (one per ~1.6 km cell, seeded, so
 // they are the same for everyone every time) and lost crab-trap floats drifting in the back pools. Everything is
 // generated from the cell seed on demand and only built as meshes when the boat is near.
 const CAMP_CELL = 1600, TRAP_CELL = 700;
+const CAMP_CACHE_LIMIT = 160, SITE_CACHE_LIMIT = 384, TRAP_CACHE_LIMIT = 256;
 const FIRST = ['Turner', 'Cooter', 'Mullet', 'Lostman', 'Chokoloskee', 'Sawgrass', 'Gator Hole', 'Possum', 'Broad River', 'Hell\'s Bay', 'Whitewater', 'Shark Point', 'Tarpon', 'Buzzard', 'Cane Patch', 'Rookery', 'Onion Key', 'Lopez', 'Watson', 'Panther', 'Kingfisher', 'Snake Bight', 'Cormorant', 'Moss Hammock', 'Cypress Knee', 'Otter', 'Bream Hole', 'Halfway', 'Ten Mile', 'Dead River'];
 const SECOND = ['Camp', 'Landing', 'Fish Camp', 'Station', 'Bend', 'Dock', 'Camp', 'Landing'];
 const hash2 = (i, j) => { let h = (i * 374761393 + j * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return (h ^ (h >>> 16)) >>> 0; };
@@ -34,6 +36,7 @@ export class World {
     this.T = terrain; this.scene = scene; this.waveFn = waveFn;
     this.campCells = new Map(); this.trapCells = new Map(); this.siteCells = new Map();
     this.liveCamps = new Map(); this.liveTraps = new Map(); this.liveSites = new Map();
+    this.cellCacheEvictions = { camps: 0, sites: 0, traps: 0 };
     this.checkT = 0; this.collected = new Set(); this.phys = null; this.wind = null;
     this.fx = null; // { plume, spray, audio, fish } from main
     this.stampList = []; this.obLevel = 0; this.truckLevel = 0; this.onShot = null;
@@ -72,6 +75,7 @@ export class World {
       }
     }
     this.campCells.set(key, camp);
+    this.cellCacheEvictions.camps += trimOldest(this.campCells, CAMP_CACHE_LIMIT, this.liveCamps);
     return camp;
   }
   campsNear(x, z, r) {
@@ -123,6 +127,7 @@ export class World {
     // keep clear of a camp in the same cell
     if (site) for (const c of this.campsNear(site.x, site.z, 120)) if (c) { site = null; break; }
     this.siteCells.set(key, site);
+    this.cellCacheEvictions.sites += trimOldest(this.siteCells, SITE_CACHE_LIMIT, this.liveSites);
     return site;
   }
   sitesNear(x, z, r) {
@@ -159,6 +164,7 @@ export class World {
       }
     }
     this.trapCells.set(key, trap);
+    this.cellCacheEvictions.traps += trimOldest(this.trapCells, TRAP_CACHE_LIMIT, this.liveTraps);
     return trap;
   }
   trapsNear(x, z, r) {

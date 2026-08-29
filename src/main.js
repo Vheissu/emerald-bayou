@@ -524,7 +524,11 @@ async function init() {
       let st = null; for (let k = 0; k < 40 && !st; k++) { const cx = (Math.floor(rr() * 20) - 10) * 800, cz = (Math.floor(rr() * 20) - 10) * 800; const r2 = mulberry32(k * 31 + i); st = pickSite(hf, 'warm', cx, cz, () => { const v = r2(); return v; }, () => 5000); if (st && st.kind !== kind) st = null; }
       if (st) { const g = buildSite(st, terrain); g.position.set(startX - st.x + 20 + i * 14, 0, startZ - 40 - st.z); warm.add(g); st.colliders = []; } i++;
     }
-    for (const d of life.debris.near(0, 0, 3000).slice(0, 4)) { const m = life.debris.build(d); m.position.set(startX - 10 + Math.random() * 20, 0, startZ - 25); warm.add(m); }
+    const warmDebris = [];
+    for (let j = -4; j <= 4 && warmDebris.length < 4; j++) for (let i = -4; i <= 4 && warmDebris.length < 4; i++) {
+      for (const d of life.debris.cellAt(i, j)) { warmDebris.push(d); if (warmDebris.length === 4) break; }
+    }
+    for (const d of warmDebris) { const m = life.debris.build(d); m.position.set(startX - 10 + Math.random() * 20, 0, startZ - 25); warm.add(m); }
     for (const b of life.traffic.boats) {
       b.mesh.visible = true; b.mesh.position.set(startX + 8, 0, startZ - 10);
       if (b.searchRig) { b.searchRig.visible = true; b.searchLight.intensity = 0.01; b.searchBeam.visible = true; b.searchBeam.position.set(startX + 8, 0.05, startZ - 10); b.searchBeam.scale.set(b.searchWidth * 0.004, b.searchLength * 0.004, 1); }
