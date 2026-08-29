@@ -1,5 +1,17 @@
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
+const AVIATION_COVER = Object.freeze({
+  blackwater: 0.64,
+  cypress: 0.68,
+  mangrove: 0.72,
+  'dead-river': 0.78,
+  emerald: 0.88,
+  rookery: 0.92,
+  sawgrass: 1.1,
+  broad: 1.13,
+  prairie: 1.16,
+});
+
 export function wantedLevel(attention) {
   const heat = Math.max(0, Number(attention) || 0);
   return heat > 0.04 ? clamp(Math.ceil(heat), 1, 5) : 0;
@@ -16,6 +28,28 @@ export function pursuitUnitCount(attention) {
   if (stars >= 4) return 3;
   if (stars >= 2) return 2;
   return 1;
+}
+
+export function pursuitAviationAvailable(attention, wind = 0, storm = 0) {
+  return wantedLevel(attention) >= 5 && Math.max(0, Number(wind) || 0) < 24 && clamp(Number(storm) || 0, 0, 1) < 0.8;
+}
+
+export function pursuitAviationDelay(attention, wind = 0, storm = 0) {
+  return pursuitAviationAvailable(attention, wind, storm) ? 9.5 : Infinity;
+}
+
+export function pursuitAviationVisualRange(attention, restrictedVisibility = 0, storm = 0, regionId = '') {
+  if (wantedLevel(attention) < 5) return 0;
+  const cover = AVIATION_COVER[regionId] || 0.86;
+  const obscuration = clamp(restrictedVisibility, 0, 1) * 142 + clamp(storm, 0, 1) * 72;
+  return clamp(450 * cover - obscuration, 145, 525);
+}
+
+export function pursuitAviationVisualHeld(aircraftDistance, beamDistance, attention, restrictedVisibility = 0, storm = 0, regionId = '', active = true) {
+  if (!active || wantedLevel(attention) < 5) return false;
+  const aircraft = Number(aircraftDistance), beam = Number(beamDistance);
+  const beamRadius = clamp(18 - clamp(restrictedVisibility, 0, 1) * 4 - clamp(storm, 0, 1) * 2, 11, 18);
+  return (Number.isFinite(aircraft) && aircraft <= pursuitAviationVisualRange(attention, restrictedVisibility, storm, regionId)) || (Number.isFinite(beam) && beam <= beamRadius);
 }
 
 export function pursuitBackupDelay(index, attention) {

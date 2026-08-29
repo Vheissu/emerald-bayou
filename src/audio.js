@@ -204,7 +204,7 @@ export class EngineAudio {
     if (!this.ob) { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 95; const o2 = ctx.createOscillator(); o2.type = 'square'; o2.frequency.value = 190; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 1.5; const g = ctx.createGain(); g.gain.value = 0; o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(this.sfx); o.start(); o2.start(); this.ob = { o, o2, g, lp }; }
     const b = this.ob; b.g.gain.setTargetAtTime(Math.min(0.12, level * 0.12), now, 0.15); b.o.frequency.setTargetAtTime(95 * pitch, now, 0.2); b.o2.frequency.setTargetAtTime(191 * pitch, now, 0.2);
   }
-  // One pooled rotor bed is created only when a rescue aircraft is actually heard. Distance drives its gain;
+  // One pooled rotor bed is created only when an aircraft is actually heard. Distance drives its gain;
   // blade loading nudges the pulse rate during an approach or hover without allocating per-frame audio nodes.
   helicopter(level = 0, load = 1) {
     if (!this.ctx || (!this.heli && level <= 0.001)) return; const ctx = this.ctx, now = ctx.currentTime;

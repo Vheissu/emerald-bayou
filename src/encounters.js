@@ -6,12 +6,13 @@ import { gatorMesh, manateeMesh } from './wildlife.js';
 import { mulberry32 } from './noise.js';
 import { fmtDist } from './game.js';
 import { findGroundingSite } from './grounding.js';
-import { makeAirRescueRig, updateAirRescueAircraft, updateAirRescueBeam } from './airrescue.js';
+import { makeAirRescueRig, setAirRescueRole, updateAirRescueAircraft, updateAirRescueBeam } from './airrescue.js';
 import { WORLD_HALF } from './heightfield.js';
 import { buildRaceCourse } from './racecourse.js';
 import {
-  canEscapePursuit, pursuitBackupDelay, pursuitLostDistance, pursuitSirenLevel, pursuitSpeed, pursuitTactic,
-  pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
+  canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitBackupDelay,
+  pursuitLostDistance, pursuitSirenLevel, pursuitSpeed, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount,
+  pursuitVisualHeld, wantedLevel,
 } from './pursuit.js';
 
 const MPH = 2.23694;
@@ -567,8 +568,9 @@ export class EncounterDirector {
     const fx = -Math.sin(searchHeading), fz = -Math.cos(searchHeading), rx = Math.cos(searchHeading), rz = -Math.sin(searchHeading);
     const centerX = at.x + rx * (Math.random() - 0.5) * 46 + fx * (Math.random() - 0.5) * 22;
     const centerZ = at.z + rz * (Math.random() - 0.5) * 46 + fz * (Math.random() - 0.5) * 22;
+    setAirRescueRole(R, 'rescue');
     R.root.visible = true; R.survivor.visible = true; R.survivorStrobe.visible = true; R.swimmer.visible = false; R.basket.visible = false;
-    R.hoistLine.visible = false; R.trailLine.visible = false; R.beam.visible = false; R.pool.visible = false;
+    R.hoistLine.visible = false; R.trailLine.visible = false; R.beam.visible = false; R.pool.visible = false; R.searchlight.intensity = 0; R.beamMaterial.opacity = 0; R.poolUniforms.uOpacity.value = 0;
     const hx = centerX - fx * 150 + rx * -80, hz = centerZ - fz * 150 + rz * -80;
     this.active = {
       type: 'airrescue', state: 'search', mode: 'search', x: at.x, z: at.z, centerX, centerZ, searchHeading,
@@ -1130,6 +1132,8 @@ export class EncounterDirector {
     if (fresh) {
       e.pursuit = 0; e.tacticT = 0; e.tacticSide = Math.random() < 0.5 ? -1 : 1; e.lastKnownX = this.phys.pos.x; e.lastKnownZ = this.phys.pos.y;
       e.backupRequested = 0; e.backupCount = 0; e.units = 1; e.backupDue[0] = Infinity; e.backupDue[1] = Infinity; this.resetPatrolBackups();
+      e.aviationRequested = false; e.aviationDue = Infinity; e.aviationActive = false; e.aviationVisual = false; e.aviationBeamActive = false;
+      e.aviationLastSeen = 0; e.aviationAircraftDistance = Infinity; e.aviationBeamDistance = Infinity; this.resetPatrolAviation();
     }
     if (this.law) {
       if (addViolation) { this.law.stats.failureToStop = (this.law.stats.failureToStop || 0) + 1; this.law.add(0.65, reason, false); }
@@ -1165,6 +1169,14 @@ export class EncounterDirector {
     for (const R of this.rigs.patrolBackups) { R.agent.active = false; R.boat.visible = false; R.blueBulb.visible = false; R.redBulb.visible = false; }
   }
 
+  resetPatrolAviation() {
+    const R = this.rigs?.airrescue; if (!R) return;
+    R.root.visible = false; R.survivor.visible = false; R.swimmer.visible = false; R.survivorStrobe.visible = false; R.survivorLight.intensity = 0;
+    R.basket.visible = false; R.hoistLine.visible = false; R.trailLine.visible = false; R.beam.visible = false; R.pool.visible = false;
+    R.searchlight.intensity = 0; R.beamMaterial.opacity = 0; R.poolUniforms.uOpacity.value = 0; setAirRescueRole(R, 'rescue');
+    if (this.audio?.helicopter) this.audio.helicopter(0);
+  }
+
   patrolBackupSpot(index, e) {
     const p = this.phys, fx = -Math.sin(p.heading), fz = -Math.cos(p.heading), rx = Math.cos(p.heading), rz = -Math.sin(p.heading), baseSide = (index ? -1 : 1) * e.tacticSide;
     for (let i = 0; i < 48; i++) {
@@ -1198,8 +1210,80 @@ export class EncounterDirector {
     for (let index = 0; index < e.backupRequested; index++) if (!this.rigs.patrolBackups[index].agent.active && e.pursuit >= e.backupDue[index]) this.deployPatrolBackup(e, index, t);
   }
 
+  schedulePatrolAviation(e, heat, t) {
+    if (e.aviationActive) return true;
+    const V = this.environment.values, wind = Math.max(0, (Number(V.wind) || 0) * (Number(this.environment.gust) || 1)), storm = Number(V.storm) || 0;
+    if (wantedLevel(heat) < 5) { e.aviationRequested = false; e.aviationDue = Infinity; return false; }
+    if (!e.aviationRequested) {
+      const delay = pursuitAviationDelay(heat, wind, storm); if (!Number.isFinite(delay)) return false;
+      e.aviationRequested = true; e.aviationDue = e.pursuit + delay;
+    }
+    if (e.pursuit < e.aviationDue) return false;
+    if (!pursuitAviationAvailable(heat, wind, storm)) { e.aviationDue = e.pursuit + 2.5; return false; }
+    return this.deployPatrolAviation(e, t);
+  }
+
+  deployPatrolAviation(e, t) {
+    const R = this.rigs.airrescue, p = this.phys; if (!R || e.aviationActive) return Boolean(e.aviationActive);
+    const side = e.tacticSide < 0 ? -1 : 1, fx = -Math.sin(p.heading), fz = -Math.cos(p.heading), rx = Math.cos(p.heading), rz = -Math.sin(p.heading);
+    setAirRescueRole(R, 'enforcement');
+    R.root.visible = true; R.survivor.visible = false; R.swimmer.visible = false; R.survivorStrobe.visible = false; R.survivorLight.intensity = 0;
+    R.basket.visible = false; R.hoistLine.visible = false; R.trailLine.visible = false; R.beam.visible = false; R.pool.visible = false; R.searchlight.intensity = 0;
+    Object.assign(e, {
+      aviationActive: true, aviationVisual: false, aviationBeamActive: false, aviationLastSeen: 0, aviationSide: side,
+      aviationAircraftDistance: Infinity, aviationBeamDistance: Infinity,
+      hx: p.pos.x - fx * 320 + rx * side * 145, hz: p.pos.y - fz * 320 + rz * side * 145, hy: 72,
+      hvx: fx * 15, hvz: fz * 15, heading: p.heading, pitch: -0.075, bank: 0, phase: Math.random() * Math.PI * 2, dt: 0,
+      flightTargetX: p.pos.x + fx * 80, flightTargetZ: p.pos.y + fz * 80, flightTargetY: 68,
+      beamX: e.lastKnownX, beamZ: e.lastKnownZ,
+    });
+    updateAirRescueAircraft(R, e, t);
+    if (this.law) { this.law.stats.aviationDeployments = (this.law.stats.aviationDeployments || 0) + 1; this.game.persist(); }
+    this.game.toast('FWC Air 2 inbound', 'Air Two is taking the next cut. Surface units are calling your turns.', 3.2);
+    return true;
+  }
+
+  updatePatrolAviation(e, dt, t, surfaceVisual, heat) {
+    this.schedulePatrolAviation(e, heat, t); if (!e.aviationActive) return surfaceVisual;
+    const R = this.rigs.airrescue, p = this.phys, V = this.environment.values;
+    const restricted = this.environment.restrictedVisibility || 0, storm = V.storm || 0, regionId = this.regions?.current?.id || '';
+    let aircraftDistance = Math.hypot(e.hx - p.pos.x, e.hz - p.pos.y, e.hy);
+    const priorBeamDistance = e.aviationBeamActive ? Math.hypot(e.beamX - p.pos.x, e.beamZ - p.pos.y) : Infinity;
+    const priorAirVisual = pursuitAviationVisualHeld(aircraftDistance, priorBeamDistance, heat, restricted, storm, regionId, true);
+    const sharedVisual = surfaceVisual || priorAirVisual;
+    let targetX, targetZ;
+    if (sharedVisual) {
+      e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; e.aviationLastSeen = 0;
+      const phase = e.pursuit * 0.23 + e.aviationSide * 0.9, radius = 94 + Math.min(28, p.speed * 1.4);
+      targetX = p.pos.x + p.vel.x * 2.1 + Math.cos(phase) * radius;
+      targetZ = p.pos.y + p.vel.y * 2.1 + Math.sin(phase) * radius;
+      const response = 1 - Math.exp(-dt * (priorAirVisual ? 1.35 : 0.9));
+      e.beamX = lerp(e.beamX, p.pos.x, response); e.beamZ = lerp(e.beamZ, p.pos.y, response);
+    } else {
+      e.aviationLastSeen += dt;
+      const phase = e.pursuit * 0.16 + e.aviationSide * 0.8, radius = 105 + Math.min(46, e.aviationLastSeen * 3.2);
+      targetX = e.lastKnownX + Math.cos(phase) * radius; targetZ = e.lastKnownZ + Math.sin(phase) * radius;
+      const sweep = 25 + Math.min(54, e.aviationLastSeen * 3.5), scan = e.pursuit * 0.74 + e.aviationSide;
+      const scanX = e.lastKnownX + Math.cos(scan) * sweep, scanZ = e.lastKnownZ + Math.sin(scan * 0.83) * sweep;
+      const response = 1 - Math.exp(-dt * 0.82); e.beamX = lerp(e.beamX, scanX, response); e.beamZ = lerp(e.beamZ, scanZ, response);
+    }
+    const targetY = 67 + Math.min(5, (V.wind || 0) * 0.16); this.flyAirRescue(e, dt, targetX, targetZ, targetY, sharedVisual ? 24 : 20);
+    const hour = Number(this.environment.hour) || 0, night = hour < 6.5 || hour > 19.5;
+    const beamStrength = night ? 0.72 + restricted * 0.2 : restricted > 0.28 ? restricted * 0.45 : 0;
+    e.aviationBeamActive = beamStrength > 0.015;
+    const rx = Math.cos(e.heading), rz = -Math.sin(e.heading), beamY = this.water.waveHeight(e.beamX, e.beamZ, t);
+    updateAirRescueBeam(R, e.hx + rx * 0.52, e.hy - 0.55, e.hz + rz * 0.52, e.beamX, beamY, e.beamZ, beamStrength);
+    aircraftDistance = Math.hypot(e.hx - p.pos.x, e.hz - p.pos.y, e.hy);
+    const beamDistance = e.aviationBeamActive ? Math.hypot(e.beamX - p.pos.x, e.beamZ - p.pos.y) : Infinity;
+    const airVisual = pursuitAviationVisualHeld(aircraftDistance, beamDistance, heat, restricted, storm, regionId, true);
+    e.aviationAircraftDistance = aircraftDistance; e.aviationBeamDistance = beamDistance; e.aviationVisual = airVisual;
+    if (airVisual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; e.aviationLastSeen = 0; }
+    let audible = clamp(1 - (aircraftDistance - 35) / 620); audible *= audible * 0.86; this.audio.helicopter(audible, 0.96 + Math.min(0.16, Math.hypot(e.hvx, e.hvz) / 150));
+    return surfaceVisual || airVisual;
+  }
+
   startPatrol(at, options = {}) {
-    this.resetPatrolBackups();
+    this.resetPatrolBackups(); this.resetPatrolAviation();
     const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: Number(options.speed) || 4, want: 8, turn: 0, active: true });
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading;
     A.mesh.visible = true;
@@ -1209,6 +1293,8 @@ export class EncounterDirector {
       wanted: Boolean(options.pursuit || (this.law && this.law.attention >= 1.2) || fwcStanding <= -4), recognized: fwcStanding >= 2 || goodwill >= 4,
       lostT: 0, surrender: 0, tacticT: 0, tacticSide: Math.random() < 0.5 ? -1 : 1, contactCd: 0, ramCd: 0, ramHits: options.impact ? 1 : 0,
       lastKnownX: this.phys.pos.x, lastKnownZ: this.phys.pos.y, backupRequested: 0, backupCount: 0, units: 1, backupDue: [Infinity, Infinity],
+      aviationRequested: false, aviationDue: Infinity, aviationActive: false, aviationVisual: false, aviationBeamActive: false,
+      aviationLastSeen: 0, aviationAircraftDistance: Infinity, aviationBeamDistance: Infinity,
     };
     if (options.pursuit) { this.beginPatrolPursuit(this.active, 'rammed FWC patrol', false); this.audio.warn(); this.game.toast('Wanted', 'FWC is in pursuit. Break visual or idle and hold position.', 3.2); }
   }
@@ -1425,13 +1511,11 @@ export class EncounterDirector {
     this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
     this.rigs.fire.boat.visible = false; this.rigs.fire.operator.visible = true; this.rigs.fire.swimmer.visible = false; animateEngineFire(this.rigs.fire.fire, 0, 0, 0);
     this.rigs.grounding.boat.visible = false; this.rigs.grounding.operator.visible = true; this.rigs.grounding.rope.visible = false; this.rigs.grounding.lamp.light.intensity = 0; this.rigs.grounding.agent.active = false;
-    this.rigs.airrescue.root.visible = false; this.rigs.airrescue.survivor.visible = false; this.rigs.airrescue.swimmer.visible = false; this.rigs.airrescue.survivorStrobe.visible = false; this.rigs.airrescue.survivorLight.intensity = 0;
-    this.rigs.airrescue.basket.visible = false; this.rigs.airrescue.hoistLine.visible = false; this.rigs.airrescue.trailLine.visible = false; this.rigs.airrescue.beam.visible = false; this.rigs.airrescue.pool.visible = false; this.rigs.airrescue.searchlight.intensity = 0; this.rigs.airrescue.poolUniforms.uOpacity.value = 0;
+    this.resetPatrolAviation();
     this.rigs.manatee.animal.visible = false; this.rigs.manatee.buoy.visible = false; this.rigs.manatee.rope.visible = false; this.rigs.manatee.rope.material.opacity = 0.86;
     this.rigs.spotlight.gunner.visible = false; this.rigs.spotlight.gator.visible = false; this.rigs.spotlight.eyes.visible = false; this.rigs.spotlight.light.intensity = 0; this.rigs.spotlight.pool.visible = false; this.rigs.spotlight.uniforms.uOpacity.value = 0;
     if (e.type === 'fire' && e.aboard) this.phys.loaded = 0;
     if (e.type === 'grounding') this.phys.towDrag = 0;
-    if (e.type === 'airrescue') this.audio.helicopter(0);
     if (e.type === 'patrol') this.audio.patrolSiren(0);
     if (this.law) this.law.setPursuit(false);
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
@@ -2000,6 +2084,21 @@ export class EncounterDirector {
     return nearest;
   }
 
+  pursuitSnapshot() {
+    const e = this.active?.type === 'patrol' && this.active.state === 'pursuit' ? this.active : null;
+    const finite = value => Number.isFinite(value) ? Math.round(value * 10) / 10 : null;
+    return {
+      active: Boolean(e), wantedLevel: wantedLevel(this.law?.attention || 0), surfaceUnits: e ? e.units : 0,
+      sharedVisual: Boolean(e?.visual), surfaceVisual: Boolean(e?.surfaceVisual), lostFor: finite(e?.lostT),
+      aviation: {
+        requested: Boolean(e?.aviationRequested), active: Boolean(e?.aviationActive), directVisual: Boolean(e?.aviationVisual), beamActive: Boolean(e?.aviationBeamActive),
+        dueIn: e?.aviationRequested && !e.aviationActive ? finite(Math.max(0, e.aviationDue - e.pursuit)) : null,
+        aircraftDistance: finite(e?.aviationAircraftDistance), beamDistance: finite(e?.aviationBeamDistance),
+        sharedAirframe: true, role: this.rigs.airrescue.role, visible: this.rigs.airrescue.root.visible,
+      },
+    };
+  }
+
   attemptPatrolRam(e, R, role, distance, heat, stars) {
     const A = R.agent, p = this.phys; if (!pursuitUnitCanRam(role, heat) || distance >= 6.4 || e.contactCd > 0 || A.speed <= 5) return false;
     const dx = p.pos.x - A.x, dz = p.pos.y - A.z, dd = Math.hypot(dx, dz) || 1, nx = dx / dd, nz = dz / dd;
@@ -2052,7 +2151,9 @@ export class EncounterDirector {
     if (e.state === 'pursuit') {
       e.pursuit += dt; e.tacticT -= dt; this.schedulePatrolBackups(e, heat, t);
       if (e.tacticT <= 0) { e.tacticT = 4.5 + Math.random() * 3.5; e.tacticSide *= -1; }
-      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0), visual = pursuitVisualHeld(this.patrolNearestDistance(), lostDistance);
+      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0);
+      const surfaceVisual = pursuitVisualHeld(this.patrolNearestDistance(), lostDistance), visual = this.updatePatrolAviation(e, dt, t, surfaceVisual, heat);
+      e.surfaceVisual = surfaceVisual;
       if (visual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; }
       if (visual) {
         const tactic = pursuitTactic(0, heat, d, e.tacticSide, A.tactic), pfx = -Math.sin(p.heading), pfz = -Math.cos(p.heading), prx = Math.cos(p.heading), prz = -Math.sin(p.heading);
@@ -2091,7 +2192,8 @@ export class EncounterDirector {
       this.attemptPatrolRam(e, this.rigs.patrol, 0, d, heat, stars);
       let nearest = d; for (const R of this.rigs.patrolBackups) nearest = Math.min(nearest, this.updatePatrolBackup(e, R, dt, t, heat, stars, e.visual));
       this.audio.patrolSiren(pursuitSirenLevel(nearest, heat, true), heat);
-      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0), visual = pursuitVisualHeld(nearest, lostDistance);
+      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0), surfaceVisual = pursuitVisualHeld(nearest, lostDistance), visual = surfaceVisual || Boolean(e.aviationVisual);
+      e.surfaceVisual = surfaceVisual;
       e.visual = visual; if (visual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; }
       const stopped = nearest < 19 && p.speed * MPH < 4.5 && !p.airborne && p.wipeT <= 0;
       e.surrender = stopped ? e.surrender + dt : Math.max(0, e.surrender - dt * 1.4);
