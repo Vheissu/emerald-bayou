@@ -13,17 +13,18 @@ export class Spray {
     this.geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aAlpha', new THREE.BufferAttribute(this.alpha, 1).setUsage(THREE.DynamicDrawUsage));
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { tSprite: { value: TEX.spraySprite() }, uScale: { value: 1400 }, sunView: { value: new THREE.Vector3(0, 1, 0) } },
+      uniforms: { tSprite: { value: TEX.spraySprite() }, uScale: { value: 1400 }, sunView: { value: new THREE.Vector3(0, 1, 0) }, bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) } },
       vertexShader: `
         attribute float aSize, aAlpha; varying float vA; uniform float uScale;
         void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = min(aSize * uScale / max(-mv.z, 0.5), 160.0); vA = aAlpha * smoothstep(0.6, 2.5, -mv.z); }`,
       fragmentShader: `
-        uniform sampler2D tSprite; uniform vec3 sunView; varying float vA;
+        uniform sampler2D tSprite; uniform vec3 sunView, bioColor; uniform float bioluminescence; varying float vA;
         void main() {
           vec4 s = texture2D(tSprite, gl_PointCoord);
           // fake sphere shading: sun side bright, opposite side sky-tinted
           vec2 o = gl_PointCoord - 0.5; float lit = clamp(dot(normalize(o + 1e-4), sunView.xy) * 0.5 + 0.5, 0.0, 1.0);
           vec3 col = mix(vec3(0.70, 0.80, 0.92), vec3(1.08, 1.05, 0.98), lit * 0.5 + 0.45);
+          col = mix(col, bioColor, bioluminescence * 0.72); col += bioColor * bioluminescence * 0.26;
           gl_FragColor = vec4(col, s.a * vA);
         }`,
       transparent: true, depthWrite: false, depthTest: true, blending: THREE.NormalBlending,
@@ -83,6 +84,7 @@ export class Plume {
         resolution: { value: new THREE.Vector2(1, 1) }, near: { value: 0.3 }, far: { value: 5000 }, uTime: { value: 0 },
         sunView: { value: new THREE.Vector3(0, 1, 0) }, camVel: { value: new THREE.Vector3() },
         sunCol: { value: new THREE.Color(1.12, 1.08, 1.0) }, skyCol: { value: new THREE.Color(0.58, 0.70, 0.82) },
+        bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) },
       },
       vertexShader: `
         attribute vec3 aPos; attribute vec4 aData; attribute float aAlpha; attribute vec3 aVel;
@@ -111,7 +113,7 @@ export class Plume {
       fragmentShader: `
         precision highp float;
         uniform sampler2D tSprite, tNoise, tDepth; uniform vec2 resolution; uniform float near, far, uTime;
-        uniform vec3 sunView, sunCol, skyCol;
+        uniform vec3 sunView, sunCol, skyCol, bioColor; uniform float bioluminescence;
         varying vec2 vUv; varying vec2 vOff; varying float vAge, vSeed, vAlpha, vZ, vSmoke;
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
         void main() {
@@ -135,6 +137,8 @@ export class Plume {
           col *= 0.9 + 0.1 * n;
           vec3 soot = mix(vec3(0.075, 0.082, 0.08), vec3(0.23, 0.235, 0.22), lit * 0.22 + thin * 0.12);
           col = mix(col, soot, vSmoke);
+          float glow = bioluminescence * (1.0 - vSmoke) * (1.0 - smoothstep(0.48, 0.94, vAge));
+          col = mix(col, bioColor, glow * 0.72); col += bioColor * glow * 0.34;
           gl_FragColor = vec4(col, a);
         }`,
       transparent: true, depthWrite: false, depthTest: true, blending: THREE.NormalBlending,

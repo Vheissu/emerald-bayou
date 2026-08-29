@@ -197,8 +197,9 @@ async function init() {
   const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); condition.traffic = life.traffic; game.condition = condition;
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   environment.onLightning = strike => hazards.lightning(strike);
-  const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, audio });
+  const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
+  ecology.radio = radio;
   condition.radio = radio; life.traffic.radio = radio;
   const incidents = new WorldIncidents({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition, encounters });
   const story = new StoryDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, radio, law, reputation, condition, encounters, incidents, hazards });

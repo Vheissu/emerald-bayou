@@ -79,6 +79,7 @@ export class Water {
       wakeOrigin: { value: this.wakeOrigin }, wakeSize: { value: WAKE_SIZE }, wakeTexel: { value: 1 / WAKE_RES },
       rippleStrength: { value: 0.16 }, wakeStrength: { value: 6.0 }, dbg: { value: 0 },
       seaState: { value: 0 }, weatherWind: { value: new THREE.Vector2(1, 0) },
+      bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) },
       tShadow: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, shadowTexel: { value: 1 / 4096 }, shadowOn: { value: 0 },
       sunIntensity: { value: 1.5 },
       tMurk: { value: null }, murkOrigin: { value: new THREE.Vector2(1e9, 1e9) }, murkSize: { value: MURK_SIZE },
@@ -105,6 +106,7 @@ export class Water {
         uniform vec3 sunDir, sunColor, absorb, scatterColor; uniform float scatterK;
         uniform vec2 wakeOrigin; uniform float wakeSize, wakeTexel, rippleStrength, wakeStrength; uniform int dbg;
         uniform float seaState; uniform vec2 weatherWind;
+        uniform float bioluminescence; uniform vec3 bioColor;
         uniform sampler2DShadow tShadow; uniform mat4 shadowMatrix; uniform float shadowTexel, shadowOn, sunIntensity;
         uniform sampler2D tMurk; uniform vec2 murkOrigin; uniform float murkSize;
         varying vec3 vWorld; varying vec4 vRefl;
@@ -221,7 +223,11 @@ export class Water {
           fm += windCaps * (0.35 + 0.65 * fn2);
           fm = clamp(fm, 0.0, 1.0);
           vec3 foamCol = vec3(0.92, 0.95, 0.93) * (0.75 + 0.25 * max(dot(vec3(0.0, 1.0, 0.0), sunDir), 0.0)) * (0.5 + 0.5 * shadow);
+          float bioWake = smoothstep(0.012, 0.42, fmRaw * (0.7 + fn + fn2 * 0.45) + abs(wh) * 2.4);
+          float bio = bioluminescence * clamp(bioWake + shore * 0.62, 0.0, 1.0);
+          foamCol = mix(foamCol, vec3(0.11, 0.62, 0.86), bioluminescence * 0.68);
           col = mix(col, foamCol, fm);
+          col += bioColor * bio * (0.42 + fn * 0.38 + fn2 * 0.56);
           if (dbg == 1) col = refl; else if (dbg == 2) col = vec3(F); else if (dbg == 3) col = vec3(th / 10.0); else if (dbg == 4) col = vec3(rUv, 0.0); else if (dbg == 5) col = N * 0.5 + 0.5; else if (dbg == 6) col = vec3(shadow); else if (dbg == 7) col = spec;
           gl_FragColor = vec4(col, 1.0);
         }`,

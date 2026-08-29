@@ -75,6 +75,8 @@ The water is the part that took longest. Real reflection and refraction passes, 
 
 Wildlife lives its own life. Alligators bask on banks and slide in when you get close, and the bull will charge an idle hull inside 16 m. Mullet jump near the boat, bait boils off the bow in the shallows, ibis and pelicans run lines low over the water, and vultures circle high. When you get more than 700 m away it all quietly relocates ahead of you.
 
+On some calm nights, a plankton bloom reaches Mangrove Reach. The water stays black until something moves through it: hull wakes, fish, paddles and splashes leave blue fire behind them. The bloom runs through the existing wake and particle buffers, so it adds no extra scene assets.
+
 People are jointed figures driven by a pose target system rather than baked animation, so a man on a dock will track you as you go past, drink his beer, check his rod, cast, and reel in a fish. Boat ramps run a 150 second cycle where a truck backs down the slab, floats a boat off the trailer, motors out and comes back to winch it on.
 
 <img src="docs/screenshots/02-mission.jpg" alt="A story job in progress" width="100%">
@@ -119,6 +121,7 @@ __dbg.mode = 'depth'                      // full | raw | nowater | depth | refl
 __dbg.phys.reset(x, z, heading)           // teleport
 __dbg.environment.minutesPerSecond = 0    // freeze the clock
 __dbg.environment.setHour(17.4)           // pick the light
+__dbg.ecology.setBioluminescence(1, true) // force the disturbed-water glow
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera
 __dbg.terrain.hf.computeBase(x, z)        // { h, s, lake, prairie, hammock }
 ```
