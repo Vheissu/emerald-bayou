@@ -4,6 +4,11 @@
 export const MAX_DEVICE_PIXEL_RATIO = 2;
 export const MAX_DRAW_PIXELS = 3_000_000;
 export const FOUR_SAMPLE_MAX_PIXELS = 1_600_000;
+const EMERGENCY_FRAME_SECONDS = 1 / 20;
+const EMERGENCY_FRAME_COUNT = 4;
+const EMERGENCY_STALL_SECONDS = 0.2;
+const EMERGENCY_STALL_COUNT = 2;
+const EMERGENCY_COOLDOWN_SECONDS = 0.8;
 
 export const QUALITY_PROFILES = Object.freeze([
   Object.freeze({
@@ -106,7 +111,10 @@ export class AdaptiveQualityController {
 
   get profile() { return qualityProfile(this.level); }
 
-  resetWindow() { this.elapsed = 0; this.frames = 0; this.slowFrames = 0; this.stallFrames = 0; }
+  resetWindow() {
+    this.elapsed = 0; this.frames = 0; this.slowFrames = 0; this.stallFrames = 0;
+    this.emergencyFrameStreak = 0; this.emergencyStallStreak = 0;
+  }
 
   reset() { this.resetWindow(); this.headroomWindows = 0; }
 
@@ -126,6 +134,21 @@ export class AdaptiveQualityController {
     this.elapsed += sampledSeconds; this.frames++;
     if (frameSeconds > 1 / 45) this.slowFrames++;
     if (frameSeconds > 0.2) this.stallFrames++;
+    this.emergencyFrameStreak = frameSeconds > EMERGENCY_FRAME_SECONDS ? this.emergencyFrameStreak + 1 : 0;
+    this.emergencyStallStreak = frameSeconds > EMERGENCY_STALL_SECONDS ? this.emergencyStallStreak + 1 : 0;
+
+    // Auto must shed expensive attachments while a foreground renderer is visibly wedged, not several seconds later.
+    // Requiring consecutive pressure still ignores one-off shader compilation, resize and input stalls. The shorter
+    // cooldown lets a truly struggling machine descend another tier without waiting through the normal four seconds.
+    const emergency = this.emergencyStallStreak >= EMERGENCY_STALL_COUNT || this.emergencyFrameStreak >= EMERGENCY_FRAME_COUNT;
+    if (emergency && this.cooldown <= 0 && this.level > this.minLevel) {
+      const averageMs = this.elapsed / Math.max(1, this.frames) * 1000;
+      const slowRatio = this.slowFrames / Math.max(1, this.frames);
+      const stallFrames = this.stallFrames, frames = this.frames;
+      this.lastSample = { averageMs, slowRatio, stallFrames, frames, emergency: true };
+      this.level--; this.headroomWindows = 0; this.cooldown = EMERGENCY_COOLDOWN_SECONDS; this.resetWindow();
+      return { level: this.level, profile: this.profile, direction: -1, averageMs, slowRatio, stallFrames, emergency: true };
+    }
     if (this.elapsed < this.sampleSeconds) return null;
 
     const averageMs = this.elapsed / Math.max(1, this.frames) * 1000;

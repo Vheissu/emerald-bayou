@@ -92,13 +92,26 @@ test('steps down on sustained missed frames and ignores a background pause', () 
   assert.equal(quality.profile.id, 'balanced');
 });
 
-test('counts repeated foreground stalls instead of discarding them', () => {
+test('reacts to repeated foreground stalls without treating one pause as pressure', () => {
   const quality = new AdaptiveQualityController({ initialLevel: 3, sampleSeconds: 1 });
-  quality.observe(0.3, true); quality.observe(0.3, true);
-  let change = null;
-  for (let i = 0; i < 45; i++) change ||= quality.observe(1 / 60, true);
+  assert.equal(quality.observe(0.3, true), null);
+  assert.equal(quality.observe(1 / 60, true), null);
+  assert.equal(quality.profile.id, 'cinematic');
+  quality.observe(0.3, true);
+  const change = quality.observe(0.3, true);
   assert.equal(change?.profile.id, 'balanced');
-  assert.equal(change?.stallFrames, 2);
+  assert.equal(change?.emergency, true);
+  assert.equal(change?.stallFrames, 3);
+});
+
+test('drops emergency quality within four consecutive sub-20-fps frames', () => {
+  const quality = new AdaptiveQualityController({ initialLevel: 2 });
+  let change = null;
+  for (let i = 0; i < 4; i++) change ||= quality.observe(1 / 15, true);
+  assert.equal(change?.profile.id, 'performance');
+  assert.equal(change?.emergency, true);
+  assert.equal(change?.averageMs, 1000 / 15);
+  assert.equal(quality.snapshot().lastSample?.frames, 4);
 });
 
 test('requires several clean windows before restoring quality', () => {
