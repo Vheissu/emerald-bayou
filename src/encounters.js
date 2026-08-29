@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { buildSkiff } from './npc.js';
-import { person, animatePerson, wave } from './folk.js';
+import { person, animatePerson, wave, aim } from './folk.js';
 import { crabFloat, fuelDrum, wreck } from './markers.js';
-import { manateeMesh } from './wildlife.js';
+import { gatorMesh, manateeMesh } from './wildlife.js';
 import { mulberry32 } from './noise.js';
 import { fmtDist } from './game.js';
 
@@ -12,7 +12,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
 const MANATEE_PROBES = [0, -0.42, 0.42, -0.86, 0.86, -1.32, 1.32];
-const DEBUG_ORDER = ['distress', 'fire', 'manatee', 'patrol', 'smuggler', 'salvage', 'netline'];
+const DEBUG_ORDER = ['distress', 'fire', 'manatee', 'spotlight', 'patrol', 'smuggler', 'salvage', 'netline'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
 const SPILL_POOL_SIZE = 3;
 
@@ -156,6 +156,29 @@ function makeEntangledManatee() {
   return { animal, buoy, rope };
 }
 
+function makeSpotlightRig(rr, boat, scene) {
+  const gunner = person(rr, { pose: 'stand', hat: true, gun: true });
+  gunner.name = 'unlicensed alligator gunner'; gunner.position.set(-0.44, 0.48, -0.52); gunner.rotation.y = Math.PI; gunner.visible = false; boat.add(gunner);
+  const gator = gatorMesh(1.04); gator.name = 'spotlighted alligator'; gator.visible = false;
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0xff4428, transparent: true, opacity: 0.9, toneMapped: false });
+  const eyeGeometry = new THREE.SphereGeometry(0.027, 7, 5), eyes = new THREE.Group();
+  for (const x of [-0.12, 0.12]) { const eye = new THREE.Mesh(eyeGeometry, eyeMaterial); eye.position.set(x, 0.2, -0.58); eyes.add(eye); }
+  eyes.visible = false; gator.add(eyes);
+
+  const target = new THREE.Object3D(); target.name = 'spotlight target';
+  const light = new THREE.SpotLight(0xffe4ae, 0, 115, 0.19, 0.62, 1.45); light.name = 'poacher spotlight'; light.position.set(0.42, 1.18, -0.72); light.target = target; boat.add(light);
+  const geometry = new THREE.CircleGeometry(1, 28); geometry.rotateX(-Math.PI / 2);
+  const uniforms = { uOpacity: { value: 0 } };
+  const material = new THREE.ShaderMaterial({
+    uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+    vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+    fragmentShader: 'precision highp float; uniform float uOpacity; varying vec2 vUv; void main(){ float r=length((vUv-.5)*2.); float a=(1.-smoothstep(.18,1.,r))*(.72+.28*cos(r*9.)); if(a<.01) discard; gl_FragColor=vec4(1.,.83,.48,a*uOpacity); }',
+  });
+  const pool = new THREE.Mesh(geometry, material); pool.name = 'spotlight pool'; pool.visible = false; pool.renderOrder = 43;
+  scene.add(gator, target, pool);
+  return { gunner, gator, eyes, target, light, pool, uniforms };
+}
+
 function boatAgent(mesh) {
   return { mesh, x: 0, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: 0, targetZ: 0, decisionT: 0, active: false };
 }
@@ -164,7 +187,7 @@ export class EncounterDirector {
   constructor(o) {
     Object.assign(this, o); // scene, terrain, world, water, phys, boat, game, audio, environment, plume, spray, law, reputation
     this.next = 48; this.active = null; this.seenT = 0; this.interact = false; this.alternate = false; this.enabled = false; this.debugIndex = 0;
-    this.obs = []; this.boatObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat' }; this.echoObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'skiff' }; this.fixedObs = { x: 0, z: 0, r: 2.1, tag: 'wreck' };
+    this.obs = []; this.boatObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat' }; this.boatObs2 = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat' }; this.echoObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'skiff' }; this.fixedObs = { x: 0, z: 0, r: 2.1, tag: 'wreck' };
     this.netObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.32, tag: 'monofilament net', onHit: (into) => {
       const e = this.active; if (!e || e.type !== 'netline' || e.state === 'recovering' || e.state === 'secured' || e.hitCd > 0 || into < 1.8) return;
       e.hitCd = 3.5; e.snag = clamp((e.snag || 0) + into * 0.035, 0, 0.65);
@@ -191,6 +214,7 @@ export class EncounterDirector {
       if (import.meta.env.DEV && e.code === 'F11' && !e.repeat && this.enabled && this.active) {
         if (this.active.type === 'fire' && !this.active.fireOut && !this.active.burned) { e.preventDefault(); this.active.burn = this.active.limit; }
         else if (this.active.type === 'manatee') { e.preventDefault(); this.debugAdvanceManatee(); }
+        else if (this.active.type === 'spotlight') { e.preventDefault(); this.debugAdvanceSpotlight(); }
       }
     };
     window.addEventListener('keydown', this.keyHandler);
@@ -217,6 +241,7 @@ export class EncounterDirector {
 
     const smugglerBoat = buildSkiff({ crew: true }); recolor(smugglerBoat, 0x4b3527); smugglerBoat.visible = false; this.scene.add(smugglerBoat);
     const smuggler = { boat: smugglerBoat, agent: boatAgent(smugglerBoat), pack: makePackage() }; smuggler.pack.visible = false; this.scene.add(smuggler.pack);
+    const spotlight = makeSpotlightRig(rr, smugglerBoat, this.scene);
 
     const salvage = { wreck: wreck(), drums: [fuelDrum(), fuelDrum(), fuelDrum()] };
     salvage.wreck.visible = false; this.scene.add(salvage.wreck);
@@ -230,7 +255,7 @@ export class EncounterDirector {
     const swimmer = person(rr, { pose: 'sitEdge', hat: false, vest: true }); swimmer.visible = false; this.scene.add(swimmer);
     const manatee = makeEntangledManatee(); this.scene.add(manatee.animal, manatee.buoy, manatee.rope);
 
-    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, patrol, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire }, manatee };
+    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, patrol, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire }, manatee, spotlight };
   }
 
   spot(min = 160, max = 300, sideMax = 170) {
@@ -250,22 +275,23 @@ export class EncounterDirector {
     const heat = this.law ? this.law.attention : 0;
     const runners = this.reputation ? this.reputation.score('runners') : 0, fwc = this.reputation ? this.reputation.score('fwc') : 0;
     const region = this.regions && this.regions.current ? this.regions.current.encounters : {};
-    const weights = { distress: 0.27, fire: 0.11, manatee: 0.11, patrol: 0.22, salvage: 0.11, smuggler: 0.11, netline: 0.07 };
+    const weights = { distress: 0.25, fire: 0.1, manatee: 0.1, spotlight: 0.08, patrol: 0.2, salvage: 0.1, smuggler: 0.1, netline: 0.07 };
     weights.patrol *= (region.law ?? 1) * (1 + heat * 1.75) * (1 + Math.max(0, -fwc) * 0.16);
     weights.smuggler *= (region.runners ?? 1) * (night ? 1.9 : 1) * (1 + Math.max(0, -runners) * 0.2);
     weights.netline *= (0.72 + (region.runners ?? 1) * 0.38) * (night ? 1.24 : 1);
     weights.distress *= region.danger ?? 1;
     weights.fire *= (region.danger ?? 1) * (0.82 + Math.min(1.25, (this.environment.values.wind || 0) * 0.045));
     weights.manatee *= (night ? 0.42 : 1) * (1 - clamp((this.environment.values.storm || 0) - 0.45, 0, 0.86));
+    weights.spotlight *= (region.runners ?? 1) * (night ? 1.9 : 0) * (1 + Math.max(0, -runners) * 0.12) * (1 - clamp((this.environment.values.storm || 0) - 0.34, 0, 0.94));
     weights.salvage *= 0.7 + (region.danger ?? 1) * 0.45;
     if (weather === 'hurricane' || weather === 'tropical' || weather === 'thunderstorm') {
-      weights.distress *= 1.8; weights.fire *= 1.35; weights.manatee *= 0.08; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
+      weights.distress *= 1.8; weights.fire *= 1.35; weights.manatee *= 0.08; weights.spotlight *= 0.04; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
     } else if (weather === 'squall' || weather === 'hail') {
-      weights.distress *= 1.4; weights.fire *= 1.2; weights.manatee *= 0.35; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
+      weights.distress *= 1.4; weights.fire *= 1.2; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
     }
     if (heat >= 3) weights.patrol *= 2.1;
     let roll = Math.random() * Object.values(weights).reduce((a, n) => a + n, 0);
-    for (const type of ['distress', 'fire', 'manatee', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
+    for (const type of ['distress', 'fire', 'manatee', 'spotlight', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
     return 'distress';
   }
 
@@ -275,6 +301,7 @@ export class EncounterDirector {
     if (type === 'distress') this.startDistress(at);
     else if (type === 'fire') this.startFire(at);
     else if (type === 'manatee') this.startManatee(at);
+    else if (type === 'spotlight') this.startSpotlight(at);
     else if (type === 'patrol') this.startPatrol(at);
     else if (type === 'smuggler') this.startSmuggler(at);
     else if (type === 'netline') this.startNetline(at);
@@ -537,6 +564,138 @@ export class EncounterDirector {
     } else if (e.state === 'rescue') e.rescueT = 8.8;
   }
 
+  startSpotlight(at) {
+    const S = this.rigs.spotlight, A = this.rigs.smuggler.agent, heading = at.heading + (Math.random() - 0.5) * 0.45;
+    let gatorX = at.x - Math.sin(heading) * 17, gatorZ = at.z - Math.cos(heading) * 17;
+    if (this.terrain.heightAt(gatorX, gatorZ) > -0.48 || this.world.blockedAt(gatorX, gatorZ)) {
+      gatorX = at.x + Math.cos(heading) * 13; gatorZ = at.z - Math.sin(heading) * 13;
+    }
+    Object.assign(A, { x: at.x, z: at.z, heading, speed: 0.18, want: 0, turn: 0, decisionT: 0, active: true });
+    A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.set(0, heading, 0); A.mesh.visible = true;
+    this.rigs.smuggler.pack.visible = false; S.gunner.visible = true; S.gator.visible = true; S.eyes.visible = false;
+    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false;
+    this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0;
+    this.active = {
+      type: 'spotlight', state: 'waiting', x: A.x, z: A.z, heading, t: 0, known: false, ph: Math.random() * Math.PI * 2,
+      gatorX, gatorZ, takeT: 27 + Math.random() * 7, resolveT: 0, chaseT: 0, visualT: 0, lostT: 0,
+      fixX: A.x, fixZ: A.z, escapeX: A.x, escapeZ: A.z, choice: '', paid: 0,
+    };
+    this.updateSpotlightRig(this.active, 0, 0);
+  }
+
+  updateSpotlightRig(e, dt, t) {
+    const S = this.rigs.spotlight, A = this.rigs.smuggler.agent;
+    if (e.state === 'waiting') {
+      A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, t) - 0.05, A.z);
+      A.mesh.rotation.set(0, A.heading, Math.sin(t * 0.72 + e.ph) * 0.025, 'YXZ');
+      if (A.mesh.userData.motor) A.mesh.userData.motor.userData.prop.rotation.z += dt * 8;
+    }
+    if (S.gator.visible) {
+      const waveY = this.water.waveHeight(e.gatorX, e.gatorZ, t);
+      S.gator.position.set(e.gatorX, waveY - 0.36 + Math.sin(t * 0.5 + e.ph) * 0.025, e.gatorZ);
+      S.gator.rotation.set(0, e.heading + 0.2, Math.sin(t * 0.43 + e.ph) * 0.018, 'YXZ');
+    }
+    const scanning = e.state === 'waiting' && S.gator.visible;
+    if (scanning) {
+      const sweep = Math.sin(t * 0.63 + e.ph) * 8.5, sideX = Math.cos(e.heading), sideZ = -Math.sin(e.heading);
+      const x = e.gatorX + sideX * sweep, z = e.gatorZ + sideZ * sweep, y = this.water.waveHeight(x, z, t) + 0.035;
+      S.target.position.set(x, y, z); S.pool.position.set(x, y, z); S.pool.scale.set(4.3 + Math.sin(t * 1.1) * 0.25, 1, 3.4);
+      S.light.intensity = 620 + Math.sin(t * 7.4) * 35; S.uniforms.uOpacity.value = 0.28; S.pool.visible = true;
+      S.eyes.visible = Math.hypot(x - e.gatorX, z - e.gatorZ) < 4.1;
+      if (e.known && e.takeT < 7.2) aim(S.gunner, 3.2);
+    } else {
+      S.light.intensity = 0; S.uniforms.uOpacity.value = 0; S.pool.visible = false; S.eyes.visible = false;
+    }
+    if (S.gunner.visible) animatePerson(S.gunner, t, dt, A);
+  }
+
+  setSpotlightEscape(e) {
+    const A = this.rigs.smuggler.agent, dx = A.x - this.phys.pos.x, dz = A.z - this.phys.pos.y, d = Math.hypot(dx, dz);
+    const vx = d > 0.1 ? dx / d : -Math.sin(A.heading), vz = d > 0.1 ? dz / d : -Math.cos(A.heading); A.heading = Math.atan2(-vx, -vz); A.active = true; A.decisionT = 0;
+    e.escapeX = A.x + vx * 560; e.escapeZ = A.z + vz * 560; e.x = A.x; e.z = A.z;
+  }
+
+  reportSpotlight(e) {
+    if (!e || e.type !== 'spotlight' || e.state !== 'waiting') return;
+    const A = this.rigs.smuggler.agent, P = this.rigs.patrol.agent;
+    const at = this.spot(105, 155, 95) || { x: this.phys.pos.x - 125, z: this.phys.pos.y - 80 };
+    const heading = Math.atan2(-(A.x - at.x), -(A.z - at.z));
+    Object.assign(P, { x: at.x, z: at.z, heading, speed: 5.4, want: 9, turn: 0, decisionT: 0, active: true });
+    P.mesh.position.set(P.x, this.water.waveHeight(P.x, P.z, 0) - 0.05, P.z); P.mesh.rotation.set(0, heading, 0); P.mesh.visible = true;
+    e.state = 'reported'; e.choice = 'fwc'; e.chaseT = 0; e.visualT = 0; e.lostT = 0; e.fixX = A.x; e.fixZ = A.z;
+    this.setSpotlightEscape(e); this.rigs.spotlight.gator.visible = false; this.clearPrompt(); this.audio.checkpoint();
+    this.game.toast('Hull and position relayed', 'Keep the blacked-out skiff in sight. FWC twenty-seven is coming dark.', 3.5);
+  }
+
+  warnSpotlight(e) {
+    if (!e || e.type !== 'spotlight' || e.state !== 'waiting') return;
+    const standing = this.reputation ? this.reputation.score('runners') : 0;
+    e.state = 'warned'; e.choice = 'runners'; e.resolveT = 7.5; e.paid = standing >= 3 ? 260 : standing >= 0 ? 180 : 100;
+    this.setSpotlightEscape(e); this.rigs.spotlight.gator.visible = false; this.clearPrompt();
+    this.game.save.spotlightWarnings = (this.game.save.spotlightWarnings || 0) + 1;
+    if (this.reputation) {
+      this.reputation.change('runners', 0.9, 'spotlight-warning', 'The blackout crew remembers who warned them off the refuge cut.', true);
+      this.reputation.change('fwc', -0.75, 'spotlight-warning', 'FWC heard the tower hull warn an unlicensed harvest crew.', false);
+      this.reputation.change('locals', -0.3, 'spotlight-warning', 'The camps heard an untagged crew got a clean exit.', false);
+    }
+    this.pay(e.paid, 'Backchannel credit'); this.game.persist(); this.audio.pickup();
+    this.game.toast('Warning sent on seventy-two', 'Their light went black. The skiff is leaving before twenty-seven gets a hull number.', 3.6);
+  }
+
+  spookSpotlight(e) {
+    if (!e || e.type !== 'spotlight' || e.state !== 'waiting') return;
+    e.state = 'spooked'; e.choice = 'spooked'; e.resolveT = 8; this.setSpotlightEscape(e); this.rigs.spotlight.gator.visible = false;
+    this.game.save.spotlightCrewsSpooked = (this.game.save.spotlightCrewsSpooked || 0) + 1;
+    if (this.reputation) {
+      this.reputation.change('fwc', 0.18, 'spotlight-spooked', 'Your approach broke up an unlicensed alligator take.', true);
+      this.reputation.change('runners', -0.45, 'spotlight-spooked', 'The blackout crew knows which hull drove through its setup.', false);
+    }
+    const f = this.phys.forward(this._f), x = this.phys.pos.x + f.x * 5 + (Math.random() - 0.5) * 3, z = this.phys.pos.y + f.y * 5 + (Math.random() - 0.5) * 3;
+    this.audio.shot(0.55); for (let i = 0; i < 18; i++) this.spray.emit(x + (Math.random() - 0.5), this.water.waveHeight(x, z, 0) + 0.04, z + (Math.random() - 0.5), (Math.random() - 0.5) * 2.2, 0.8 + Math.random() * 2.8, (Math.random() - 0.5) * 2.2, 0.014 + Math.random() * 0.02, 0.35 + Math.random() * 0.3, 0.58);
+    this.game.persist(); this.audio.warn(); this.game.shake = Math.max(this.game.shake, 0.24);
+    this.game.toast('Warning shot off the bow', 'The gator went under. The blacked-out skiff is running for the narrow water.', 3.5);
+  }
+
+  takeSpotlightGator(e) {
+    if (!e || e.type !== 'spotlight' || e.state !== 'waiting') return;
+    e.state = 'taken'; e.choice = 'none'; e.resolveT = 6; this.setSpotlightEscape(e); this.rigs.spotlight.gator.visible = false;
+    this.game.save.untaggedAlligatorsTaken = (this.game.save.untaggedAlligatorsTaken || 0) + 1;
+    const y = this.water.waveHeight(e.gatorX, e.gatorZ, 0) + 0.04;
+    this.audio.shot(0.7); for (let i = 0; i < 24; i++) this.spray.emit(e.gatorX + (Math.random() - 0.5) * 1.5, y, e.gatorZ + (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 2.8, 0.7 + Math.random() * 2.4, (Math.random() - 0.5) * 2.8, 0.014 + Math.random() * 0.022, 0.35 + Math.random() * 0.32, 0.58);
+    this.game.persist(); this.audio.warn(); this.game.toast('Single shot in the refuge cut', 'The light went out. The untagged crew is leaving with the animal.', 3.7);
+  }
+
+  seizeSpotlight(e) {
+    if (e.state === 'seized') return;
+    const A = this.rigs.smuggler.agent, P = this.rigs.patrol.agent;
+    e.state = 'seized'; e.resolveT = 5; A.speed = 0; P.speed = 0; A.active = false; P.active = false;
+    this.game.save.spotlightSeizures = (this.game.save.spotlightSeizures || 0) + 1;
+    if (this.reputation) {
+      this.reputation.change('fwc', 1.35, 'spotlight-seizure', 'Your moving fixes put FWC alongside an unlicensed alligator crew.', true);
+      this.reputation.change('locals', 0.45, 'spotlight-seizure', 'The camps heard the closed refuge cut stayed intact.', false);
+      this.reputation.change('runners', -1.1, 'spotlight-seizure', 'The backchannel tied the seized blackout skiff to your radio calls.', false);
+    }
+    if (this.law) this.law.cool(0.3); this.game.persist(); this.audio.checkpoint();
+    this.game.toast('FWC alongside the blackout skiff', 'Long gun, no restraint line, no harvest tags. The gator stayed in the cut.', 3.8);
+  }
+
+  escapeSpotlight(e) {
+    if (e.state === 'escaped') return;
+    e.state = 'escaped'; e.resolveT = 4.8; this.audio.warn();
+    this.game.toast('FWC lost the blacked-out skiff', 'The last moving fix went stale where the channels split.', 3.4);
+  }
+
+  debugAdvanceSpotlight() {
+    const e = this.active; if (!e || e.type !== 'spotlight') return;
+    if (e.state === 'waiting') this.reportSpotlight(e);
+    else if (e.state === 'reported') {
+      const A = this.rigs.smuggler.agent, P = this.rigs.patrol.agent;
+      Object.assign(P, { x: A.x + 9, z: A.z + 2, heading: A.heading, speed: 1.2, active: true });
+      P.mesh.position.set(P.x, this.water.waveHeight(P.x, P.z, 0) - 0.05, P.z); P.mesh.visible = true;
+      e.visualT = 12; e.lostT = 0; e.fixX = A.x; e.fixZ = A.z;
+    } else if (['warned', 'spooked', 'taken', 'seized', 'escaped'].includes(e.state)) e.resolveT = 0.1;
+  }
+
   startPatrol(at) {
     const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: 4, want: 8, active: true });
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading;
@@ -659,11 +818,12 @@ export class EncounterDirector {
     const e = this.active, p = this.phys; if (!e) return;
     let target = e;
     if (e.type === 'patrol') target = this.rigs.patrol.agent;
+    else if (e.type === 'spotlight') target = this.rigs.smuggler.agent;
     else if (e.type === 'smuggler' && e.state === 'chase') target = this.rigs.smuggler.agent;
     else if (e.type === 'salvage') target = e.pieces.find(q => !q.resolved) || e;
     else if (e.type === 'fire' && e.aboard && (e.fireOut || e.burned) && e.drop) target = e.drop;
     const dx = target.x - p.pos.x, dz = target.z - p.pos.y, d = Math.hypot(dx, dz) || 1;
-    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'manatee' ? (e.state === 'cutting' ? 5.5 : 19) : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
+    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'manatee' ? (e.state === 'cutting' ? 5.5 : 19) : e.type === 'spotlight' ? 38 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
     const x = target.x - dx / d * gap, z = target.z - dz / d * gap;
     p.reset(x, z, p.heading); p.y = this.water.waveHeight(x, z, 0);
   }
@@ -753,6 +913,7 @@ export class EncounterDirector {
     this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
     this.rigs.fire.boat.visible = false; this.rigs.fire.operator.visible = true; this.rigs.fire.swimmer.visible = false; animateEngineFire(this.rigs.fire.fire, 0, 0, 0);
     this.rigs.manatee.animal.visible = false; this.rigs.manatee.buoy.visible = false; this.rigs.manatee.rope.visible = false; this.rigs.manatee.rope.material.opacity = 0.86;
+    this.rigs.spotlight.gunner.visible = false; this.rigs.spotlight.gator.visible = false; this.rigs.spotlight.eyes.visible = false; this.rigs.spotlight.light.intensity = 0; this.rigs.spotlight.pool.visible = false; this.rigs.spotlight.uniforms.uOpacity.value = 0;
     if (e.type === 'fire' && e.aboard) this.phys.loaded = 0;
     if (this.law) this.law.setPursuit(false);
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
@@ -786,10 +947,10 @@ export class EncounterDirector {
     if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
   }
 
-  addBoatObstacle(A, tag = 'boat') {
+  addBoatObstacle(A, tag = 'boat', slot = 0) {
     if (!A.active || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 70) return;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading);
-    const o = this.boatObs; o.ax = A.x + fx * 2; o.az = A.z + fz * 2; o.bx = A.x - fx * 2; o.bz = A.z - fz * 2; o.tag = tag; this.obs.push(o);
+    const o = slot ? this.boatObs2 : this.boatObs; o.ax = A.x + fx * 2; o.az = A.z + fz * 2; o.bx = A.x - fx * 2; o.bz = A.z - fz * 2; o.tag = tag; this.obs.push(o);
   }
 
   updateDistress(e, dt, t) {
@@ -1016,6 +1177,67 @@ export class EncounterDirector {
     }
   }
 
+  updateSpotlight(e, dt, t) {
+    const A = this.rigs.smuggler.agent, P = this.rigs.patrol.agent, p = this.phys;
+    let d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y), mph = p.speed * MPH;
+    if (d < 155) this.known(e, 'Blacked-out spotlight crew', 'No navigation lights. A long gun is up while they sweep a closed refuge cut.');
+    if (e.known && e.state !== 'seized') this.point(A.x, A.z, e.state === 'taken' ? 'untagged harvest crew' : 'blackout skiff', e.state === 'reported' ? '#5aa7ff' : '#ff8a45');
+
+    if (e.state === 'waiting') {
+      if (d < 72) this.addBoatObstacle(A, 'blackout skiff');
+      if (e.known) e.takeT -= dt;
+      if (d < 30 && mph > 11) { this.spookSpotlight(e); this.updateSpotlightRig(e, dt, t); return; }
+      if (d < 55 && mph < 7 && this.canInteract()) {
+        this.setPrompt(`report the blacked-out harvest crew <i>· F warn them on seventy-two${e.takeT < 8 ? ' · gunner lining up' : ''}</i>`);
+        if (this.interact) { this.reportSpotlight(e); this.updateSpotlightRig(e, dt, t); return; }
+        if (this.alternate) { this.warnSpotlight(e); this.updateSpotlightRig(e, dt, t); return; }
+      }
+      if (e.takeT <= 0) { this.takeSpotlightGator(e); this.updateSpotlightRig(e, dt, t); return; }
+      this.updateSpotlightRig(e, dt, t); return;
+    }
+
+    if (e.state === 'reported' || e.state === 'warned' || e.state === 'spooked' || e.state === 'taken' || e.state === 'escaped') {
+      this.updateAgent(A, dt, t, e.escapeX, e.escapeZ, e.state === 'reported' ? 10.4 : 11.4);
+      e.x = A.x; e.z = A.z; d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y); this.addBoatObstacle(A, 'blackout skiff');
+    }
+
+    if (e.state === 'reported') {
+      e.chaseT += dt; const visual = d < 195;
+      if (visual) { e.fixX = A.x; e.fixZ = A.z; e.visualT = Math.min(24, e.visualT + dt); e.lostT = 0; }
+      else { e.visualT = Math.max(0, e.visualT - dt * 0.3); e.lostT += dt; }
+      this.updateAgent(P, dt, t, visual ? A.x : e.fixX, visual ? A.z : e.fixZ, visual ? 13.4 : 9.2, visual ? 5 : 14);
+      this.addBoatObstacle(P, 'FWC twenty-seven', 1);
+      const blink = Math.floor(t * 5.2) % 2; this.rigs.patrol.blue.light.intensity = blink ? 86 : 4; this.rigs.patrol.red.light.intensity = blink ? 4 : 86;
+      const pd = Math.hypot(P.x - A.x, P.z - A.z);
+      if (visual) this.setPrompt(`keep the blackout skiff in sight for FWC <i>· ${fmtDist(pd)} to intercept</i>`, 'VISUAL');
+      else if (e.lostT > 4) this.setPrompt(`reacquire the blackout skiff <i>· last fix ${fmtDist(Math.hypot(e.fixX - p.pos.x, e.fixZ - p.pos.y))}</i>`, 'LOST');
+      this.updateSpotlightRig(e, dt, t);
+      if (pd < 14.5 && e.visualT > 4) { this.seizeSpotlight(e); return; }
+      if (e.chaseT > 64 || (e.lostT > 16 && d > 270)) { this.escapeSpotlight(e); return; }
+      return;
+    }
+
+    if (e.state === 'seized') {
+      const blink = Math.floor(t * 2.4) % 2; this.rigs.patrol.blue.light.intensity = blink ? 58 : 5; this.rigs.patrol.red.light.intensity = blink ? 5 : 48;
+      e.resolveT -= dt; this.updateSpotlightRig(e, dt, t);
+      if (e.resolveT <= 0) { this.complete('Illegal harvest stopped', 'FWC has the blacked-out skiff, long gun and untagged gear.', 0, 0, '', 'spotlight-seized'); return; }
+      return;
+    }
+
+    if (e.state === 'escaped') {
+      if (P.active) { this.updateAgent(P, dt, t, e.fixX, e.fixZ, 7.8, 16); this.addBoatObstacle(P, 'FWC twenty-seven', 1); }
+      e.resolveT -= dt; this.updateSpotlightRig(e, dt, t);
+      if (e.resolveT <= 0) { this.complete('Blackout skiff escaped', 'FWC has the last hull description, but the channels swallowed the running lights.', 0, 0, '', 'spotlight-escaped'); return; }
+      return;
+    }
+
+    e.resolveT -= dt; this.updateSpotlightRig(e, dt, t);
+    if (e.resolveT > 0) return;
+    if (e.state === 'warned') this.complete('Warning delivered', `The blackout crew is gone. ${e.paid ? `$${e.paid} is on your backchannel ledger.` : 'The backchannel remembers.'}`, 0, 0, '', 'spotlight-warned');
+    else if (e.state === 'spooked') this.complete('Crew scattered', 'The gator stayed in the refuge cut. The warning shot is in FWC’s call log.', 0, 0, '', 'spotlight-spooked');
+    else if (e.state === 'taken') this.complete('Untagged take lost', 'FWC has a shot report and no hull number. The closed cut is quiet again.', 0, 0, '', 'spotlight-taken');
+  }
+
   updatePatrol(e, dt, t) {
     const A = this.rigs.patrol.agent, p = this.phys, d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y);
     const lead = 1.5, tx = p.pos.x + p.vel.x * lead, tz = p.pos.y + p.vel.y * lead;
@@ -1233,12 +1455,13 @@ export class EncounterDirector {
     if (e.type === 'distress') this.updateDistress(e, dt, t);
     else if (e.type === 'fire') this.updateFire(e, dt, t);
     else if (e.type === 'manatee') this.updateManatee(e, dt, t);
+    else if (e.type === 'spotlight') this.updateSpotlight(e, dt, t);
     else if (e.type === 'patrol') this.updatePatrol(e, dt, t);
     else if (e.type === 'smuggler') this.updateSmuggler(e, dt, t);
     else if (e.type === 'netline') this.updateNetline(e, dt, t);
     else this.updateSalvage(e, dt, t);
     const carryingDistress = e.type === 'distress' && e.state === 'aboard', carryingFire = e.type === 'fire' && e.aboard;
-    const focus = e.type === 'patrol' ? this.rigs.patrol.agent : e.type === 'smuggler' && e.state === 'chase' ? this.rigs.smuggler.agent : e;
+    const focus = e.type === 'patrol' ? this.rigs.patrol.agent : e.type === 'spotlight' || (e.type === 'smuggler' && e.state === 'chase') ? this.rigs.smuggler.agent : e;
     if (this.active && ((!carryingDistress && !carryingFire && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) || ((carryingDistress || carryingFire) && e.t > 600))) this.finish(false);
     this.interact = false; this.alternate = false;
   }
