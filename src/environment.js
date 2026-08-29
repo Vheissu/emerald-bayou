@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { lunarAgeAt, lunarIllumination, lunarPhaseAt, lunarPhaseName, lunarTideRange } from './lunar.js';
+import { updateAttributePrefix } from './cache.js';
 
 const FT = 3.28084;
 const MPS_TO_MPH = 2.23694;
@@ -77,41 +78,36 @@ function mixedWeather(out, a, b, t) {
 
 function makeRain(count = 2200) {
   const pos = new Float32Array(count * 6);
-  const drops = [];
-  for (let i = 0; i < count; i++) drops.push({
-    x: (Math.random() - 0.5) * 100,
-    y: Math.random() * 44,
-    z: (Math.random() - 0.5) * 100,
-    speed: 25 + Math.random() * 25,
-    phase: Math.random() * 6.28,
-  });
+  const speed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const j = i * 6;
+    pos[j] = (Math.random() - 0.5) * 100; pos[j + 1] = Math.random() * 44; pos[j + 2] = (Math.random() - 0.5) * 100;
+    pos[j + 3] = pos[j]; pos[j + 4] = pos[j + 1]; pos[j + 5] = pos[j + 2]; speed[i] = 25 + Math.random() * 25;
+  }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
   geo.setDrawRange(0, 0);
   const mat = new THREE.LineBasicMaterial({ color: 0xcfe1e8, transparent: true, opacity: 0, depthWrite: false, blending: THREE.NormalBlending });
   const lines = new THREE.LineSegments(geo, mat); lines.frustumCulled = false; lines.renderOrder = 80;
-  return { count, pos, drops, geo, mat, lines };
+  return { count, pos, speed, geo, mat, lines };
 }
 
 function makeHail(count = 720) {
   const pos = new Float32Array(count * 3);
-  const stones = [];
-  for (let i = 0; i < count; i++) stones.push({
-    x: (Math.random() - 0.5) * 70,
-    y: Math.random() * 36,
-    z: (Math.random() - 0.5) * 70,
-    speed: 18 + Math.random() * 12,
-    drift: Math.random() * 6.28,
-  });
-  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setDrawRange(0, 0);
+  const speed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const j = i * 3;
+    pos[j] = (Math.random() - 0.5) * 70; pos[j + 1] = Math.random() * 36; pos[j + 2] = (Math.random() - 0.5) * 70; speed[i] = 18 + Math.random() * 12;
+  }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage)); geo.setDrawRange(0, 0);
   const mat = new THREE.PointsMaterial({ color: 0xf5fbff, size: 0.11, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false });
   const points = new THREE.Points(geo, mat); points.frustumCulled = false; points.renderOrder = 81;
-  return { count, pos, stones, geo, mat, points };
+  return { count, pos, speed, geo, mat, points };
 }
 
-class Precipitation {
-  constructor(scene) {
-    this.rain = makeRain(); this.hail = makeHail();
+export class Precipitation {
+  constructor(scene, { rain = 2200, hail = 720 } = {}) {
+    this.rain = makeRain(rain); this.hail = makeHail(hail);
     this.group = new THREE.Group(); this.group.name = 'weather'; this.group.add(this.rain.lines, this.hail.points); scene.add(this.group);
   }
   update(dt, camera, windDir, rainAmt, hailAmt, waterLevel) {
@@ -120,26 +116,26 @@ class Precipitation {
     R.geo.setDrawRange(0, rn * 2); R.mat.opacity = 0.08 + rainAmt * 0.34; R.lines.visible = rn > 0;
     const slant = 4 + rainAmt * 8;
     for (let i = 0; i < rn; i++) {
-      const d = R.drops[i]; d.y -= d.speed * dt; d.x += windDir.x * slant * dt; d.z += windDir.z * slant * dt;
-      if (d.y < 0) { d.y += 42; d.x = (Math.random() - 0.5) * 100; d.z = (Math.random() - 0.5) * 100; }
-      if (d.x > 50) d.x -= 100; else if (d.x < -50) d.x += 100;
-      if (d.z > 50) d.z -= 100; else if (d.z < -50) d.z += 100;
-      const j = i * 6, len = 0.8 + rainAmt * 1.9;
-      R.pos[j] = d.x; R.pos[j + 1] = d.y; R.pos[j + 2] = d.z;
-      R.pos[j + 3] = d.x - windDir.x * len * 0.55; R.pos[j + 4] = d.y + len; R.pos[j + 5] = d.z - windDir.z * len * 0.55;
+      const j = i * 6; let x = R.pos[j] + windDir.x * slant * dt, y = R.pos[j + 1] - R.speed[i] * dt, z = R.pos[j + 2] + windDir.z * slant * dt;
+      if (y < 0) { y += 42; x = (Math.random() - 0.5) * 100; z = (Math.random() - 0.5) * 100; }
+      if (x > 50) x -= 100; else if (x < -50) x += 100;
+      if (z > 50) z -= 100; else if (z < -50) z += 100;
+      const len = 0.8 + rainAmt * 1.9;
+      R.pos[j] = x; R.pos[j + 1] = y; R.pos[j + 2] = z;
+      R.pos[j + 3] = x - windDir.x * len * 0.55; R.pos[j + 4] = y + len; R.pos[j + 5] = z - windDir.z * len * 0.55;
     }
-    if (rn) R.geo.attributes.position.needsUpdate = true;
+    if (rn) updateAttributePrefix(R.geo.attributes.position, rn * 6);
 
     const H = this.hail, hn = Math.floor(H.count * smooth(0.05, 1, hailAmt));
     H.geo.setDrawRange(0, hn); H.mat.opacity = 0.25 + hailAmt * 0.75; H.points.visible = hn > 0;
     for (let i = 0; i < hn; i++) {
-      const s = H.stones[i]; s.y -= s.speed * dt; s.x += windDir.x * 7 * dt; s.z += windDir.z * 7 * dt;
-      if (s.y < 0) { s.y += 35; s.x = (Math.random() - 0.5) * 70; s.z = (Math.random() - 0.5) * 70; }
-      if (s.x > 35) s.x -= 70; else if (s.x < -35) s.x += 70;
-      if (s.z > 35) s.z -= 70; else if (s.z < -35) s.z += 70;
-      const j = i * 3; H.pos[j] = s.x; H.pos[j + 1] = s.y; H.pos[j + 2] = s.z;
+      const j = i * 3; let x = H.pos[j] + windDir.x * 7 * dt, y = H.pos[j + 1] - H.speed[i] * dt, z = H.pos[j + 2] + windDir.z * 7 * dt;
+      if (y < 0) { y += 35; x = (Math.random() - 0.5) * 70; z = (Math.random() - 0.5) * 70; }
+      if (x > 35) x -= 70; else if (x < -35) x += 70;
+      if (z > 35) z -= 70; else if (z < -35) z += 70;
+      H.pos[j] = x; H.pos[j + 1] = y; H.pos[j + 2] = z;
     }
-    if (hn) H.geo.attributes.position.needsUpdate = true;
+    if (hn) updateAttributePrefix(H.geo.attributes.position, hn * 3);
   }
 }
 
@@ -163,7 +159,7 @@ export class Environment {
     this.remaining = Number.isFinite(savedRemaining) ? clamp(savedRemaining, 0, 600) : 95;
     this.windAngle = Number.isFinite(savedWind) ? Math.atan2(Math.sin(savedWind), Math.cos(savedWind)) : 0.7;
     this.gust = 1; this.waterLevel = 0; this.tideRate = 0; this.syncClockAndTide(); this.persistT = 10;
-    this.precip = new Precipitation(this.fxScene);
+    this.precip = new Precipitation(this.fxScene, this.effectBudget);
     this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);

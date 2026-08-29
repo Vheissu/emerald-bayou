@@ -1,17 +1,20 @@
 import * as THREE from 'three';
 import * as TEX from './textures.js';
+import { updateAttributePrefix } from './cache.js';
 
 // ---------------------------------------------------------------------------
 // Droplets: tiny fast-moving point sprites (ballistic), lit by the sun.
 // ---------------------------------------------------------------------------
 export class Spray {
   constructor(max = 12000) {
-    this.max = max;
-    this.pos = new Float32Array(max * 3); this.vel = new Float32Array(max * 3); this.life = new Float32Array(max); this.maxLife = new Float32Array(max); this.size = new Float32Array(max); this.alpha = new Float32Array(max); this.baseAlpha = new Float32Array(max);
+    this.max = Math.max(1, Math.floor(max));
+    const capacity = this.max;
+    this.pos = new Float32Array(capacity * 3); this.vel = new Float32Array(capacity * 3); this.life = new Float32Array(capacity); this.maxLife = new Float32Array(capacity); this.size = new Float32Array(capacity); this.alpha = new Float32Array(capacity); this.baseAlpha = new Float32Array(capacity);
     this.geo = new THREE.BufferGeometry();
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aAlpha', new THREE.BufferAttribute(this.alpha, 1).setUsage(THREE.DynamicDrawUsage));
+    this.geo.setDrawRange(0, 0);
     this.mat = new THREE.ShaderMaterial({
       uniforms: { tSprite: { value: TEX.spraySprite() }, uScale: { value: 1400 }, sunView: { value: new THREE.Vector3(0, 1, 0) }, bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) } },
       vertexShader: `
@@ -30,18 +33,30 @@ export class Spray {
       transparent: true, depthWrite: false, depthTest: true, blending: THREE.NormalBlending,
     });
     this.points = new THREE.Points(this.geo, this.mat); this.points.frustumCulled = false; this.points.renderOrder = 2;
-    this.head = 0;
+    this.count = 0; this.head = 0;
   }
   emit(x, y, z, vx, vy, vz, size, life, alpha = 1) {
-    const i = this.head; this.head = (this.head + 1) % this.max;
+    let i;
+    if (this.count < this.max) i = this.count++;
+    else { i = this.head; this.head = (this.head + 1) % this.max; }
     this.pos[i * 3] = x; this.pos[i * 3 + 1] = y; this.pos[i * 3 + 2] = z;
     this.vel[i * 3] = vx; this.vel[i * 3 + 1] = vy; this.vel[i * 3 + 2] = vz;
     this.life[i] = life; this.maxLife[i] = life; this.size[i] = size; this.alpha[i] = alpha; this.baseAlpha[i] = alpha;
+    this.geo.setDrawRange(0, this.count);
+  }
+  remove(i) {
+    const last = --this.count;
+    if (i === last) return;
+    const a = i * 3, b = last * 3;
+    this.pos[a] = this.pos[b]; this.pos[a + 1] = this.pos[b + 1]; this.pos[a + 2] = this.pos[b + 2];
+    this.vel[a] = this.vel[b]; this.vel[a + 1] = this.vel[b + 1]; this.vel[a + 2] = this.vel[b + 2];
+    this.life[i] = this.life[last]; this.maxLife[i] = this.maxLife[last]; this.size[i] = this.size[last]; this.alpha[i] = this.alpha[last]; this.baseAlpha[i] = this.baseAlpha[last];
   }
   update(dt) {
     const p = this.pos, v = this.vel;
-    for (let i = 0; i < this.max; i++) {
-      if (this.life[i] <= 0) { this.alpha[i] = 0; p[i * 3 + 1] = -100; continue; }
+    let i = 0;
+    while (i < this.count) {
+      if (this.life[i] <= 0) { this.remove(i); continue; }
       this.life[i] -= dt;
       v[i * 3 + 1] -= 9.8 * dt;
       const drag = Math.exp(-dt * 1.4);
@@ -49,10 +64,17 @@ export class Spray {
       p[i * 3] += v[i * 3] * dt; p[i * 3 + 1] += v[i * 3 + 1] * dt; p[i * 3 + 2] += v[i * 3 + 2] * dt;
       if (p[i * 3 + 1] < 0.02) { p[i * 3 + 1] = 0.02; v[i * 3 + 1] = 0; this.life[i] -= dt * 6; }
       this.size[i] += dt * 0.1;
+      if (this.life[i] <= 0) { this.remove(i); continue; }
       const t = this.life[i] / this.maxLife[i];
       this.alpha[i] = this.baseAlpha[i] * Math.min(1, t * 3.0);
+      i++;
     }
-    this.geo.attributes.position.needsUpdate = true; this.geo.attributes.aSize.needsUpdate = true; this.geo.attributes.aAlpha.needsUpdate = true;
+    this.geo.setDrawRange(0, this.count);
+    if (this.count) {
+      updateAttributePrefix(this.geo.attributes.position, this.count * 3);
+      updateAttributePrefix(this.geo.attributes.aSize, this.count);
+      updateAttributePrefix(this.geo.attributes.aAlpha, this.count);
+    }
   }
 }
 
@@ -63,13 +85,14 @@ export class Spray {
 // ---------------------------------------------------------------------------
 export class Plume {
   constructor(max = 2600) {
-    this.max = max;
-    this.pos = new Float32Array(max * 3); this.vel = new Float32Array(max * 3);
-    this.life = new Float32Array(max); this.maxLife = new Float32Array(max);
-    this.size = new Float32Array(max); this.grow = new Float32Array(max); this.rot = new Float32Array(max); this.rotV = new Float32Array(max);
-    this.seed = new Float32Array(max); this.alpha = new Float32Array(max); this.baseAlpha = new Float32Array(max);
-    this.data = new Float32Array(max * 4); // size, age01, rot, seed
-    this.velAttr = new Float32Array(max * 3);
+    this.max = Math.max(1, Math.floor(max));
+    const capacity = this.max;
+    this.pos = new Float32Array(capacity * 3); this.vel = new Float32Array(capacity * 3);
+    this.life = new Float32Array(capacity); this.maxLife = new Float32Array(capacity);
+    this.size = new Float32Array(capacity); this.grow = new Float32Array(capacity); this.rot = new Float32Array(capacity); this.rotV = new Float32Array(capacity);
+    this.seed = new Float32Array(capacity); this.alpha = new Float32Array(capacity); this.baseAlpha = new Float32Array(capacity);
+    this.data = new Float32Array(capacity * 4); // size, age01, rot, seed
+    this.velAttr = new Float32Array(capacity * 3);
     const base = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = base.index; geo.attributes.position = base.attributes.position; geo.attributes.uv = base.attributes.uv;
@@ -77,6 +100,7 @@ export class Plume {
     geo.setAttribute('aData', new THREE.InstancedBufferAttribute(this.data, 4).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(this.alpha, 1).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aVel', new THREE.InstancedBufferAttribute(this.velAttr, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.instanceCount = 0;
     this.geo = geo;
     this.mat = new THREE.ShaderMaterial({
       uniforms: {
@@ -144,22 +168,35 @@ export class Plume {
       transparent: true, depthWrite: false, depthTest: true, blending: THREE.NormalBlending,
     });
     this.mesh = new THREE.Mesh(geo, this.mat); this.mesh.frustumCulled = false; this.mesh.renderOrder = 1;
-    this.head = 0;
+    this.count = 0; this.head = 0;
   }
   emit(x, y, z, vx, vy, vz, size, grow, life, alpha = 0.5, smoke = false) {
-    const i = this.head; this.head = (this.head + 1) % this.max;
+    let i;
+    if (this.count < this.max) i = this.count++;
+    else { i = this.head; this.head = (this.head + 1) % this.max; }
     this.pos[i * 3] = x; this.pos[i * 3 + 1] = y; this.pos[i * 3 + 2] = z;
     this.vel[i * 3] = vx; this.vel[i * 3 + 1] = vy; this.vel[i * 3 + 2] = vz;
     this.life[i] = life; this.maxLife[i] = life; this.size[i] = size; this.grow[i] = grow;
     this.rot[i] = Math.random() * 6.283; this.rotV[i] = (Math.random() - 0.5) * 1.2;
     const encodedAlpha = smoke ? -Math.abs(alpha) : Math.abs(alpha);
     this.seed[i] = Math.random(); this.alpha[i] = encodedAlpha; this.baseAlpha[i] = encodedAlpha;
+    this.geo.instanceCount = this.count;
+  }
+  remove(i) {
+    const last = --this.count;
+    if (i === last) return;
+    const a = i * 3, b = last * 3;
+    this.pos[a] = this.pos[b]; this.pos[a + 1] = this.pos[b + 1]; this.pos[a + 2] = this.pos[b + 2];
+    this.vel[a] = this.vel[b]; this.vel[a + 1] = this.vel[b + 1]; this.vel[a + 2] = this.vel[b + 2];
+    this.life[i] = this.life[last]; this.maxLife[i] = this.maxLife[last]; this.size[i] = this.size[last]; this.grow[i] = this.grow[last];
+    this.rot[i] = this.rot[last]; this.rotV[i] = this.rotV[last]; this.seed[i] = this.seed[last]; this.alpha[i] = this.alpha[last]; this.baseAlpha[i] = this.baseAlpha[last];
   }
   update(dt, t) {
     const p = this.pos, v = this.vel, d = this.data;
     this.mat.uniforms.uTime.value = t;
-    for (let i = 0; i < this.max; i++) {
-      if (this.life[i] <= 0) { this.alpha[i] = 0; d[i * 4] = 0; p[i * 3 + 1] = -100; continue; }
+    let i = 0;
+    while (i < this.count) {
+      if (this.life[i] <= 0) { this.remove(i); continue; }
       this.life[i] -= dt;
       const smoke = this.baseAlpha[i] < 0;
       v[i * 3 + 1] += (smoke ? 0.32 : -0.55) * dt;
@@ -171,11 +208,19 @@ export class Plume {
         if (p[i * 3 + 1] < floor) { p[i * 3 + 1] += (floor - p[i * 3 + 1]) * Math.min(1, dt * 6); v[i * 3 + 1] = Math.max(v[i * 3 + 1], 0); }
       }
       this.size[i] += this.grow[i] * dt; this.rot[i] += this.rotV[i] * dt;
+      if (this.life[i] <= 0) { this.remove(i); continue; }
       const age = 1 - this.life[i] / this.maxLife[i];
       d[i * 4] = this.size[i]; d[i * 4 + 1] = age; d[i * 4 + 2] = this.rot[i]; d[i * 4 + 3] = this.seed[i];
       this.velAttr[i * 3] = v[i * 3]; this.velAttr[i * 3 + 1] = v[i * 3 + 1]; this.velAttr[i * 3 + 2] = v[i * 3 + 2];
       this.alpha[i] = this.baseAlpha[i] * Math.min(1, age * 5.0);
+      i++;
     }
-    this.geo.attributes.aPos.needsUpdate = true; this.geo.attributes.aData.needsUpdate = true; this.geo.attributes.aAlpha.needsUpdate = true; this.geo.attributes.aVel.needsUpdate = true;
+    this.geo.instanceCount = this.count;
+    if (this.count) {
+      updateAttributePrefix(this.geo.attributes.aPos, this.count * 3);
+      updateAttributePrefix(this.geo.attributes.aData, this.count * 4);
+      updateAttributePrefix(this.geo.attributes.aAlpha, this.count);
+      updateAttributePrefix(this.geo.attributes.aVel, this.count * 3);
+    }
   }
 }

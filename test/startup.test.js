@@ -28,6 +28,20 @@ test('older-hardware profiles do not block on optional models or the full shader
   }
 });
 
+test('older-hardware profiles allocate smaller bounded weather and spray pools', () => {
+  const fallback = startupPlan('fallback').effectBudget;
+  const performance = startupPlan('performance').effectBudget;
+  const balanced = startupPlan('balanced').effectBudget;
+  const cinematic = startupPlan('cinematic').effectBudget;
+  for (const key of ['spray', 'plume', 'rain', 'hail']) {
+    assert.ok(fallback[key] < performance[key]);
+    assert.ok(performance[key] < balanced[key]);
+    assert.equal(balanced[key], cinematic[key]);
+  }
+  assert.deepEqual(cinematic, { spray: 12000, plume: 2600, rain: 2200, hail: 720 });
+  assert.ok(Object.isFrozen(fallback));
+});
+
 test('startup readiness distinguishes a usable local tile from a completely settled stream', () => {
   const state = { settled: false, localVisible: true };
   assert.equal(startupTerrainReady('local', state), true);
