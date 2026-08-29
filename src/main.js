@@ -239,6 +239,7 @@ async function init() {
   environment.onLightning = strike => hazards.lightning(strike);
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio, currents, phys, terrain });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
+  environment.radio = radio;
   hazards.radio = radio;
   ecology.radio = radio;
   condition.radio = radio; life.traffic.radio = radio;

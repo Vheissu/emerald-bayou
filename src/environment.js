@@ -40,6 +40,61 @@ export function rainbowResponse(current = 0, target = 0, dt = 0) {
   return clamp(to + (from - to) * Math.exp(-seconds * rate));
 }
 
+// One hurricane is a passage over the boat, not a flat weather preset. The retained output object lets the
+// render loop drive every existing weather system without allocating a new phase snapshot each frame.
+export function hurricanePassage(progress = 0, out = {}) {
+  const p = clamp(Number(progress) || 0);
+  const frontWall = smooth(0.12, 0.23, p) * (1 - smooth(0.38, 0.45, p));
+  const backWall = smooth(0.55, 0.63, p) * (1 - smooth(0.81, 0.91, p));
+  const eyewall = Math.max(frontWall, backWall);
+  const eye = smooth(0.385, 0.45, p) * (1 - smooth(0.55, 0.615, p));
+  const leadingBands = lerp(0.62, 0.84, smooth(0, 0.18, p));
+  const trailingBands = lerp(0.84, 0.56, smooth(0.82, 1, p));
+  const background = p < 0.5 ? leadingBands : trailingBands;
+  const rainBands = p < 0.5 ? lerp(0.54, 0.8, smooth(0, 0.18, p)) : lerp(0.78, 0.44, smooth(0.82, 1, p));
+  const seaBands = p < 0.5 ? lerp(0.66, 0.84, smooth(0, 0.18, p)) : lerp(0.86, 0.7, smooth(0.82, 1, p));
+  out.progress = p;
+  out.phase = p < 0.16 ? 'outer-bands' : p < 0.42 ? 'front-eyewall' : p < 0.58 ? 'eye' : p < 0.91 ? 'back-eyewall' : 'trailing-bands';
+  out.eye = eye;
+  out.eyewall = eyewall;
+  out.windScale = lerp(background, 1.08, eyewall);
+  out.rainScale = lerp(rainBands, 1.12, eyewall);
+  out.seaScale = lerp(seaBands, 1.06, eyewall);
+  out.windShift = Math.PI * smooth(0.39, 0.61, p);
+  out.pressureHpa = Math.round(p <= 0.5 ? lerp(1004, 976, smooth(0, 0.5, p)) : lerp(976, 1001, smooth(0.5, 1, p)));
+  return out;
+}
+
+export function applyHurricanePassage(values, passage, blend = 1) {
+  const t = clamp(Number(blend) || 0), eye = passage.eye || 0, wall = passage.eyewall || 0;
+  const wind = lerp(values.wind * passage.windScale, 3.2, eye);
+  const rain = lerp(clamp(values.rain * passage.rainScale), 0.015, eye);
+  const sea = lerp(values.sea * passage.seaScale, 1.62, eye);
+  const cloud = lerp(values.cloud, 0.58, eye);
+  const hail = values.hail * lerp(0.2, 0.72, wall) * (1 - eye);
+  const fog = lerp(values.fog, 0.00034, eye);
+  const exposure = lerp(values.exposure, 0.97, eye);
+  const lightning = lerp(values.lightning, 0.035, eye);
+  const storm = lerp(clamp(0.72 + passage.windScale * 0.26), 0.32, eye);
+  values.wind = lerp(values.wind, wind, t);
+  values.rain = lerp(values.rain, rain, t);
+  values.sea = lerp(values.sea, sea, t);
+  values.cloud = lerp(values.cloud, cloud, t);
+  values.hail = lerp(values.hail, hail, t);
+  values.fog = lerp(values.fog, fog, t);
+  values.exposure = lerp(values.exposure, exposure, t);
+  values.lightning = lerp(values.lightning, lightning, t);
+  values.storm = lerp(values.storm, storm, t);
+  return values;
+}
+
+const HURRICANE_ALERTS = {
+  'front-eyewall': ['Leading eyewall', 'The strongest wind and blinding rain are closing over the channel.'],
+  eye: ['Eye overhead', 'Do not trust the calm. Surge and rough water remain; the wind will return from the opposite quarter.'],
+  'back-eyewall': ['Backside eyewall', 'Wind reversing. Loose debris will move from the opposite quarter.'],
+  'trailing-bands': ['Eyewall clear', 'The worst wind has passed, but surge and trailing squalls remain.'],
+};
+
 // Wind values are metres per second. A hurricane is intentionally uncommon in the natural
 // sequence, but it is a fully simulated state rather than a cosmetic preset.
 const WEATHER = {
@@ -180,7 +235,7 @@ export class Environment {
   constructor(o) {
     Object.assign(this, o); // scene, fxScene, camera, terrain, world, water, sky, sun, hemi, pipeline, wind, boat, audio, game
     const saved = this.game.save.environment || {};
-    const savedMinutes = Number(saved.minutes), savedRemaining = Number(saved.remaining), savedWind = Number(saved.windAngle), savedMix = Number(saved.mix);
+    const savedMinutes = Number(saved.minutes), savedRemaining = Number(saved.remaining), savedDuration = Number(saved.duration), savedWind = Number(saved.windAngle), savedMix = Number(saved.mix);
     this.minutes = Number.isFinite(savedMinutes) && savedMinutes >= 0 ? Math.min(savedMinutes, 1440 * 36500) : 17 * 60 + 5; // a full day takes thirty real minutes
     this.minutesPerSecond = 0.8;
     this.key = WEATHER[saved.key] ? saved.key : 'fair';
@@ -189,7 +244,12 @@ export class Environment {
     this.values = {}; mixedWeather(this.values, this.from, this.to, this.mix);
     this.restrictedVisibility = smooth(0.00085, 0.0029, this.values.fog);
     this.remaining = Number.isFinite(savedRemaining) ? clamp(savedRemaining, 0, 600) : 95;
+    const [durationLo, durationHi] = WEATHER[this.key].duration, inferredDuration = (durationLo + durationHi) * 0.5;
+    this.weatherDuration = Number.isFinite(savedDuration) && savedDuration >= this.remaining ? clamp(savedDuration, 1, 600) : Math.max(this.remaining, inferredDuration);
     this.windAngle = Number.isFinite(savedWind) ? Math.atan2(Math.sin(savedWind), Math.cos(savedWind)) : 0.7;
+    this.localWindAngle = this.windAngle; this.hurricaneBlend = 0;
+    this.hurricane = { phase: '', progress: 0, eye: 0, eyewall: 0, windScale: 1, rainScale: 1, seaScale: 1, windShift: 0, pressureHpa: 1004 };
+    this.lastHurricanePhase = ''; this.updateHurricanePassage(false);
     this.gust = 1; this.waterLevel = 0; this.tideRate = 0; this.daylight = 0; this.night = 1; this.syncClockAndTide(); this.persistT = 10;
     this.rainbowMoisture = smooth(0.08, 0.72, this.values.rain); this.rainbow = 0; this.rainbowOverride = null;
     this.navVisibility = { port: true, starboard: true, stern: true }; this.hornCooldown = 0;
@@ -265,7 +325,12 @@ export class Environment {
     const h = Math.floor(this.hour), m = Math.floor((this.hour - h) * 60), ap = h >= 12 ? 'PM' : 'AM', hh = h % 12 || 12;
     return `${hh}:${String(m).padStart(2, '0')} ${ap}`;
   }
-  weatherLabel() { return WEATHER[this.key].label; }
+  weatherLabel() {
+    if (this.key !== 'hurricane') return WEATHER[this.key].label;
+    if (this.hurricane.phase === 'eye') return 'Hurricane eye';
+    if (this.hurricane.phase === 'front-eyewall' || this.hurricane.phase === 'back-eyewall') return 'Hurricane eyewall';
+    return 'Hurricane bands';
+  }
   tideLabel() {
     const tideFt = this.waterLevel * FT;
     return `${this.tideRate >= 0 ? 'Rising' : 'Falling'} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
@@ -278,6 +343,7 @@ export class Environment {
       from: weatherSnapshot(this.from, WEATHER[this.key]),
       mix: this.mix,
       remaining: this.remaining,
+      duration: this.weatherDuration,
       windAngle: this.windAngle,
       savedAt: Date.now(),
     };
@@ -296,15 +362,50 @@ export class Environment {
   rainbowSnapshot() {
     return { intensity: this.rainbow, moisture: this.rainbowMoisture, forced: this.rainbowOverride !== null };
   }
+  hurricaneSnapshot() {
+    const H = this.hurricane;
+    return { phase: H.phase, progress: H.progress, eye: H.eye, eyewall: H.eyewall, pressureHpa: H.pressureHpa, windShift: H.windShift, duration: this.weatherDuration, remaining: this.remaining };
+  }
+  updateHurricanePassage(announce = false) {
+    const H = this.hurricane;
+    if (this.key !== 'hurricane') {
+      H.phase = ''; H.progress = 0; H.eye = 0; H.eyewall = 0; H.windScale = 1; H.rainScale = 1; H.seaScale = 1; H.windShift = 0; H.pressureHpa = 1004;
+      this.hurricaneBlend = 0; this.localWindAngle = this.windAngle; this.lastHurricanePhase = '';
+      return H;
+    }
+    hurricanePassage(1 - this.remaining / Math.max(1, this.weatherDuration), H);
+    this.hurricaneBlend = smooth(0.5, 1, this.mix);
+    applyHurricanePassage(this.values, H, this.hurricaneBlend);
+    this.localWindAngle = this.windAngle + H.windShift * this.hurricaneBlend;
+    if (H.phase !== this.lastHurricanePhase) {
+      this.lastHurricanePhase = H.phase;
+      const warning = HURRICANE_ALERTS[H.phase];
+      if (announce && warning && this.hurricaneBlend > 0.45) {
+        this.alert(warning[0], warning[1], H.phase === 'eye' || H.phase === 'back-eyewall' ? 7 : 5.5);
+        this.radio?.hurricanePhaseCall(H.phase);
+      }
+    }
+    return H;
+  }
+  setHurricaneProgress(progress = 0) {
+    const p = clamp(Number(progress) || 0);
+    if (this.key !== 'hurricane') this.setWeather('hurricane', true, false);
+    else { this.from = { ...WEATHER.hurricane }; this.to = { ...WEATHER.hurricane }; this.mix = 1; mixedWeather(this.values, this.from, this.to, 1); }
+    this.weatherDuration = Math.max(1, this.weatherDuration || 200); this.remaining = this.weatherDuration * (1 - p); this.lastHurricanePhase = '';
+    mixedWeather(this.values, this.from, this.to, this.mix); this.updateHurricanePassage(true); this.syncClockAndTide(); this.persistState(true);
+    return this.hurricaneSnapshot();
+  }
   setWeather(key, instant = false, announce = true) {
     if (!WEATHER[key]) return;
     const surgeStep = instant ? WEATHER[key].surge - (this.values.surge || 0) : 0;
+    if (this.key === 'hurricane') this.windAngle = Math.atan2(Math.sin(this.localWindAngle), Math.cos(this.localWindAngle));
     this.from = { ...this.values }; this.to = { ...WEATHER[key] }; this.key = key; this.mix = instant ? 1 : 0;
-    const [a, b] = WEATHER[key].duration; this.remaining = a + Math.random() * (b - a);
+    const [a, b] = WEATHER[key].duration; this.remaining = a + Math.random() * (b - a); this.weatherDuration = this.remaining;
+    this.lastHurricanePhase = ''; this.hurricaneBlend = 0; this.localWindAngle = this.windAngle;
     // F8 is a visual test hook. Carry a floating hull with an instantaneous debug surge so the
     // one-frame water-level jump is not misread as a five-foot stunt; natural transitions stay gradual.
     if (instant && this.phys && Math.abs(surgeStep) > 0.001 && this.phys.wet > 0.15) { this.phys.y += surgeStep; this.phys.prevFloor = null; this.phys.vy *= 0.35; }
-    if (instant) { mixedWeather(this.values, this.from, this.to, 1); this.syncClockAndTide(); }
+    if (instant) { mixedWeather(this.values, this.from, this.to, 1); this.updateHurricanePassage(false); this.syncClockAndTide(); }
     if (instant && WEATHER[key].lightning > 0.4) this.lightningT = Math.min(this.lightningT, 1.2);
     if (announce) this.alert(WEATHER[key].label, WEATHER[key].call, key === 'hurricane' ? 7 : 5);
     this.persistState(true);
@@ -396,16 +497,18 @@ export class Environment {
       if (this.key === 'fog' && clockHour >= 8.15 && clockHour < 11.5) this.remaining = Math.min(this.remaining, 18);
       if (this.remaining <= 0) this.chooseWeather();
       if (this.mix < 1) this.mix = Math.min(1, this.mix + step / this.transition);
-      mixedWeather(this.values, this.from, this.to, this.mix);
     }
+    mixedWeather(this.values, this.from, this.to, this.mix);
+    this.updateHurricanePassage(step > 0);
     this.syncClockAndTide();
 
     const V = this.values;
     this.restrictedVisibility = smooth(0.00085, 0.0029, V.fog);
     this.windAngle += step * (0.003 + V.wind * 0.00016) + Math.sin(realTime * 0.019) * step * 0.0015;
+    this.localWindAngle = this.windAngle + (this.key === 'hurricane' ? this.hurricane.windShift * this.hurricaneBlend : 0);
     this.gust = 0.78 + 0.22 * Math.sin(realTime * 0.37) + 0.13 * Math.sin(realTime * 1.11 + 1.7) + 0.07 * Math.sin(realTime * 2.73);
     this.gust = clamp(this.gust, 0.58, 1.18);
-    this.windDir.set(Math.cos(this.windAngle), 0, Math.sin(this.windAngle));
+    this.windDir.set(Math.cos(this.localWindAngle), 0, Math.sin(this.localWindAngle));
     this.wind.set(this.windDir.x, clamp(0.32 + V.wind * this.gust / 16, 0.35, 2.65), this.windDir.z);
 
     const solar = (this.hour - 6) / 24 * Math.PI * 2;
@@ -451,7 +554,7 @@ export class Environment {
     this.sky.uniforms.lightDir.value.copy(this.lightDir); this.sky.uniforms.windDir.value.set(this.windDir.x, this.windDir.z); this.sky.uniforms.windSpeed.value = V.wind;
     this.sky.uniforms.daylight.value = daylight; this.sky.uniforms.storm.value = V.storm; this.sky.uniforms.flash.value = this.flash; this.sky.uniforms.cover.value = V.cloud; this.sky.uniforms.rainbow.value = this.rainbow;
 
-    this.water.setConditions({ level: this.waterLevel, seaState: V.sea, windAngle: this.windAngle, rain: V.rain, hail: V.hail, wind: V.wind });
+    this.water.setConditions({ level: this.waterLevel, seaState: V.sea, windAngle: this.localWindAngle, rain: V.rain, hail: V.hail, wind: V.wind });
     this.water.uniforms.sunDir.value.copy(this.lightDir);
     this.water.uniforms.sunIntensity.value = Math.max(0.025, useMoon ? moonLight * 2.1 : daylight * 1.55 * stormShade) + this.flash * 2;
     this.water.uniforms.sunColor.value.copy(this.sun.color);
@@ -492,11 +595,12 @@ export class Environment {
   renderHud() {
     if (!this.el) return;
     const h = Math.floor(this.hour), m = Math.floor((this.hour - h) * 60), ap = h >= 12 ? 'PM' : 'AM', hh = h % 12 || 12;
-    const from = (this.windAngle + Math.PI) % (Math.PI * 2), dirs = ['E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'];
+    const from = ((this.localWindAngle + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2), dirs = ['E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'];
     const dir = dirs[Math.round(from / (Math.PI * 2) * 8) % 8];
     const tideFt = this.waterLevel * FT, tide = `${this.tideRate >= 0 ? 'Rising' : 'Falling'} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
     const lunarRange = this.tideRange > 0.94 ? ' · spring tide' : this.tideRange < 0.76 ? ' · neap tide' : '';
+    const pressure = this.key === 'hurricane' ? ` · ${this.hurricane.pressureHpa} hPa` : '';
     const current = this.currentField ? ` · ${this.currentField.hud()}` : '';
-    this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${WEATHER[this.key].label}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${current}</div>`;
+    this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${this.weatherLabel()}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${pressure}${current}</div>`;
   }
 }
