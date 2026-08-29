@@ -14,6 +14,7 @@ export class BoatCondition {
       bilge: clamp(Number(saved.bilge ?? 0), 0, 1),
     };
     this.maxFuel = 18; this.enabled = false; this.serviceHere = null; this.towPending = false;
+    this.towStage = ''; this.towT = 0; this.towHold = 0; this.traffic = null; this.radio = null;
     this.damageCd = 0; this.persistT = 8; this.hudT = 0; this.misfireT = 4; this.powerCut = 0; this.warned = {};
     // Floodwater settles to one side of the hull. Keep the side deterministic across reloads without adding save data.
     this.listSide = Math.sin((this.startX || 0) * 0.19 + (this.startZ || 0) * 0.13) >= 0 ? 1 : -1;
@@ -91,14 +92,43 @@ export class BoatCondition {
 
   tow() {
     if (this.towPending || !this.needsTow()) return;
-    this.towPending = true; this.audio.warn(); this.game.toast('Tow on the radio', 'Hold position. They are coming from the tower.', 2.8);
+    this.towPending = true; this.towStage = 'inbound'; this.towT = 0; this.towHold = 0; this.audio.warn();
+    const traffic = this.traffic || this.game.life?.traffic, dispatched = traffic?.requestTow?.() || false;
+    this.game.toast('Tow on the radio', dispatched ? 'FWC 27 is turning toward you. Hold position.' : 'The tower has your position. Hold with the boat.', 3);
+    if (dispatched) this.radio?.transmit({ channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Tower Boat, twenty-seven copies disabled hull. Hold position and leave room on the approach.', priority: 4, key: 'tow:dispatch', cooldown: 0 });
+    else this.finishTow(true);
+  }
+
+  finishTow(fallback = false) {
+    if (!this.towPending || this.towStage === 'moving') return;
+    const traffic = this.traffic || this.game.life?.traffic; traffic?.cancelTow?.(); this.towStage = 'moving';
+    if (!fallback) {
+      this.audio.checkpoint(); this.game.toast('Tow line aboard', 'Twenty-seven has the bow. Securing for the run home.', 2.8);
+      this.radio?.transmit({ channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Line is aboard and the tower boat is secure. We are taking the slow water home.', priority: 3, key: 'tow:line-aboard', cooldown: 0 });
+    }
     this.game.fadeTo(() => {
       const S = this.state, charge = Math.min(120, Math.max(0, this.game.save.cash));
       this.phys.reset(this.startX, this.startZ, 0); this.phys.y = this.water.waveHeight(this.startX, this.startZ, 0);
       S.fuel = Math.max(S.fuel, 4); S.hull = Math.max(S.hull, 55); S.engine = Math.max(S.engine, 50); S.bilge = 0;
-      if (charge) this.game.addCash(-charge); this.game.persist(); this.towPending = false; this.warned = {};
+      if (charge) this.game.addCash(-charge); this.game.persist(); this.towPending = false; this.towStage = ''; this.towT = 0; this.towHold = 0; this.warned = {};
       this.game.toast('Back at the tower', charge ? `Tow and emergency work · $${charge}` : 'They will settle up with you later.', 3.2);
     });
+  }
+
+  updateTow(dt) {
+    if (!this.towPending || this.towStage === 'moving') return;
+    const traffic = this.traffic || this.game.life?.traffic, A = traffic?.towStatus?.(); this.towT += dt;
+    if (!this.needsTow()) {
+      traffic?.cancelTow?.(); this.towPending = false; this.towStage = ''; this.towT = 0; this.towHold = 0; return;
+    }
+    if (!A || A.failed || !A.active || this.towT > 95) { this.finishTow(true); return; }
+    if (A.arrived) {
+      if (this.towStage !== 'line') {
+        this.towStage = 'line'; this.towHold = 0; this.audio.warn(); this.game.toast('FWC 27 alongside', 'Prop stopped. Passing the tow line.', 2.7);
+        this.radio?.transmit({ channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Twenty-seven is alongside. Tower Boat, stay seated and reach for the yellow line.', priority: 4, key: 'tow:alongside', cooldown: 0 });
+      }
+      this.towHold += dt; if (this.towHold >= 2.2) this.finishTow(false);
+    } else { this.towStage = 'inbound'; this.towHold = 0; }
   }
 
   damage(hull, engine = 0) {
@@ -227,6 +257,7 @@ export class BoatCondition {
       this.persistT -= dt; if (this.persistT <= 0) { this.persistT = 8; this.game.persist(); }
       this.updateWarnings();
     }
+    if (enabled && !this.game.paused) this.updateTow(dt);
     this.updatePower(dt);
     this.hudT -= dt; if (this.hudT <= 0) { this.hudT = 0.2; this.render(); }
   }
@@ -238,7 +269,10 @@ export class BoatCondition {
     this.el.innerHTML = row('Fuel', `${S.fuel.toFixed(1)} gal`, S.fuel / this.maxFuel) + row('Hull', `${Math.round(S.hull)}%`, S.hull / 100) + row('Engine', `${Math.round(S.engine)}%`, S.engine / 100) + (S.bilge > 0.035 ? row('Bilge', `${Math.round(S.bilge * 100)}%`, 1 - S.bilge) : '');
     this.el.classList.toggle('warn', S.fuel < 3.6 || S.hull < 50 || S.engine < 40 || S.bilge > 0.55);
     if (!this.enabled || this.game.paused) { this.promptEl.classList.remove('on'); return; }
-    if (this.serviceHere) {
+    if (this.towPending) {
+      const A = (this.traffic || this.game.life?.traffic)?.towStatus?.(), dist = A?.active ? `${Math.max(0, Math.round(A.distance * 3.28084 / 10) * 10)} ft` : '';
+      this.promptEl.innerHTML = `<b>TOW</b> ${this.towStage === 'line' ? 'FWC 27 alongside · line coming aboard' : `FWC 27 inbound${dist ? ` · ${dist}` : ''}`}`; this.promptEl.classList.add('on');
+    } else if (this.serviceHere) {
       const cost = this.estimate(this.serviceHere), note = this.serviceHere.note ? ` · ${this.serviceHere.note}` : '';
       this.promptEl.innerHTML = `<b>F</b> ${cost > 1 || S.bilge > 0.01 ? `service at ${this.serviceHere.name} · $${cost}${note}` : `boat ready · ${this.serviceHere.name}${note}`}`; this.promptEl.classList.add('on');
     } else if (this.needsTow()) { this.promptEl.innerHTML = '<b>T</b> call a tow to the tower · up to $120'; this.promptEl.classList.add('on'); }

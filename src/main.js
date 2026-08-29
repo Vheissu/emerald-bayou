@@ -194,11 +194,12 @@ async function init() {
   const encounters = new EncounterDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, plume, spray, law, reputation });
   game.encounters = encounters;
   law.onAttention = () => { if (!game.state) encounters.next = Math.min(encounters.next, 12); };
-  const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); game.condition = condition;
+  const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); condition.traffic = life.traffic; game.condition = condition;
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   environment.onLightning = strike => hazards.lightning(strike);
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, audio });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
+  condition.radio = radio;
   const incidents = new WorldIncidents({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition, encounters });
   const story = new StoryDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, radio, law, reputation, condition, encounters, incidents, hazards });
   game.incidents = incidents; game.story = story; radio.incidents = incidents; radio.story = story;
