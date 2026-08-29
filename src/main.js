@@ -16,7 +16,7 @@ import { mulberry32 } from './noise.js';
 import { Game } from './game.js';
 import { crabFloat, fuelDrum, wreck, shack, kayak } from './markers.js';
 import { Tricks } from './tricks.js';
-import { World } from './world.js';
+import { World, disposeDetachedGeometries } from './world.js';
 import { WorldMap } from './worldmap.js';
 import { Life } from './life.js';
 import { pickSite, buildSite } from './sites.js';
@@ -527,7 +527,7 @@ async function init() {
   const t0 = performance.now();
   await Promise.all([preload(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a']), new Promise(r => { const poll = () => { if ((terrain.settled() && performance.now() - t0 > 800) || performance.now() - t0 > 20000) r(); else setTimeout(poll, 100); }; poll(); })]);
   await new Promise(r => setTimeout(r, 250)); // one more frame with the models in, so their programs are compiled
-  scene.remove(warm); skiff.mesh.visible = false; for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
+  scene.remove(warm); window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false; for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
   document.getElementById('loading').remove();
   startEl.classList.remove('hidden');
 }

@@ -16,6 +16,19 @@ const FIRST = ['Turner', 'Cooter', 'Mullet', 'Lostman', 'Chokoloskee', 'Sawgrass
 const SECOND = ['Camp', 'Landing', 'Fish Camp', 'Station', 'Bend', 'Dock', 'Camp', 'Landing'];
 const hash2 = (i, j) => { let h = (i * 374761393 + j * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return (h ^ (h >>> 16)) >>> 0; };
 
+// Removing an Object3D does not release its WebGL buffers. Dispose only geometry that is no longer referenced by a
+// retained render tree; shared skiffs, people, models and cached props remain live and are never invalidated.
+export function disposeDetachedGeometries(root, ...retainedRoots) {
+  const retained = new Set(), disposed = new Set();
+  for (const retainedRoot of retainedRoots) retainedRoot?.traverse?.(o => { if (o.geometry) retained.add(o.geometry); });
+  root?.traverse?.(o => {
+    const geometry = o.geometry;
+    if (!geometry || retained.has(geometry) || disposed.has(geometry)) return;
+    disposed.add(geometry); geometry.dispose();
+  });
+  return disposed.size;
+}
+
 export class World {
   constructor(terrain, scene, waveFn) {
     this.T = terrain; this.scene = scene; this.waveFn = waveFn;
@@ -24,7 +37,9 @@ export class World {
     this.checkT = 0; this.collected = new Set(); this.phys = null; this.wind = null;
     this.fx = null; // { plume, spray, audio, fish } from main
     this.stampList = []; this.obLevel = 0; this.truckLevel = 0; this.onShot = null;
+    this.disposedGeometries = 0;
   }
+  releaseGeometry(root) { const n = disposeDetachedGeometries(root, this.scene); this.disposedGeometries += n; return n; }
   // ---- camps ----
   campAt(ci, cj) {
     const key = `${ci},${cj}`;
@@ -155,7 +170,7 @@ export class World {
   stamps(out) { for (const s of this.stampList) out.push(s); }
   collectTrap(tr) {
     this.collected.add(tr.key);
-    const live = this.liveTraps.get(tr.key); if (live) { this.scene.remove(live); this.liveTraps.delete(tr.key); }
+    const live = this.liveTraps.get(tr.key); if (live) { this.scene.remove(live); this.releaseGeometry(live); this.liveTraps.delete(tr.key); }
   }
 
   // ---- streaming ----
@@ -165,12 +180,12 @@ export class World {
       this.checkT = 0.5;
       const camps = this.campsNear(bx, bz, 1500);
       for (const c of camps) if (!this.liveCamps.has(c.key)) { const g = this.buildCamp(c); this.scene.add(g); this.liveCamps.set(c.key, g); if (this.phys) this.phys.addObs('camp:' + c.key, this.campColliders(c)); }
-      for (const [key, g] of this.liveCamps) { const c = this.campCells.get(key); if (Math.hypot(c.x - bx, c.z - bz) > 1800) { this.scene.remove(g); this.liveCamps.delete(key); if (this.phys) this.phys.removeObs('camp:' + key); } }
+      for (const [key, g] of this.liveCamps) { const c = this.campCells.get(key); if (Math.hypot(c.x - bx, c.z - bz) > 1800) { this.scene.remove(g); this.releaseGeometry(g); this.liveCamps.delete(key); if (this.phys) this.phys.removeObs('camp:' + key); } }
       for (const st of this.sitesNear(bx, bz, 1200)) if (!this.liveSites.has(st.key)) { const g = buildSite(st, this.T); this.scene.add(g); this.liveSites.set(st.key, { site: st, g }); if (this.phys && st.colliders) this.phys.addObs('site:' + st.key, st.colliders); }
-      for (const [key, l] of this.liveSites) if (Math.hypot(l.site.x - bx, l.site.z - bz) > 1450) { this.scene.remove(l.g); this.liveSites.delete(key); if (this.phys) this.phys.removeObs('site:' + key); }
+      for (const [key, l] of this.liveSites) if (Math.hypot(l.site.x - bx, l.site.z - bz) > 1450) { this.scene.remove(l.g); this.releaseGeometry(l.g); this.liveSites.delete(key); if (this.phys) this.phys.removeObs('site:' + key); }
       const traps = this.trapsNear(bx, bz, 500);
       for (const tr of traps) if (!this.liveTraps.has(tr.key)) { const m = crabFloat(); m.position.set(tr.x, 0, tr.z); this.scene.add(m); this.liveTraps.set(tr.key, m); }
-      for (const [key, m] of this.liveTraps) { const tr = this.trapCells.get(key); if (Math.hypot(tr.x - bx, tr.z - bz) > 620) { this.scene.remove(m); this.liveTraps.delete(key); } }
+      for (const [key, m] of this.liveTraps) { const tr = this.trapCells.get(key); if (Math.hypot(tr.x - bx, tr.z - bz) > 620) { this.scene.remove(m); this.releaseGeometry(m); this.liveTraps.delete(key); } }
     }
     for (const [key, m] of this.liveTraps) { const tr = this.trapCells.get(key); m.position.y = this.waveFn(tr.x, tr.z, t) - 0.12; m.rotation.z = Math.sin(t * 1.3 + tr.ph) * 0.12; m.rotation.x = Math.cos(t * 0.9 + tr.ph) * 0.1; }
     this.stampList.length = 0;
