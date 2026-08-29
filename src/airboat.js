@@ -335,6 +335,7 @@ export class AirboatPhysics {
     this.noseIn = 0; this.tailIn = 0; this.wipeT = 0; this.stuffT = 0;
     this.lastSurfVel = 0; this.spinIn = 0;
     this.topSpeed = 0;
+    this.windHeel = 0; this.apparentWind = 0; this.crosswind = 0;
     this.current = new THREE.Vector2(); this.waterSpeed = 0;
     this._g = new THREE.Vector2(); this._n = new THREE.Vector2();
   }
@@ -368,6 +369,7 @@ export class AirboatPhysics {
     this.pos.set(x, z); this.vel.set(0, 0); this.heading = heading; this.angVel = 0; this.y = 0; this.vy = 0;
     this.pitch = this.roll = this.pitchVel = this.rollVel = 0; this.prevFloor = null; this.airTime = 0; this.airPeak = 0; this.lastFloat.set(x, z);
     this.airborne = false; this.landedFrame = false; this.takeoffFrame = false; this.landQuality = ''; this.wipeT = 0; this.stuffT = 0; this.impact = 0; this.hit = 0;
+    this.windHeel = 0; this.apparentWind = 0; this.crosswind = 0;
     this.current.set(0, 0); this.waterSpeed = 0;
   }
 
@@ -540,10 +542,10 @@ export class AirboatPhysics {
       // no aero surfaces: the hull keeps the rotation it left the lip with, drifting slowly toward the flight path,
       // and the driver can lean (S = nose up, W = nose down) to set up the landing
       tgtPitch = Math.atan2(this.vy, Math.max(this.speed, 3)) * 0.25;
-      tgtRoll = this.angVel * 0.08;
+      tgtRoll = this.angVel * 0.08 + this.windHeel * 0.4;
     } else {
       tgtPitch = accelF * 0.012 * wet + Math.min(vf, 14) * 0.0035 * wet + surfPitch + (this.damageTrim || 0) * wet;
-      tgtRoll = -vl * 0.02 * wet + this.angVel * vf * 0.012 + waveRoll + landRoll + (this.damageList || 0) * wet;
+      tgtRoll = -vl * 0.02 * wet + this.angVel * vf * 0.012 + waveRoll + landRoll + (this.damageList || 0) * wet + this.windHeel;
     }
     const spring = (v, tgt, vel, k, d) => { const a = (tgt - v) * k - vel * d; return vel + a * dt; };
     if (this.takeoffFrame) {

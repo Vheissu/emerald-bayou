@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { lunarAgeAt, lunarIllumination, lunarPhaseAt, lunarPhaseName, lunarTideRange } from './lunar.js';
 import { updateAttributePrefix } from './cache.js';
 import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
+import { applyAirboatWind } from './vesselwind.js';
 
 const FT = 3.28084;
 const MPS_TO_MPH = 2.23694;
@@ -259,6 +260,7 @@ export class Environment {
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
     this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
+    this.windLoad = { ax: 0, az: 0, yaw: 0, heel: 0, apparentSpeed: 0, crosswind: 0 };
     this.makeLightning(); this.makeBoatLights(); this.makeSettlementLights();
     this.el = document.getElementById('worldState'); this.alertEl = document.getElementById('weatherAlert'); this.alertT = 0; this.hudT = 0;
     this.keyHandler = (e) => this.onKey(e); window.addEventListener('keydown', this.keyHandler);
@@ -477,10 +479,7 @@ export class Environment {
 
   applyPhysics(dt) {
     if (!dt || this.game.paused) return;
-    const p = this.phys, wind = this.values.wind * this.gust;
-    const exposure = 0.45 + 0.55 * (1 - p.wet) + Math.min(0.25, p.speed * 0.015);
-    const accel = wind * 0.0045 * exposure;
-    p.vel.x += this.windDir.x * accel * dt; p.vel.y += this.windDir.z * accel * dt;
+    applyAirboatWind(this.phys, this.windDir, this.values.wind * this.gust, dt, this.windLoad);
     if (this.values.hail > 0.35) {
       this.hailKick -= dt; if (this.hailKick <= 0) { this.hailKick = lerp(0.16, 0.65, Math.random()); this.game.shake = Math.max(this.game.shake, 0.035 + this.values.hail * 0.04); }
     }
