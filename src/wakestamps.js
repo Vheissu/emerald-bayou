@@ -1,5 +1,12 @@
 const stamp = () => ({ x: 0, z: 0, radius: 0, height: 0, foam: 0, foamRadius: 0 });
 
+export function emitWakeStamp(out, x, z, radius, height, foam = 0, foamRadius = radius) {
+  if (typeof out?.emit === 'function') return out.emit(x, z, radius, height, foam, foamRadius);
+  const item = { x, z, radius, height, foam, foamRadius };
+  out.push(item);
+  return item;
+}
+
 export class WakeStampPool {
   constructor(capacity = 32) {
     this.capacity = Math.max(1, Math.floor(Number(capacity) || 1));
@@ -31,6 +38,13 @@ export class WakeStampPool {
   }
 
   appendTo(out) {
+    if (typeof out?.emit === 'function') {
+      for (let i = 0; i < this.count; i++) {
+        const item = this.items[i];
+        out.emit(item.x, item.z, item.radius, item.height, item.foam, item.foamRadius);
+      }
+      return;
+    }
     for (let i = 0; i < this.count; i++) out.push(this.items[i]);
   }
 }

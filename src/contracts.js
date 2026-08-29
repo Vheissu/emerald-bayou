@@ -4,6 +4,7 @@ import { mulberry32 } from './noise.js';
 import { WORLD_HALF } from './heightfield.js';
 import { regionAt } from './regions.js';
 import { fmtDist } from './game.js';
+import { emitWakeStamp } from './wakestamps.js';
 
 const MPH = 2.23694;
 const RESIDENTS = ['leon', 'june', 'cal'];
@@ -695,8 +696,8 @@ export class ResidentContracts {
     for (const A of [this.rigs.patrolAgent, this.rigs.receiverAgent]) {
       if (!A.active || A.speed < 2 || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 95) continue;
       const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), sp = Math.min(1, A.speed / 11);
-      out.push({ x: A.x - fx * 1.8, z: A.z - fz * 1.8, radius: 1.1, height: 0.5 * sp, foam: 1.55 * sp, foamRadius: 1 });
-      out.push({ x: A.x + fx * 1.8, z: A.z + fz * 1.8, radius: 1, height: -0.65 * sp, foam: 0.1 * sp, foamRadius: 0.7 });
+      emitWakeStamp(out, A.x - fx * 1.8, A.z - fz * 1.8, 1.1, 0.5 * sp, 1.55 * sp, 1);
+      emitWakeStamp(out, A.x + fx * 1.8, A.z + fz * 1.8, 1, -0.65 * sp, 0.1 * sp, 0.7);
     }
   }
 

@@ -5,6 +5,7 @@ import { mulberry32 } from './noise.js';
 import { regionAt } from './regions.js';
 import { WORLD_HALF } from './heightfield.js';
 import { cachedResource, sharedResource } from './cache.js';
+import { emitWakeStamp } from './wakestamps.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -669,13 +670,13 @@ export class StormRecovery {
 
   stamps(out) {
     for (const site of this.sites) {
-      if (site.type === 'blockage' && OPEN_STAGES.has(site.stage) && Math.hypot(site.x - this.phys.pos.x, site.z - this.phys.pos.y) < 95 && Math.hypot(site.vx, site.vz) > 0.18) out.push({ x: site.x, z: site.z, radius: 2.4, height: -0.2, foam: 0.32, foamRadius: 2.2 });
+      if (site.type === 'blockage' && OPEN_STAGES.has(site.stage) && Math.hypot(site.x - this.phys.pos.x, site.z - this.phys.pos.y) < 95 && Math.hypot(site.vx, site.vz) > 0.18) emitWakeStamp(out, site.x, site.z, 2.4, -0.2, 0.32, 2.2);
       const movingWorkboat = site.type === 'blockage' && site.stage === 'marked';
       const movingRecovery = site.type === 'survivor' && site.stage === 'reported';
       if (!movingWorkboat && !movingRecovery) continue;
       const A = this.rigs.get(site.id).agent; if (!A.active || A.speed < 2 || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 95) continue;
       const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), sp = Math.min(1, A.speed / 9);
-      out.push({ x: A.x - fx * 1.8, z: A.z - fz * 1.8, radius: 1.1, height: 0.5 * sp, foam: 1.4 * sp, foamRadius: 1 });
+      emitWakeStamp(out, A.x - fx * 1.8, A.z - fz * 1.8, 1.1, 0.5 * sp, 1.4 * sp, 1);
     }
   }
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { buildSkiff } from './npc.js';
 import { regionAt } from './regions.js';
+import { emitWakeStamp } from './wakestamps.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -413,8 +414,8 @@ export class FalsePassage {
   stamps(out) {
     if (!this.chaseActive || this.agent.speed < 2 || Math.hypot(this.agent.x - this.P.phys.pos.x, this.agent.z - this.P.phys.pos.y) > 95) return;
     const A = this.agent, fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), sp = Math.min(1, A.speed / 13);
-    out.push({ x: A.x - fx * 1.8, z: A.z - fz * 1.8, radius: 1.1, height: 0.52 * sp, foam: 1.7 * sp, foamRadius: 1 });
-    out.push({ x: A.x + fx * 1.8, z: A.z + fz * 1.8, radius: 1, height: -0.67 * sp, foam: 0.1 * sp, foamRadius: 0.7 });
+    emitWakeStamp(out, A.x - fx * 1.8, A.z - fz * 1.8, 1.1, 0.52 * sp, 1.7 * sp, 1);
+    emitWakeStamp(out, A.x + fx * 1.8, A.z + fz * 1.8, 1, -0.67 * sp, 0.1 * sp, 0.7);
   }
 
   update(dt, t, enabled = true) {
