@@ -1,39 +1,83 @@
 import * as THREE from 'three';
 
-// The poacher's johnboat: flat aluminium skiff, outboard on the transom, two men and a pile of net.
+function skiffHullGeometry() {
+  const stations = [
+    { z: -2.36, top: 0.05, y: 0.17, chine: 0.015, cy: -0.2 },
+    { z: -1.72, top: 0.54, y: 0.38, chine: 0.31, cy: -0.37 },
+    { z: -0.55, top: 0.77, y: 0.44, chine: 0.56, cy: -0.47 },
+    { z: 0.75, top: 0.85, y: 0.44, chine: 0.63, cy: -0.46 },
+    { z: 1.92, top: 0.86, y: 0.41, chine: 0.64, cy: -0.41 },
+  ];
+  const p = [], tri = (a, b, c) => p.push(...a, ...b, ...c), quad = (a, b, c, d) => { tri(a, b, d); tri(b, c, d); };
+  for (let i = 0; i < stations.length - 1; i++) {
+    const a = stations[i], b = stations[i + 1];
+    quad([-a.top, a.y, a.z], [-a.chine, a.cy, a.z], [-b.chine, b.cy, b.z], [-b.top, b.y, b.z]);
+    quad([a.chine, a.cy, a.z], [a.top, a.y, a.z], [b.top, b.y, b.z], [b.chine, b.cy, b.z]);
+    quad([-a.chine, a.cy, a.z], [a.chine, a.cy, a.z], [b.chine, b.cy, b.z], [-b.chine, b.cy, b.z]);
+  }
+  const stern = stations[stations.length - 1];
+  quad([-stern.top, stern.y, stern.z], [-stern.chine, stern.cy, stern.z], [stern.chine, stern.cy, stern.z], [stern.top, stern.y, stern.z]);
+  const bow = stations[0];
+  quad([-bow.top, bow.y, bow.z], [bow.top, bow.y, bow.z], [bow.chine, bow.cy, bow.z], [-bow.chine, bow.cy, bow.z]);
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3)); geo.computeVertexNormals(); geo.computeBoundingSphere(); return geo;
+}
+
+const SKIFF_GEO = {
+  hull: skiffHullGeometry(), floor: new THREE.BoxGeometry(1.16, 0.055, 3.28), rail: new THREE.BoxGeometry(0.075, 0.075, 3.43),
+  bowRail: new THREE.BoxGeometry(1.0, 0.07, 0.08), rib: new THREE.BoxGeometry(1.38, 0.045, 0.075), bench: new THREE.BoxGeometry(1.43, 0.09, 0.34),
+  cowl: new THREE.CapsuleGeometry(0.22, 0.28, 4, 8), stripe: new THREE.BoxGeometry(0.455, 0.055, 0.46), leg: new THREE.BoxGeometry(0.12, 0.86, 0.18),
+  tiller: new THREE.CylinderGeometry(0.02, 0.02, 0.74, 6), hub: new THREE.CylinderGeometry(0.045, 0.045, 0.24, 8), blade: new THREE.BoxGeometry(0.04, 0.34, 0.075),
+  torso: new THREE.CapsuleGeometry(0.17, 0.4, 4, 8), head: new THREE.SphereGeometry(0.11, 10, 8), hat: new THREE.CylinderGeometry(0.12, 0.13, 0.1, 10),
+  legBody: new THREE.CapsuleGeometry(0.06, 0.3, 4, 6), arm: new THREE.CapsuleGeometry(0.048, 0.32, 4, 6), net: new THREE.SphereGeometry(0.4, 10, 7),
+  netCoil: new THREE.TorusGeometry(0.25, 0.028, 5, 14), fuel: new THREE.BoxGeometry(0.35, 0.3, 0.25), cleat: new THREE.BoxGeometry(0.14, 0.055, 0.045),
+};
+const SKIFF_MAT = {
+  hull: new THREE.MeshStandardMaterial({ color: 0x6f7570, roughness: 0.48, metalness: 0.74, side: THREE.DoubleSide }),
+  aluminum: new THREE.MeshStandardMaterial({ color: 0x969c96, roughness: 0.5, metalness: 0.68 }), floor: new THREE.MeshStandardMaterial({ color: 0x252a28, roughness: 0.86, metalness: 0.22 }),
+  motor: new THREE.MeshStandardMaterial({ color: 0x161918, roughness: 0.46, metalness: 0.42 }), stripe: new THREE.MeshStandardMaterial({ color: 0xc3c8c3, roughness: 0.45, metalness: 0.52 }),
+  skin: new THREE.MeshStandardMaterial({ color: 0xb98a66, roughness: 0.85 }), shirt: new THREE.MeshStandardMaterial({ color: 0x4d5a3c, roughness: 0.9 }), pants: new THREE.MeshStandardMaterial({ color: 0x2b2a26, roughness: 0.9 }),
+  capRed: new THREE.MeshStandardMaterial({ color: 0xc8442c, roughness: 0.9 }), capDark: new THREE.MeshStandardMaterial({ color: 0x303332, roughness: 0.9 }),
+  net: new THREE.MeshStandardMaterial({ color: 0x8a7a4a, roughness: 1, wireframe: true }), rope: new THREE.MeshStandardMaterial({ color: 0xa58e59, roughness: 1 }), fuel: new THREE.MeshStandardMaterial({ color: 0xc03a2b, roughness: 0.6 }),
+};
+const skiffPart = (geo, mat) => { const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; return m; };
+function skiffCrew(x, z, cap, driver = false) {
+  const p = new THREE.Group(); p.position.set(x, 0.5, z);
+  const torso = skiffPart(SKIFF_GEO.torso, SKIFF_MAT.shirt); torso.position.y = 0.42; p.add(torso);
+  const head = skiffPart(SKIFF_GEO.head, SKIFF_MAT.skin); head.position.y = 0.82; p.add(head);
+  const hat = skiffPart(SKIFF_GEO.hat, cap); hat.position.y = 0.92; p.add(hat);
+  for (const sx of [-1, 1]) {
+    const leg = skiffPart(SKIFF_GEO.legBody, SKIFF_MAT.pants); leg.position.set(sx * 0.1, 0.12, -0.15); leg.rotation.x = -1.1; p.add(leg);
+    const arm = skiffPart(SKIFF_GEO.arm, SKIFF_MAT.skin); arm.position.set(sx * 0.19, 0.48, driver ? 0.06 : -0.03); arm.rotation.x = driver ? -1.22 : -0.72; arm.rotation.z = sx * (driver ? -0.35 : -0.18); p.add(arm);
+  }
+  return p;
+}
+
+// A shallow-draft, open aluminium johnboat shared by traffic, residents, incidents and shoreline sets.
 export function buildSkiff({ crew = true } = {}) {
-  const g = new THREE.Group();
-  const alu = new THREE.MeshStandardMaterial({ color: 0x6f7570, roughness: 0.55, metalness: 0.7 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x1e2120, roughness: 0.7, metalness: 0.3 });
-  const shape = new THREE.Shape();
-  const pts = [[0, -2.3], [0.5, -2.0], [0.8, -1.2], [0.85, 1.9], [-0.85, 1.9], [-0.8, -1.2], [-0.5, -2.0]];
-  shape.moveTo(pts[0][0], -pts[0][1]); for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], -pts[i][1]); shape.closePath();
-  const hullGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.5, bevelEnabled: false }); hullGeo.rotateX(-Math.PI / 2);
-  const hull = new THREE.Mesh(hullGeo, alu); hull.castShadow = true; g.add(hull);
-  const inner = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.04, 3.9), dark); inner.position.set(0, 0.12, -0.1); g.add(inner);
-  for (const z of [-1.0, 0.4]) { const bench = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.08, 0.3), alu); bench.position.set(0, 0.42, z); g.add(bench); }
-  // outboard
-  const motor = new THREE.Group(); motor.position.set(0, 0.55, 2.0);
-  const cowl = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.5, 0.5), dark); cowl.position.y = 0.3; motor.add(cowl);
-  const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 0.2), dark); leg.position.set(0, -0.35, 0.05); motor.add(leg);
-  const tiller = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.7, 6), alu); tiller.rotation.x = Math.PI / 2; tiller.position.set(-0.15, 0.25, -0.5); motor.add(tiller);
+  const g = new THREE.Group(); g.name = 'aluminum johnboat';
+  const hull = skiffPart(SKIFF_GEO.hull, SKIFF_MAT.hull); g.add(hull);
+  const floor = skiffPart(SKIFF_GEO.floor, SKIFF_MAT.floor); floor.position.set(0, 0.07, 0.16); g.add(floor);
+  for (const side of [-1, 1]) { const rail = skiffPart(SKIFF_GEO.rail, SKIFF_MAT.aluminum); rail.position.set(side * 0.69, 0.46, 0.2); rail.rotation.y = side * 0.082; g.add(rail); }
+  const bowRail = skiffPart(SKIFF_GEO.bowRail, SKIFF_MAT.aluminum); bowRail.position.set(0, 0.43, -1.7); g.add(bowRail);
+  const ribs = new THREE.InstancedMesh(SKIFF_GEO.rib, SKIFF_MAT.aluminum, 4); const matrix = new THREE.Matrix4();
+  for (let i = 0; i < 4; i++) { matrix.makeTranslation(0, 0.22, -1.28 + i * 0.82); ribs.setMatrixAt(i, matrix); } ribs.instanceMatrix.needsUpdate = true; ribs.castShadow = ribs.receiveShadow = true; g.add(ribs);
+  for (const z of [-0.95, 0.45]) { const bench = skiffPart(SKIFF_GEO.bench, SKIFF_MAT.aluminum); bench.position.set(0, 0.49, z); g.add(bench); }
+  const cleats = new THREE.InstancedMesh(SKIFF_GEO.cleat, SKIFF_MAT.aluminum, 4);
+  for (let i = 0; i < 4; i++) { matrix.makeTranslation(i % 2 ? 0.69 : -0.69, 0.53, i < 2 ? -1.38 : 1.34); cleats.setMatrixAt(i, matrix); } cleats.instanceMatrix.needsUpdate = true; cleats.castShadow = true; g.add(cleats);
+  const motor = new THREE.Group(); motor.position.set(0, 0.51, 1.97);
+  const cowl = skiffPart(SKIFF_GEO.cowl, SKIFF_MAT.motor); cowl.scale.set(1, 0.78, 1.12); cowl.position.y = 0.29; motor.add(cowl);
+  const stripe = skiffPart(SKIFF_GEO.stripe, SKIFF_MAT.stripe); stripe.position.set(0, 0.31, -0.02); motor.add(stripe);
+  const leg = skiffPart(SKIFF_GEO.leg, SKIFF_MAT.motor); leg.position.set(0, -0.37, 0.05); motor.add(leg);
+  const tiller = skiffPart(SKIFF_GEO.tiller, SKIFF_MAT.aluminum); tiller.rotation.x = Math.PI / 2; tiller.position.set(-0.16, 0.22, -0.49); motor.add(tiller);
+  const prop = new THREE.Group(); prop.position.set(0, -0.72, 0.26);
+  const hub = skiffPart(SKIFF_GEO.hub, SKIFF_MAT.motor); hub.rotation.x = Math.PI / 2; prop.add(hub);
+  for (const r of [0, Math.PI / 2]) { const blade = skiffPart(SKIFF_GEO.blade, SKIFF_MAT.motor); blade.position.z = 0.07; blade.rotation.z = r; prop.add(blade); }
+  motor.add(prop); motor.userData.prop = prop;
   g.add(motor);
-  // two poachers: camo shirts, one at the tiller, one on the front bench
-  const skin = new THREE.MeshStandardMaterial({ color: 0xb98a66, roughness: 0.85 });
-  const shirt = new THREE.MeshStandardMaterial({ color: 0x4d5a3c, roughness: 0.9 });
-  const person = (x, z, cap) => {
-    const p = new THREE.Group(); p.position.set(x, 0.45, z);
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.4, 4, 8), shirt); torso.position.y = 0.42; p.add(torso);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), skin); head.position.y = 0.82; p.add(head);
-    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.13, 0.1, 10), new THREE.MeshStandardMaterial({ color: cap, roughness: 0.9 })); hat.position.y = 0.92; p.add(hat);
-    for (const sx of [-1, 1]) { const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.3, 4, 6), new THREE.MeshStandardMaterial({ color: 0x2b2a26, roughness: 0.9 })); leg.position.set(sx * 0.1, 0.12, -0.15); leg.rotation.x = -1.1; p.add(leg); }
-    p.traverse(o => { if (o.isMesh) o.castShadow = true; });
-    return p;
-  };
-  if (crew) { g.add(person(0.15, 1.3, 0xc8442c)); g.add(person(-0.1, -0.7, 0x3a3a3a)); }
-  const net = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 6), new THREE.MeshStandardMaterial({ color: 0x8a7a4a, roughness: 1 })); net.scale.set(1.4, 0.5, 1); net.position.set(0, 0.35, -1.6); g.add(net);
-  const fuel = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.3, 0.25), new THREE.MeshStandardMaterial({ color: 0xc03a2b, roughness: 0.6 })); fuel.position.set(0.5, 0.3, 1.2); g.add(fuel);
-  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  if (crew) { g.add(skiffCrew(0.16, 1.18, SKIFF_MAT.capRed, true)); g.add(skiffCrew(-0.1, -0.68, SKIFF_MAT.capDark)); }
+  const net = skiffPart(SKIFF_GEO.net, SKIFF_MAT.net); net.scale.set(1.32, 0.42, 0.8); net.position.set(0, 0.42, -1.52); g.add(net);
+  for (const x of [-0.24, 0.22]) { const coil = skiffPart(SKIFF_GEO.netCoil, SKIFF_MAT.rope); coil.rotation.x = Math.PI / 2; coil.position.set(x, 0.5, -1.48); g.add(coil); }
+  const fuel = skiffPart(SKIFF_GEO.fuel, SKIFF_MAT.fuel); fuel.position.set(0.5, 0.32, 1.16); g.add(fuel);
   g.userData.motor = motor;
   return g;
 }
@@ -77,7 +121,7 @@ export class SkiffAI {
     const y = this.waveFn(this.pos.x, this.pos.y, t);
     this.mesh.position.set(this.pos.x, y - 0.05, this.pos.y);
     this.mesh.rotation.set(this.pitch, this.heading, this.roll, 'YXZ');
-    this.mesh.userData.motor.rotation.y = -turn * 0.4;
+    this.mesh.userData.motor.rotation.y = -turn * 0.4; this.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + this.speed * 5);
     if (this.i >= this.path.length - 1 && Math.hypot(tgt.x - this.pos.x, tgt.z - this.pos.y) < 6) this.done = true;
   }
   // wake stamps for the water sim (only worth pushing when inside the sim window)

@@ -237,7 +237,7 @@ export class EncounterDirector {
     const flow = this.currents ? this.currents.flowAt(A.x, A.z, this._flow) : null;
     A.x += (fx * A.speed + (flow ? flow.x : 0)) * dt; A.z += (fz * A.speed + (flow ? flow.y : 0)) * dt;
     const y = this.water.waveHeight(A.x, A.z, t); A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -turn * A.speed * 0.018, 'YXZ');
-    if (A.mesh.userData.motor) A.mesh.userData.motor.rotation.y = -turn * 0.35;
+    if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
   }
 
   addBoatObstacle(A, tag = 'boat') {

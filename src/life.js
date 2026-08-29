@@ -523,7 +523,7 @@ export class Traffic {
       b.roll += ((-b.turn * b.speed * 0.02 + playerWake * wakeSide * 0.52) - b.roll) * (1 - Math.exp(-dt * 4)); b.pitch += ((b.speed * (b.kind === 'air' ? 0.004 : 0.007) + playerWake * 0.18) - b.pitch) * (1 - Math.exp(-dt * 3));
       b.mesh.position.set(b.x, wy + (b.kind === 'air' ? -0.27 : b.kind === 'john' || b.kind === 'canoe' ? -0.05 : 0), b.z); b.mesh.rotation.set(b.pitch, b.heading, b.roll, 'YXZ');
       if (b.kind === 'air') { b.prop.rotation.z += dt * (8 + b.speed * 8); b.blur.material.opacity = Math.min(0.35, b.speed / b.max * 0.4); for (const r of b.rudders) r.rotation.y = -b.turn * 0.25; }
-      else if (b.kind === 'john') b.mesh.userData.motor.rotation.y = -b.turn * 0.3;
+      else if (b.kind === 'john') { const motor = b.mesh.userData.motor; motor.rotation.y = -b.turn * 0.3; motor.userData.prop.rotation.z += dt * (6 + b.speed * 5); }
       else if (b.kind === 'canoe') paddleAnim(b.mesh, t, Math.min(1, b.speed / b.max));
       if (b.people && d < 90) for (const pp of b.people) animatePerson(pp, t, dt, null, null);
       this.updateWorkingDetails(b, t); this.identify(b, d, P.speed);

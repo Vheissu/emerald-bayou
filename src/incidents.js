@@ -192,7 +192,7 @@ export class WorldIncidents {
     if (A.groundT > 0) A.speed *= Math.exp(-dt * 1.8);
     const y = this.water.waveHeight(A.x, A.z, t);
     A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -A.turn * A.speed * 0.018, 'YXZ');
-    if (A.mesh.userData.motor) A.mesh.userData.motor.rotation.y = -A.turn * 0.35;
+    if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -A.turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
   }
 
   updateLights(t, search = false) {
