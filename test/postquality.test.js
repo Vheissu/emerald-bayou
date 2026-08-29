@@ -9,6 +9,7 @@ test('performance mode releases full-size optional post targets', () => {
   const pipeline = new Pipeline(renderer, new THREE.PerspectiveCamera(52, 16 / 9, 0.3, 7500), qualityProfile(3));
   const cinematic = pipeline.memoryStats();
   assert.equal(cinematic.surfaceMist, 1);
+  assert.equal(cinematic.lensWater, 1);
 
   const profile = qualityProfile(1);
   const ratio = pixelRatioFor(1920, 1080, 2, profile.maxDrawPixels, profile.maxDevicePixelRatio);
@@ -20,6 +21,7 @@ test('performance mode releases full-size optional post targets', () => {
   assert.equal(performance.bloom, false);
   assert.equal(performance.finalPass, false);
   assert.equal(performance.surfaceMist, 0);
+  assert.equal(performance.lensWater, 0);
   assert.equal(pipeline.aaRT.width, 1);
   assert.equal(pipeline.bloomA.width, 1);
   assert.ok(performance.estimatedAttachmentBytes < cinematic.estimatedAttachmentBytes * 0.45);

@@ -442,7 +442,7 @@ async function init() {
   const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3(), audioForward = new THREE.Vector3();
   const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2();
   const input = { throttle: 0, steer: 0, pitch: 0 };
-  const boatWetnessConditions = { dt: 0, rain: 0, spray: 0, splash: 0, wind: 0, daylight: 0 };
+  const boatWetnessConditions = { dt: 0, rain: 0, spray: 0, splash: 0, wind: 0, speed: 0, daylight: 0, windScreen: 0 };
   const clock = new THREE.Timer(); clock.connect(document);
   let time = 0, splashStamp = 0, slowT = 0, slowK = 1, fovKick = 0, airCam = 0, frameNo = 0;
   const stamps = [];
@@ -608,8 +608,11 @@ async function init() {
       boatWetnessConditions.spray = airboatSprayExposure(phys);
       boatWetnessConditions.splash = phys.wet > 0.25 && phys.impact > 1.2 ? Math.min(1, (phys.impact - 1.2) / 8) : 0;
       boatWetnessConditions.wind = environment.values.wind * environment.gust;
+      boatWetnessConditions.speed = phys.speed;
       boatWetnessConditions.daylight = environment.daylight;
+      boatWetnessConditions.windScreen = environment.windDir.x * camera.matrixWorld.elements[0] + environment.windDir.z * camera.matrixWorld.elements[2];
       updateAirboatWetness(boat, boatWetnessConditions);
+      pipeline.updateLensWeather(time, boatWetnessConditions);
     }
     currents.update(dtRaw, time, started && !game.paused);
     hazards.update(dtRaw, time, started && !game.paused);
