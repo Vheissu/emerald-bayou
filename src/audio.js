@@ -1,3 +1,5 @@
+const clampAudio = value => Math.max(0, Math.min(1, Number(value) || 0));
+
 export class EngineAudio {
   constructor() { this.ctx = null; this.windLevel = 0; this.rainLevel = 0; this.nightLevel = 0; this.stormLevel = 0; }
   start() {
@@ -77,6 +79,20 @@ export class EngineAudio {
   countdown(final = false) { this.tone(final ? 1046 : 660, final ? 0.5 : 0.15, 0.22, 'square'); }
   pickup() { this.tone(988, 0.08, 0.16, 'square'); this.tone(1480, 0.16, 0.14, 'square', 0.06); }
   warn() { this.tone(440, 0.12, 0.2, 'square'); this.tone(440, 0.12, 0.2, 'square', 0.18); }
+  // One reel bed is created on the first hooked fish and then reused. Holding the reel changes AudioParams only;
+  // releasing the key fades the same graph instead of starting another source every frame.
+  fishingReel(level = 0, tension = 0) {
+    if (!this.ctx || (!this.fishingReelGraph && level <= 0.001)) return; const ctx = this.ctx, now = ctx.currentTime;
+    if (!this.fishingReelGraph) {
+      const ratchet = ctx.createOscillator(); ratchet.type = 'square'; ratchet.frequency.value = 82;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 980; bp.Q.value = 0.8;
+      const gain = ctx.createGain(); gain.gain.value = 0; ratchet.connect(bp); bp.connect(gain); gain.connect(this.sfx); ratchet.start();
+      this.fishingReelGraph = { ratchet, bp, gain };
+    }
+    const reel = this.fishingReelGraph, active = clampAudio(level), strain = clampAudio(tension);
+    reel.gain.gain.setTargetAtTime(active * (0.022 + strain * 0.026), now, active ? 0.035 : 0.09);
+    reel.ratchet.frequency.setTargetAtTime(72 + strain * 76, now, 0.045); reel.bp.frequency.setTargetAtTime(760 + strain * 720, now, 0.08);
+  }
   // A VHF carrier opening or dropping: filtered static and the small relay click from the set in the boat.
   // Dialogue stays legible as captions; this cue makes it feel like radio traffic without synthetic speech.
   radio(open = true, priority = 1) {

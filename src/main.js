@@ -41,6 +41,7 @@ import { startupPlan, startupTerrainReady } from './startup.js';
 import { FieldDiscoveryDirector } from './discoveries.js';
 import { NavigationAids } from './navigationaids.js';
 import { DolphinPod } from './dolphins.js';
+import { Fishing } from './fishing.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -246,6 +247,8 @@ async function init() {
   const navigationAids = new NavigationAids({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition });
   const dolphins = new DolphinPod({ scene, terrain, world, water, phys, game, audio, environment, regions, plume, spray, law, reputation, radio, encounters, incidents, story, aftermath });
   game.dolphins = dolphins;
+  const fishing = new Fishing({ scene, boat: boat.group, terrain, world, water, phys, game, audio, environment, currents, regions, life });
+  game.fishing = fishing;
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
     const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
     const addMaterial = material => {
@@ -286,6 +289,7 @@ async function init() {
       fishFallbackReleased: life.fish.fallbackReleased,
       fieldDiscoveries: discoveries.resourceStats(),
       navigationAids: navigationAids.resourceStats(),
+      fishing: fishing.resourceStats(),
       feedingActivity: ecology.feedingSnapshot(),
     },
     chart: worldMap.memoryStats(),
@@ -301,7 +305,7 @@ async function init() {
       },
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
@@ -401,6 +405,7 @@ async function init() {
   };
   const showTitle = (persist = true) => {
     game.closeMap(); game.closeMenu(); game.closeResult();
+    fishing.cancel('', false);
     started = false; game.playing = false; game.paused = true;
     for (const key in keys) keys[key] = false;
     if (persist) game.persist();
@@ -501,7 +506,7 @@ async function init() {
     time += dt;
     // input
     input.throttle = 0; input.steer = 0; input.pitch = 0;
-    const locked = !started || game.paused || game.inputLock;
+    const locked = !started || game.paused || game.inputLock || fishing.blocking();
     if (!locked) {
       if (keys.KeyW || keys.ArrowUp) input.throttle = 1;
       if (keys.KeyS || keys.ArrowDown) input.throttle = -0.35;
@@ -519,8 +524,8 @@ async function init() {
     phys.forward(fwd2); phys.right(rgt2);
     tricks.update(dt, time);
     game.update(dt, time);
-    story.update(dt, time, started && !game.paused && !life.traffic.activeCollision());
-    encounters.update(dt, time, started && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
+    story.update(dt, time, started && !game.paused && !fishing.blocking() && !life.traffic.activeCollision());
+    encounters.update(dt, time, started && !fishing.blocking() && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
     condition.update(dt, time, started);
     law.update(dt, started && !game.paused);
     reputation.update(dt, started && !game.paused);
@@ -556,6 +561,7 @@ async function init() {
     boat.blur.material.opacity = Math.min(0.35, phys.rpm * 0.4);
     for (const r of boat.rudders) r.rotation.y = -phys.steer * 0.55;
     condition.updateEffects(dt, time, started && !game.paused);
+    fishing.update(dtRaw, time, started && !game.paused);
 
     // camera
     if (!dragging) { idle += dt; if (idle > 2.5) { camYaw *= Math.exp(-dt * 1.2); camPitch *= Math.exp(-dt * 1.2); } }
@@ -585,12 +591,12 @@ async function init() {
     environment.update(dtRaw, time, camera.position, game.paused || !started);
     currents.update(dtRaw, time, started && !game.paused);
     hazards.update(dtRaw, time, started && !game.paused);
-    aftermath.update(dtRaw, time, started && !game.paused);
+    aftermath.update(dtRaw, time, started && !game.paused && !fishing.blocking());
     ecology.update(dtRaw, time, started && !game.paused);
     dolphins.update(dtRaw, time, started && !game.paused);
-    incidents.update(dtRaw, time, started && !game.paused && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
-    discoveries.update(dtRaw, time, started && !game.paused);
-    navigationAids.update(dtRaw, time, started && !game.paused);
+    incidents.update(dtRaw, time, started && !game.paused && !fishing.blocking() && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
+    discoveries.update(dtRaw, time, started && !game.paused && !fishing.blocking());
+    navigationAids.update(dtRaw, time, started && !game.paused && !fishing.blocking());
     radio.update(dtRaw, started && !game.paused);
 
     // world updates

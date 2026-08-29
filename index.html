@@ -213,9 +213,13 @@
   #menu .world-grid, #menu .records-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
   #menu .world-grid .menu-card, #menu .records-grid .menu-card { margin:0; min-width:0; }
   #menu .world-grid .field-notes { grid-column:1/-1; }
+  #menu .records-grid .fishing-log { grid-column:1/-1; }
   #menu .field-note-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0 20px; }
+  #menu .fish-log-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0 20px; }
   #menu .field-note-grid .deed { opacity:.55; }
   #menu .field-note-grid .deed.found { opacity:.92; }
+  #menu .fish-log-grid .deed { opacity:.55; }
+  #menu .fish-log-grid .deed.found { opacity:.92; }
   #menu .kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1px; background:rgba(243,237,224,.1); }
   #menu .kpi { padding:16px 13px; background:rgba(4,13,10,.82); }
   #menu .kpi b { display:block; color:var(--gold); font-size:25px; font-weight:600; font-variant-numeric:tabular-nums; }
@@ -273,6 +277,7 @@
     #menu .menu-head .menu-copy { margin-top:10px; }
     #menu .menu-grid, #menu .world-grid, #menu .records-grid { grid-template-columns:1fr; gap:18px; }
     #menu .field-note-grid { grid-template-columns:1fr; }
+    #menu .fish-log-grid { grid-template-columns:1fr; }
     #menu .m { grid-template-columns:24px 1fr; }
     #menu .m .best { grid-column:2; text-align:left; }
     #menu .m .d { grid-column:2; }
@@ -323,7 +328,7 @@
     <h1>Emerald <em>Bayou</em></h1>
     <p class="deck">Run freight. Race the cuts. Stay off FWC’s board when the weather turns.</p>
     <p class="meta">250 sq mi of open bayou &nbsp;·&nbsp; living wildlife &nbsp;·&nbsp; no road home</p>
-    <p class="controls"><b>W / S</b> throttle &nbsp; <b>A / D</b> rudder &nbsp; <b>drag</b> look &nbsp; <b>L</b> spotlight<br><b>M</b> jobs &nbsp; <b>Tab</b> chart &nbsp; <b>R</b> reset</p>
+    <p class="controls"><b>W / S</b> throttle &nbsp; <b>A / D</b> rudder &nbsp; <b>drag</b> look &nbsp; <b>L</b> spotlight<br><b>C</b> fish &nbsp; <b>M</b> jobs &nbsp; <b>Tab</b> chart &nbsp; <b>R</b> reset</p>
   </div>
   <nav class="title-actions" aria-label="Main menu">
     <p class="action-label">Tower dock</p>

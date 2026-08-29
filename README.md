@@ -54,6 +54,8 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 | `S` / `Shift` in the air | lean back, lean forward |
 | drag | look around |
 | `E` | interact (job posts, docks, traps, field notes, aid reports) |
+| `C` | cast, set the hook, and reel while held |
+| `X` | reel in or cut the line |
 | `M` | jobs board |
 | `Tab` | chart |
 | `L` | spotlight |
@@ -84,6 +86,12 @@ Navigation aids are streamed from seeded 360 m cells and capped at 36 around the
 Wildlife lives its own life. Alligators bask on banks and slide in when you get close, and the bull will charge an idle hull inside 16 m. Mullet jump near the boat, bait boils off the bow in the shallows, ibis and pelicans run lines low over the water, and vultures circle high. When you get more than 700 m away it all quietly relocates ahead of you.
 
 On a moving tide, pelicans and the osprey can find a mullet school in open water. Hold 25–65 m off at idle and the bait stays up; drive through it or let your wake reach it and the birds lift while the school goes deep. The event redirects two existing bird flocks and borrows from the fixed fish and spray pools instead of creating another set of wildlife.
+
+Bring the airboat to idle and press `C` to cast. Florida bass, bluegill and bowfin hold in the freshwater backwaters; common snook, juvenile tarpon and red drum work the mangrove and broad-river water. Depth, murk, current, time of day, tide, weather and recent prop wash all change the wait and the species on the line. During the fight, hold `C` to reel and let go when a hard run pushes the tension into the red. Every fish is measured over the gunwale, released, and written into the boat log with its region and personal best.
+
+The habitat split follows Florida Fish and Wildlife Conservation Commission profiles for [Florida bass](https://myfwc.com/wildlifehabitats/profiles/freshwater/largemouth-bass/), [bowfin](https://myfwc.com/wildlifehabitats/profiles/freshwater/bowfin/), [snook](https://myfwc.com/wildlifehabitats/profiles/saltwater/snook/snook/), [tarpon](https://myfwc.com/wildlifehabitats/profiles/saltwater/tarpon/tarpon/) and [red drum](https://myfwc.com/wildlifehabitats/profiles/saltwater/drums/red-drum/). The release animation follows the agency’s [catch-and-release handling guidance](https://myfwc.com/fishing/freshwater/fishing-tips/): short air exposure and head-first return to the water.
+
+Fishing owns one rod, one dynamic line buffer, one lure and one landing fish. Those resources are reused on every cast, and the recent-catch ledger stops at twelve entries.
 
 Rare field signs depend on the place and the water rather than a mission marker. Roseate spoonbills settle in Rookery Lakes around first and last light, and a real player wake reaching the bank will flush them. A tagged smalltooth sawfish moves through Mangrove Reach on a rising tide; its receiver ping closes up as the boat approaches, but the fix only resolves while the hull stays at idle distance. Falling water in Cypress Reach can uncover a logging skiff long enough to copy its builder plate. Successful observations stay in the boat log and on the chart.
 
@@ -117,6 +125,7 @@ src/
   game.js          jobs, bounties, records, save
   discoveries.js   tide, time and region-driven field observations
   navigationaids.js seeded channel markers, light failures and reports
+  fishing.js       boat-bound fishing, habitat, line tension and catch log
   encounters.js    rescues, patrols, races, contraband and wildlife calls
   law.js           wanted attention and pursuit state
   story.js         the channel 68 arc
@@ -141,6 +150,7 @@ __dbg.environment.lunarSnapshot()         // phase, illumination, tide range, al
 __dbg.ecology.setBioluminescence(1, true) // force the disturbed-water glow
 __dbg.discoveries.start('roseate-roost', true, true) // force a nearby field sign
 __dbg.navigationAids.resourceStats()     // active aids, draw calls, faults and reports
+__dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fish budget
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera
 __dbg.terrain.hf.computeBase(x, z)        // { h, s, lake, prairie, hammock }
 ```
