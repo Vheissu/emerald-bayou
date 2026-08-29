@@ -93,6 +93,7 @@ export class Game {
       || Object.values(rec).some(value => Number(value) > 0)
       || Object.values(s.encounters || {}).some(value => Number(value) > 0)
       || Number(incidents.heard) || (s.reputation?.deeds || []).length
+      || (s.discoveries?.found || []).length
       || (story.stage && story.stage !== 'dormant') || travelled
     );
   }
@@ -296,6 +297,10 @@ export class Game {
     const standing = this.reputation ? { locals: this.reputation.rank('locals'), fwc: this.reputation.rank('fwc'), runners: this.reputation.rank('runners') } : { locals: 'unproven', fwc: 'unknown hull', runners: 'unproven' };
     const storyLine = this.story ? this.story.menuLine() : 'Running Dark · not started';
     const contractLine = this.contracts ? this.contracts.menuLine() : 'no resident work logged';
+    const fieldNotes = this.discoveries?.menuEntries?.() || [];
+    const fieldNoteCount = fieldNotes.filter(entry => entry.found).length;
+    const fieldNoteRows = fieldNotes.length ? fieldNotes.map(entry => `<div class="deed ${entry.found ? 'found' : ''}"><b>${entry.found ? esc(entry.short) : 'Unlogged'}</b>${esc(entry.found ? `${entry.place} · day ${entry.record?.day || '—'}` : entry.hint)}</div>`).join('') : '<div class="deed">No field observations logged.</div>';
+    records.push(['Field notes', `${fieldNoteCount} / ${fieldNotes.length || 3}`]);
     const wanted = Math.max(0, Math.min(5, Math.ceil(Number(this.law?.attention) || 0)));
     const deeds = (this.reputation?.deeds || []).slice(-6).reverse();
     const deedRows = deeds.length ? deeds.map(deed => `<div class="deed"><b>${esc(deed.faction)} ${deed.delta > 0 ? '+' : ''}${Number(deed.delta).toFixed(1)}</b>${esc(deed.text)}</div>`).join('') : '<div class="deed">Nobody has made up their mind about this hull yet.</div>';
@@ -308,7 +313,7 @@ export class Game {
       keyHelp = '<span><b>↑ ↓</b> choose &nbsp; <b>Enter</b> start</span><span><b>M / Esc</b> back to the water</span>';
     } else if (this.menuTab === 'world') {
       kicker = 'Living world'; title = 'Water remembers'; copy = 'Calls, favors and collisions change how camps, runners and FWC receive this boat.';
-      content = `<div class="world-grid"><section class="menu-card"><div class="h">Current picture</div><div class="kpis"><div class="kpi"><b>${encounterCount}</b><span>encounters</span></div><div class="kpi"><b>${regionsSeen}/${regionTotal}</b><span>regions</span></div><div class="kpi"><b>${incidentResolved}/${incidentHeard}</b><span>calls resolved</span></div><div class="kpi"><b>${wanted ? '★'.repeat(wanted) : 'Clear'}</b><span>FWC wanted</span></div><div class="kpi"><b>${citations}</b><span>citations</span></div><div class="kpi"><b>${Number(incidents.fwc) || 0}/${Number(incidents.runners) || 0}</b><span>FWC / runners</span></div></div></section><section class="menu-card"><div class="h">Standing</div><div class="standing"><span>Locals</span><b>${esc(standing.locals)}</b><em>${this.reputation ? this.reputation.score('locals').toFixed(1) : '0.0'}</em></div><div class="standing"><span>FWC</span><b>${esc(standing.fwc)}</b><em>${this.reputation ? this.reputation.score('fwc').toFixed(1) : '0.0'}</em></div><div class="standing"><span>Backchannel</span><b>${esc(standing.runners)}</b><em>${this.reputation ? this.reputation.score('runners').toFixed(1) : '0.0'}</em></div></section><section class="menu-card"><div class="h">Open threads</div><div class="deed"><b>Story</b>${esc(storyLine)}</div><div class="deed"><b>Resident work</b>${esc(contractLine)}</div><div class="deed"><b>Conditions</b>${esc(this.getWorldLabel?.() || 'South Florida backcountry')}</div></section><section class="menu-card"><div class="h">What people remember</div>${deedRows}</section></div>`;
+      content = `<div class="world-grid"><section class="menu-card"><div class="h">Current picture</div><div class="kpis"><div class="kpi"><b>${encounterCount}</b><span>encounters</span></div><div class="kpi"><b>${regionsSeen}/${regionTotal}</b><span>regions</span></div><div class="kpi"><b>${incidentResolved}/${incidentHeard}</b><span>calls resolved</span></div><div class="kpi"><b>${wanted ? '★'.repeat(wanted) : 'Clear'}</b><span>FWC wanted</span></div><div class="kpi"><b>${citations}</b><span>citations</span></div><div class="kpi"><b>${Number(incidents.fwc) || 0}/${Number(incidents.runners) || 0}</b><span>FWC / runners</span></div></div></section><section class="menu-card"><div class="h">Standing</div><div class="standing"><span>Locals</span><b>${esc(standing.locals)}</b><em>${this.reputation ? this.reputation.score('locals').toFixed(1) : '0.0'}</em></div><div class="standing"><span>FWC</span><b>${esc(standing.fwc)}</b><em>${this.reputation ? this.reputation.score('fwc').toFixed(1) : '0.0'}</em></div><div class="standing"><span>Backchannel</span><b>${esc(standing.runners)}</b><em>${this.reputation ? this.reputation.score('runners').toFixed(1) : '0.0'}</em></div></section><section class="menu-card"><div class="h">Open threads</div><div class="deed"><b>Story</b>${esc(storyLine)}</div><div class="deed"><b>Resident work</b>${esc(contractLine)}</div><div class="deed"><b>Conditions</b>${esc(this.getWorldLabel?.() || 'South Florida backcountry')}</div></section><section class="menu-card"><div class="h">What people remember</div>${deedRows}</section><section class="menu-card field-notes"><div class="h">Field notes · ${fieldNoteCount} / ${fieldNotes.length || 3}</div><div class="field-note-grid">${fieldNoteRows}</div></section></div>`;
       keyHelp = '<span><b>Tab / ← →</b> change section</span><span><b>Esc</b> back to the water</span>';
     } else if (this.menuTab === 'records') {
       kicker = 'Boat log'; title = 'Records'; copy = 'Fastest runs, biggest air and the work already put behind this hull.';
@@ -664,6 +669,10 @@ export class Game {
       e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
       e.timer.innerHTML = ''; e.timer.classList.remove('warn');
       e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '';
+    } else if (this.discoveries?.hud()) {
+      const h = this.discoveries.hud();
+      e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
+      e.timer.innerHTML = ''; e.timer.classList.remove('warn'); e.wp.innerHTML = '';
     } else if (this.life?.traffic?.activeCollision()) {
       const b = this.life.traffic.activeCollision(), c = b.collision, checking = c.stage === 'disabled', restarting = c.stage === 'restart';
       e.mission.innerHTML = `<div class="title">Collision aftermath</div><div class="obj">${checking ? `Idle below 5.5 mph and hold alongside ${b.profile.callsign}` : restarting ? `${b.profile.callsign} is restarting` : `${b.profile.callsign} reported the collision`}</div><div class="sub">${checking ? 'Stay until the crew accounts for everyone' : restarting ? 'The collision stays on the log, but you did not leave them' : 'FWC has your hull and direction'}</div>`;

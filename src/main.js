@@ -38,6 +38,7 @@ import { StormRecovery } from './aftermath.js';
 import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor, webglRendererName } from './renderquality.js';
 import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel, readQualityPreference, writeQualityPreference } from './displaysettings.js';
 import { startupPlan, startupTerrainReady } from './startup.js';
+import { FieldDiscoveryDirector } from './discoveries.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -223,6 +224,8 @@ async function init() {
   game.incidents = incidents; game.story = story; radio.incidents = incidents; radio.story = story;
   const aftermath = new StormRecovery({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, incidents, encounters, story, radio, reputation, condition });
   game.aftermath = aftermath; radio.aftermath = aftermath;
+  const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
+  game.discoveries = discoveries;
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
     const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
     const addMaterial = material => {
@@ -260,11 +263,12 @@ async function init() {
       anchoredAnglers: { live: life.traffic.liveAnglers.size, cachedCells: life.traffic.anglerCells.size, cacheEvictions: life.traffic.anglerCacheEvictions },
       shoreFolk: { live: life.folk.live.size, cachedCells: life.folk.cells.size, cacheEvictions: life.folk.cacheEvictions, disposedLineGeometries: life.folk.disposedLineGeometries },
       fishFallbackReleased: life.fish.fallbackReleased,
+      fieldDiscoveries: discoveries.resourceStats(),
     },
     chart: worldMap.memoryStats(),
     models: modelLoadingStats(),
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, manatees, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: renderProfile.shadowMapSize ** 2 * 4,
   }) };
@@ -551,6 +555,7 @@ async function init() {
     aftermath.update(dtRaw, time, started && !game.paused);
     ecology.update(dtRaw, time, started && !game.paused);
     incidents.update(dtRaw, time, started && !game.paused && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
+    discoveries.update(dtRaw, time, started && !game.paused);
     radio.update(dtRaw, started && !game.paused);
 
     // world updates

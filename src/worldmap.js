@@ -165,6 +165,19 @@ export class WorldMap {
       c.strokeStyle = 'rgba(8,20,15,0.8)'; c.beginPath(); c.moveTo(x + (right ? 6 : -6) * dpr, y + sy * 6 * dpr); c.lineTo(tx + (right ? -4 * dpr : tw + 4 * dpr), ty); c.stroke();
       c.fillStyle = 'rgba(8,20,15,0.88)'; c.fillRect(tx - 5 * dpr, ty - 10 * dpr, tw + 10 * dpr, 20 * dpr); c.fillStyle = storyMark.color; c.fillRect(tx - 5 * dpr, ty - 10 * dpr, 2 * dpr, 20 * dpr); c.fillText(text, tx + tw / 2, ty); c.restore();
     }
+    // Field observations are chart knowledge rather than jobs. Logged sites remain as small compass stars; a live,
+    // visually identified sign carries an outer ring until the observation is resolved.
+    const fieldMarks = this.G.discoveries?.markers?.() || [];
+    for (const fieldMark of fieldMarks) {
+      const [x, y] = toS(fieldMark.x, fieldMark.z); if (x < -50 || y < -50 || x > W + 50 || y > H + 50) continue;
+      c.save(); c.translate(x, y); c.fillStyle = fieldMark.color; c.strokeStyle = 'rgba(8,20,15,0.9)'; c.lineWidth = 2 * dpr;
+      c.beginPath();
+      for (let point = 0; point < 8; point++) { const angle = -Math.PI / 2 + point * Math.PI / 4, radius = (point % 2 ? 3.2 : 7) * dpr; const px = Math.cos(angle) * radius, py = Math.sin(angle) * radius; if (!point) c.moveTo(px, py); else c.lineTo(px, py); }
+      c.closePath(); c.fill(); c.stroke();
+      if (fieldMark.live) { c.beginPath(); c.arc(0, 0, 11 * dpr, 0, Math.PI * 2); c.strokeStyle = fieldMark.color; c.stroke(); }
+      c.restore();
+      if (fieldMark.live || this.scale > 0.08) label(x, y, fieldMark.label, fieldMark.color, 11);
+    }
     // boat
     { const [x, y] = toS(p.pos.x, p.pos.y); c.save(); c.translate(x, y); c.rotate(-p.heading); c.fillStyle = '#f3ede0'; c.strokeStyle = 'rgba(8,20,15,0.85)'; c.lineWidth = 2 * dpr; c.beginPath(); c.moveTo(0, -11 * dpr); c.lineTo(7 * dpr, 8 * dpr); c.lineTo(0, 4 * dpr); c.lineTo(-7 * dpr, 8 * dpr); c.closePath(); c.fill(); c.stroke(); c.restore(); }
     // scale bar
@@ -174,6 +187,7 @@ export class WorldMap {
     const region = regionAt(p.pos.x, p.pos.y);
     const storyLegend = storyMarks.map(m => `<div>${m.contract ? (m.story ? 'Resident work' : 'Resident note') : m.story ? 'Story' : 'Chart note'} · ${m.label}</div>`).join('');
     const recoveryLegend = recoveryMarks.map(m => `<div>Storm recovery · ${m.label}</div>`).join('');
-    this.legend.innerHTML = `<div class="h">Chart</div><div>${region.name} &nbsp;·&nbsp; ${(WORLD_HALF * 2 / MILE).toFixed(0)} miles square</div><div>${known.length} camps found &nbsp;·&nbsp; ${(this.G.save.regions || []).length} / ${REGIONS.length} regions seen &nbsp;·&nbsp; ${(this.G.save.traps || []).length} traps recovered</div>${nc ? `<div>Nearest camp ${nc.camp.name ? (known.includes(nc.camp.key) ? nc.camp.name : 'unknown') : ''} · ${fmtDist(nc.d)}</div>` : ''}${liveCall ? `<div>Live dispatch · ${liveCall.label}</div>` : ''}${recoveryLegend}${storyLegend}<div class="keys">scroll zoom · drag pan · Tab close</div>`;
+    const fieldFound = fieldMarks.filter(mark => mark.found).length, liveField = fieldMarks.find(mark => mark.live);
+    this.legend.innerHTML = `<div class="h">Chart</div><div>${region.name} &nbsp;·&nbsp; ${(WORLD_HALF * 2 / MILE).toFixed(0)} miles square</div><div>${known.length} camps found &nbsp;·&nbsp; ${(this.G.save.regions || []).length} / ${REGIONS.length} regions seen &nbsp;·&nbsp; ${(this.G.save.traps || []).length} traps recovered &nbsp;·&nbsp; ${fieldFound} field notes</div>${nc ? `<div>Nearest camp ${nc.camp.name ? (known.includes(nc.camp.key) ? nc.camp.name : 'unknown') : ''} · ${fmtDist(nc.d)}</div>` : ''}${liveCall ? `<div>Live dispatch · ${liveCall.label}</div>` : ''}${liveField ? `<div>Live field sign · ${liveField.label}</div>` : ''}${recoveryLegend}${storyLegend}<div class="keys">scroll zoom · drag pan · Tab close</div>`;
   }
 }
