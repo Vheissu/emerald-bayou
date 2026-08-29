@@ -148,6 +148,18 @@ export class EngineAudio {
     const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol, now + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
     o.connect(lp); lp.connect(g); g.connect(this.sfx); o.start(now); o.stop(now + 0.32);
   }
+  // A close liquid-fuel fire: turbulent hiss with irregular low crackles, kept as a short one-shot so silent scenes allocate nothing.
+  fire(vol = 0.24) {
+    if (!this.ctx || !this.noiseBuf || vol < 0.01) return; const ctx = this.ctx, now = ctx.currentTime;
+    const src = ctx.createBufferSource(); src.buffer = this.noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1150 + Math.random() * 520; bp.Q.value = 0.48;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol, now + 0.035); g.gain.setValueAtTime(vol * 0.72, now + 0.34); g.gain.exponentialRampToValueAtTime(0.0001, now + 0.62);
+    src.connect(bp); bp.connect(g); g.connect(this.sfx); src.start(now, Math.random() * 1.2); src.stop(now + 0.66);
+    for (let i = 0; i < 2; i++) {
+      const at = now + 0.08 + i * 0.21 + Math.random() * 0.08, o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.setValueAtTime(150 + Math.random() * 90, at); o.frequency.exponentialRampToValueAtTime(70, at + 0.055);
+      const pop = ctx.createGain(); pop.gain.setValueAtTime(vol * (0.18 + Math.random() * 0.16), at); pop.gain.exponentialRampToValueAtTime(0.0001, at + 0.065); o.connect(pop); pop.connect(this.sfx); o.start(at); o.stop(at + 0.075);
+    }
+  }
   // wood on aluminium: a deadhead under the hull
   knock(vol = 0.6) {
     if (!this.ctx) return; const ctx = this.ctx, now = ctx.currentTime;

@@ -10,7 +10,7 @@ const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
-const DEBUG_ORDER = ['distress', 'patrol', 'smuggler', 'salvage', 'netline'];
+const DEBUG_ORDER = ['distress', 'fire', 'patrol', 'smuggler', 'salvage', 'netline'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
 const SPILL_POOL_SIZE = 3;
 
@@ -108,6 +108,42 @@ function makeGillNet() {
   return root;
 }
 
+function makeEngineFire() {
+  const group = new THREE.Group(); group.name = 'outboard fire'; group.visible = false;
+  const geometry = new THREE.ConeGeometry(0.22, 1.15, 7, 2, true); geometry.translate(0, 0.575, 0);
+  const outerMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff4b12, transparent: true, opacity: 0.82, depthWrite: false, side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+  });
+  const coreMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffe08a, transparent: true, opacity: 0.92, depthWrite: false, side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+  });
+  const outer = new THREE.InstancedMesh(geometry, outerMaterial, 5), core = new THREE.InstancedMesh(geometry, coreMaterial, 5);
+  outer.name = 'pooled outer flames'; core.name = 'pooled flame cores'; outer.frustumCulled = core.frustumCulled = false;
+  const light = new THREE.PointLight(0xff5a18, 0, 32, 2); light.position.set(0, 0.9, 0);
+  group.add(outer, core, light);
+  group.userData.fire = { outer, core, light, dummy: new THREE.Object3D() };
+  return group;
+}
+
+function animateEngineFire(group, t, strength, flash = 0) {
+  const fire = group.userData.fire, visible = strength > 0.015 || flash > 0.015;
+  group.visible = visible; if (!visible) { fire.light.intensity = 0; return; }
+  const d = fire.dummy, force = Math.max(strength, flash * 1.45);
+  for (let i = 0; i < 5; i++) {
+    const phase = t * (5.1 + i * 0.37) + i * 1.73, pulse = 0.78 + Math.sin(phase) * 0.19 + Math.sin(phase * 0.47) * 0.1;
+    const x = (i - 2) * 0.16 + Math.sin(phase * 0.61) * 0.08, z = Math.cos(phase * 0.43 + i) * 0.1;
+    d.position.set(x, i % 2 ? 0.04 : 0, z); d.rotation.set(Math.sin(phase * 0.53) * 0.14, phase * 0.17, Math.cos(phase * 0.41) * 0.16);
+    d.scale.set((0.72 + i * 0.07) * force, pulse * (0.72 + i * 0.08) * force, (0.72 + i * 0.07) * force); d.updateMatrix(); fire.outer.setMatrixAt(i, d.matrix);
+    d.position.y += 0.04; d.scale.multiplyScalar(0.52); d.updateMatrix(); fire.core.setMatrixAt(i, d.matrix);
+  }
+  fire.outer.instanceMatrix.needsUpdate = true; fire.core.instanceMatrix.needsUpdate = true;
+  fire.outer.material.opacity = clamp(0.48 + strength * 0.34 + flash * 0.25, 0, 1);
+  fire.core.material.opacity = clamp(0.64 + strength * 0.25 + flash * 0.22, 0, 1);
+  fire.light.intensity = 45 * strength + 280 * flash; fire.light.distance = 22 + strength * 18 + flash * 20;
+}
+
 function boatAgent(mesh) {
   return { mesh, x: 0, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: 0, targetZ: 0, decisionT: 0, active: false };
 }
@@ -123,6 +159,11 @@ export class EncounterDirector {
       this.game.toast(into > 5 ? 'Monofilament across the hull' : 'Float line struck', into > 5 ? 'Back off. The net is pulling tight under the stern.' : 'There is a net stretched across the cut.', 2.8);
       if (into > 4.5) { this.audio.warn(); this.game.shake = Math.max(this.game.shake, 0.22); }
     } };
+    this.fireObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'burning skiff', onHit: (into) => {
+      const e = this.active; if (!e || e.type !== 'fire' || e.burned || e.hitCd > 0 || into < 2.5) return;
+      e.hitCd = 2.2; e.burn = Math.min(e.limit, e.burn + into * 0.9); this.game.shake = Math.max(this.game.shake, Math.min(0.34, into * 0.035));
+      this.game.toast('Contact with the burning skiff', 'The fuel tank shifted. Back off and come alongside at idle.', 2.8);
+    } };
     this.phys.addObs('encounters', this.obs);
     this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, this.rigs.smuggler.agent, this.rigs.distress.echoAgent];
     this.salvagePieces = this.rigs.salvage.drums.map((mesh, index) => ({ mesh, index, x: 0, z: 0, vx: 0, vz: 0, found: false, ruptured: false, resolved: false, hitCd: 0, sinkT: 0, ph: index * 2.3 }));
@@ -133,6 +174,7 @@ export class EncounterDirector {
       if (e.code === 'KeyF' && !e.repeat) this.alternate = true;
       if (import.meta.env.DEV && e.code === 'F9' && !e.repeat && this.enabled && !this.game.state) { e.preventDefault(); this.start(DEBUG_ORDER[this.debugIndex++ % DEBUG_ORDER.length], true); }
       if (import.meta.env.DEV && e.code === 'F10' && !e.repeat && this.enabled && this.active) { e.preventDefault(); this.debugApproach(); }
+      if (import.meta.env.DEV && e.code === 'F11' && !e.repeat && this.enabled && this.active?.type === 'fire' && !this.active.fireOut && !this.active.burned) { e.preventDefault(); this.active.burn = this.active.limit; }
     };
     window.addEventListener('keydown', this.keyHandler);
     this.game.save.encounters ??= {};
@@ -165,7 +207,12 @@ export class EncounterDirector {
 
     const netline = makeGillNet(); this.scene.add(netline);
 
-    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, patrol, smuggler, salvage, netline };
+    const fireBoat = buildSkiff({ crew: false }); fireBoat.name = 'burning fishing skiff'; fireBoat.visible = false; this.scene.add(fireBoat);
+    const fireOperator = person(rr, { pose: 'stand', hat: false, vest: true }); fireOperator.position.set(-0.08, 0.5, -0.8); fireOperator.rotation.y = Math.PI; fireBoat.add(fireOperator);
+    const fire = makeEngineFire(); fire.position.set(0.34, 0.52, 1.5); fireBoat.add(fire);
+    const swimmer = person(rr, { pose: 'sitEdge', hat: false, vest: true }); swimmer.visible = false; this.scene.add(swimmer);
+
+    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, patrol, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire } };
   }
 
   spot(min = 160, max = 300, sideMax = 170) {
@@ -185,20 +232,21 @@ export class EncounterDirector {
     const heat = this.law ? this.law.attention : 0;
     const runners = this.reputation ? this.reputation.score('runners') : 0, fwc = this.reputation ? this.reputation.score('fwc') : 0;
     const region = this.regions && this.regions.current ? this.regions.current.encounters : {};
-    const weights = { distress: 0.34, patrol: 0.25, salvage: 0.14, smuggler: 0.16, netline: 0.11 };
+    const weights = { distress: 0.29, fire: 0.12, patrol: 0.24, salvage: 0.12, smuggler: 0.14, netline: 0.09 };
     weights.patrol *= (region.law ?? 1) * (1 + heat * 1.75) * (1 + Math.max(0, -fwc) * 0.16);
     weights.smuggler *= (region.runners ?? 1) * (night ? 1.9 : 1) * (1 + Math.max(0, -runners) * 0.2);
     weights.netline *= (0.72 + (region.runners ?? 1) * 0.38) * (night ? 1.24 : 1);
     weights.distress *= region.danger ?? 1;
+    weights.fire *= (region.danger ?? 1) * (0.82 + Math.min(1.25, (this.environment.values.wind || 0) * 0.045));
     weights.salvage *= 0.7 + (region.danger ?? 1) * 0.45;
     if (weather === 'hurricane' || weather === 'tropical' || weather === 'thunderstorm') {
-      weights.distress *= 1.8; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
+      weights.distress *= 1.8; weights.fire *= 1.35; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
     } else if (weather === 'squall' || weather === 'hail') {
-      weights.distress *= 1.4; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
+      weights.distress *= 1.4; weights.fire *= 1.2; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
     }
     if (heat >= 3) weights.patrol *= 2.1;
     let roll = Math.random() * Object.values(weights).reduce((a, n) => a + n, 0);
-    for (const type of ['distress', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
+    for (const type of ['distress', 'fire', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
     return 'distress';
   }
 
@@ -206,6 +254,7 @@ export class EncounterDirector {
     if (this.active) this.finish(false, true);
     const at = nearby ? this.spot(42, 62, 38) : this.spot(); if (!at) { this.next = 20; return false; }
     if (type === 'distress') this.startDistress(at);
+    else if (type === 'fire') this.startFire(at);
     else if (type === 'patrol') this.startPatrol(at);
     else if (type === 'smuggler') this.startSmuggler(at);
     else if (type === 'netline') this.startNetline(at);
@@ -265,6 +314,73 @@ export class EncounterDirector {
     const R = this.rigs.distress; e.state = 'aboard'; e.drop = this.distressDrop(e.x, e.z); e.boardedAt = e.t;
     R.survivor.visible = false; R.passenger.visible = true; this.clearPrompt(); this.audio.checkpoint();
     this.game.toast('Operator aboard', `Run him to ${e.drop.name}. Keep the front bench dry.`, 3.2);
+  }
+
+  startFire(at) {
+    const R = this.rigs.fire;
+    R.boat.visible = true; R.operator.visible = true; R.swimmer.visible = false; this.rigs.distress.passenger.visible = false;
+    R.boat.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) - 0.05, at.z); R.boat.rotation.set(0, at.heading, 0);
+    wave(R.operator); animateEngineFire(R.fire, 0, 0.72);
+    this.active = {
+      type: 'fire', x: at.x, z: at.z, heading: at.heading, state: 'burning', t: 0, known: false,
+      burn: 0, limit: 78 + Math.random() * 14, flame: 0.72, flash: 0, sink: 0, suppression: 0, suppressing: false,
+      powderCarry: 0, smokeCarry: 0, soundT: 0.4, hitCd: 0, aboard: false, overboard: false, burned: false, fireOut: false,
+      swimmerX: at.x, swimmerZ: at.z, drop: null, ph: Math.random() * Math.PI * 2,
+    };
+  }
+
+  boardFireOperator(e) {
+    if (e.aboard) return;
+    const R = this.rigs.fire; e.aboard = true; e.overboard = false; e.drop = this.distressDrop(e.x, e.z);
+    R.operator.visible = false; R.swimmer.visible = false; this.rigs.distress.passenger.visible = true;
+    this.phys.loaded = Math.max(this.phys.loaded, 0.32); e.state = e.fireOut ? 'contained-aboard' : e.burned ? 'rescued' : 'aboard';
+    this.clearPrompt(); this.audio.checkpoint();
+    this.game.toast('Operator aboard', e.fireOut ? `Fire is down. Run him to ${e.drop.name}.` : e.burned ? `He is out of the water. Run him to ${e.drop.name}.` : 'The fuel tank is still heating. Fight it or get clear.', 3.4);
+  }
+
+  containFire(e) {
+    if (e.fireOut || e.burned) return;
+    e.fireOut = true; e.suppressing = false; e.flame = Math.min(e.flame, 0.34); e.state = e.aboard ? 'contained-aboard' : 'contained';
+    this.audio.checkpoint(); this.game.toast('Fire knocked down', e.aboard ? 'No flame at the tank. Take the operator to a safe berth.' : 'No flame at the tank. Bring the operator off the disabled skiff.', 3.4);
+  }
+
+  flashFire(e) {
+    if (e.burned || e.fireOut) return;
+    const R = this.rigs.fire, p = this.phys; e.burned = true; e.suppressing = false; e.flash = 1; e.flame = Math.max(e.flame, 1.2); e.sink = 0;
+    const sideX = Math.cos(e.heading), sideZ = -Math.sin(e.heading);
+    if (!e.aboard) {
+      e.overboard = true; e.swimmerX = e.x + sideX * 2.2; e.swimmerZ = e.z + sideZ * 2.2; e.state = 'overboard';
+      R.operator.visible = false; R.swimmer.visible = true; R.swimmer.position.set(e.swimmerX, this.water.waveHeight(e.swimmerX, e.swimmerZ, 0) - 0.08, e.swimmerZ);
+    } else e.state = 'rescued';
+    this.spawnSpill(e.x, e.z); this.audio.shot(0.9); this.audio.thud(1.15);
+    const d = Math.hypot(p.pos.x - e.x, p.pos.y - e.z), shock = clamp(1 - d / 30);
+    if (shock > 0) {
+      const dx = p.pos.x - e.x, dz = p.pos.y - e.z, n = Math.hypot(dx, dz) || 1;
+      p.vel.x += dx / n * shock * 5.5; p.vel.y += dz / n * shock * 5.5; this.game.shake = Math.max(this.game.shake, shock * 0.8);
+      if (this.condition) this.condition.damage(shock * 6.5, shock * 3.2);
+    }
+    const fireY = this.water.waveHeight(e.x, e.z, 0) + 0.75;
+    for (let i = 0; i < 34; i++) {
+      const a = Math.random() * Math.PI * 2, speed = 0.7 + Math.random() * 3.8;
+      this.plume.emit(e.x + Math.cos(a) * 0.5, fireY + Math.random() * 0.5, e.z + Math.sin(a) * 0.5, Math.cos(a) * speed, 1.2 + Math.random() * 3.2, Math.sin(a) * speed, 0.26 + Math.random() * 0.38, 0.32, 1.5 + Math.random(), 0.68, true);
+    }
+    for (let i = 0; i < 52; i++) {
+      const a = Math.random() * Math.PI * 2, speed = 1 + Math.random() * 5;
+      this.spray.emit(e.x + Math.cos(a) * 0.7, this.water.level + 0.08, e.z + Math.sin(a) * 0.7, Math.cos(a) * speed, 1 + Math.random() * 4.5, Math.sin(a) * speed, 0.014 + Math.random() * 0.028, 0.4 + Math.random() * 0.4, 0.68);
+    }
+    this.game.toast(e.aboard ? 'Fuel tank let go' : 'Fuel flash — operator overboard', e.aboard ? 'You have him. Keep clear of the burning sheen.' : 'PFD in the water off the skiff. Approach at idle.', 3.8);
+  }
+
+  emitExtinguisher(e, dt) {
+    const p = this.phys, forward = p.forward(this._f); e.powderCarry += dt * 30;
+    const count = Math.min(5, Math.floor(e.powderCarry)); if (!count) return; e.powderCarry -= count;
+    const sx = p.pos.x + forward.x * 2.3, sz = p.pos.y + forward.y * 2.3, sy = this.water.waveHeight(sx, sz, 0) + 1.16;
+    const dx = e.x - sx, dz = e.z - sz, n = Math.hypot(dx, dz) || 1;
+    for (let i = 0; i < count; i++) this.plume.emit(
+      sx + (Math.random() - 0.5) * 0.22, sy + (Math.random() - 0.5) * 0.18, sz + (Math.random() - 0.5) * 0.22,
+      dx / n * (6.8 + Math.random() * 1.8) + p.vel.x * 0.12, 0.35 + Math.random() * 0.55, dz / n * (6.8 + Math.random() * 1.8) + p.vel.y * 0.12,
+      0.13 + Math.random() * 0.08, 0.24 + Math.random() * 0.14, 0.78 + Math.random() * 0.25, 0.78,
+    );
   }
 
   startPatrol(at) {
@@ -391,8 +507,9 @@ export class EncounterDirector {
     if (e.type === 'patrol') target = this.rigs.patrol.agent;
     else if (e.type === 'smuggler' && e.state === 'chase') target = this.rigs.smuggler.agent;
     else if (e.type === 'salvage') target = e.pieces.find(q => !q.resolved) || e;
+    else if (e.type === 'fire' && e.aboard && (e.fireOut || e.burned) && e.drop) target = e.drop;
     const dx = target.x - p.pos.x, dz = target.z - p.pos.y, d = Math.hypot(dx, dz) || 1;
-    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
+    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
     const x = target.x - dx / d * gap, z = target.z - dz / d * gap;
     p.reset(x, z, p.heading); p.y = this.water.waveHeight(x, z, 0);
   }
@@ -480,6 +597,8 @@ export class EncounterDirector {
     this.rigs.smuggler.boat.visible = false; this.rigs.smuggler.agent.active = false; this.rigs.smuggler.pack.visible = false;
     this.rigs.salvage.wreck.visible = false; for (const d of this.rigs.salvage.drums) d.visible = false;
     this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
+    this.rigs.fire.boat.visible = false; this.rigs.fire.operator.visible = true; this.rigs.fire.swimmer.visible = false; animateEngineFire(this.rigs.fire.fire, 0, 0, 0);
+    if (e.type === 'fire' && e.aboard) this.phys.loaded = 0;
     if (this.law) this.law.setPursuit(false);
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
     this.active = null; this.next = success ? 100 + Math.random() * 110 : silent ? 60 : 75 + Math.random() * 90;
@@ -550,6 +669,104 @@ export class EncounterDirector {
           this.complete('Safe berth reached', `${q.name} took him in. His skiff can wait for daylight.`, 275, 1.25, 'You carried a stranded operator to a safe berth.', 'distress-berth', q.name);
         }
       }
+    }
+  }
+
+  updateFire(e, dt, t) {
+    const R = this.rigs.fire, p = this.phys, V = this.environment.values;
+    e.hitCd = Math.max(0, e.hitCd - dt); e.soundT -= dt; e.flash = Math.max(0, e.flash - dt * 1.7);
+    if (this.currents) {
+      const flow = this.currents.flowAt(e.x, e.z, this._flow); e.x += flow.x * dt * 0.46; e.z += flow.y * dt * 0.46;
+      if (e.overboard) { e.swimmerX += flow.x * dt * 0.62; e.swimmerZ += flow.y * dt * 0.62; }
+    }
+    if (e.burned) { e.sink += dt; e.flame += ((e.sink < 5 ? 0.28 : 0) - e.flame) * (1 - Math.exp(-dt * 0.72)); }
+    if (e.fireOut) { e.outT = (e.outT || 0) + dt; e.flame *= Math.exp(-dt * 2.7); }
+
+    const sink = e.burned ? smooth(0.6, 10.5, e.sink) : 0;
+    R.boat.visible = !e.burned || e.sink < 11.5;
+    if (R.boat.visible) {
+      R.boat.position.set(e.x, this.water.waveHeight(e.x, e.z, t) - 0.05 - sink * 1.35, e.z);
+      R.boat.rotation.set(sink * 0.12, e.heading, Math.sin(t * 0.8 + e.ph) * 0.025 + sink * 0.42, 'YXZ');
+    }
+    const d = Math.hypot(e.x - p.pos.x, e.z - p.pos.y), mph = p.speed * MPH;
+    if (R.operator.visible) {
+      const boat = this._personBoat; boat.x = p.pos.x; boat.z = p.pos.y; boat.speed = p.speed; animatePerson(R.operator, t, dt, boat);
+      if (R.operator.userData.waveT <= 0 && d < 135) wave(R.operator);
+    }
+    if (this.rigs.distress.passenger.visible) animatePerson(this.rigs.distress.passenger, t, dt);
+    let rescueD = d;
+    if (e.overboard) {
+      rescueD = Math.hypot(e.swimmerX - p.pos.x, e.swimmerZ - p.pos.y);
+      R.swimmer.position.set(e.swimmerX, this.water.waveHeight(e.swimmerX, e.swimmerZ, t) - 0.09, e.swimmerZ);
+      R.swimmer.rotation.set(-0.08, e.heading + Math.PI * 0.5, Math.sin(t * 1.6 + e.ph) * 0.08, 'YXZ');
+      const boat = this._personBoat; boat.x = p.pos.x; boat.z = p.pos.y; boat.speed = p.speed; animatePerson(R.swimmer, t, dt, boat);
+    }
+
+    if (d < 135) this.known(e, 'Skiff on fire', 'Flame is through the outboard cowl. One operator is trapped at the bow.');
+    if (!e.aboard) {
+      if (e.overboard && rescueD < 8 && mph < 5.5 && this.canInteract()) {
+        this.setPrompt('pull the operator from the water'); if (this.interact) this.boardFireOperator(e);
+      } else if (e.fireOut && d < 13 && mph < 6 && this.canInteract()) {
+        this.setPrompt('bring the operator off the disabled skiff'); if (this.interact || this.alternate) this.boardFireOperator(e);
+      } else if (!e.burned && d < 13 && mph < 6.5 && this.canInteract()) {
+        this.setPrompt('lay the marine extinguisher across the stern <i>· F take the operator aboard</i>');
+        if (this.interact) { e.suppressing = true; e.state = 'suppressing'; this.clearPrompt(); }
+        else if (this.alternate) this.boardFireOperator(e);
+      }
+    } else if (!e.fireOut && !e.burned && d < 15 && mph < 7.5 && this.canInteract()) {
+      this.setPrompt(e.suppressing ? 'hold alongside while the extinguisher discharges' : 'fight the stern fire <i>· or back clear</i>');
+      if (this.interact) { e.suppressing = true; e.state = 'suppressing-aboard'; this.clearPrompt(); }
+    }
+
+    const canFight = !e.fireOut && !e.burned && d < 15.5 && mph < 7.5;
+    if (e.suppressing) {
+      if (canFight) {
+        e.suppression += dt; e.burn = Math.max(0, e.burn - dt * 2.65); this.emitExtinguisher(e, dt);
+      } else e.suppression = Math.max(0, e.suppression - dt * 0.7);
+      if (!canFight && (d > 22 || mph > 11)) { e.suppressing = false; e.state = e.aboard ? 'aboard' : 'burning'; }
+      if (e.suppression >= 6.8) this.containFire(e);
+    }
+
+    if (!e.fireOut && !e.burned) {
+      const burnRate = clamp(0.78 + (V.wind || 0) * 0.036 - (V.rain || 0) * 0.2, 0.58, 1.5);
+      e.burn += dt * burnRate * (e.suppressing ? 0.2 : 1);
+      const target = 0.64 + clamp(e.burn / e.limit) * 0.92; e.flame += (target - e.flame) * (1 - Math.exp(-dt * 1.8));
+      if (e.burn >= e.limit) this.flashFire(e);
+    }
+
+    const c = Math.cos(e.heading), s = Math.sin(e.heading), fireX = e.x + c * 0.34 + s * 1.5, fireZ = e.z - s * 0.34 + c * 1.5;
+    const smokeLife = e.fireOut ? Math.max(0, 1 - (e.outT || 0) / 13) : e.burned ? Math.max(0, 1 - e.sink / 11) : 1;
+    const smokeRate = smokeLife * (e.burned ? 7 : 4 + e.flame * 6);
+    e.smokeCarry += dt * smokeRate; const smokeN = Math.min(6, Math.floor(e.smokeCarry)); e.smokeCarry -= smokeN;
+    const wind = this.environment.windDir, windScale = Math.min(2.2, (V.wind || 0) * 0.055);
+    for (let i = 0; i < smokeN; i++) this.plume.emit(
+      fireX + (Math.random() - 0.5) * 0.34, this.water.waveHeight(fireX, fireZ, t) + 0.72 + Math.random() * 0.28, fireZ + (Math.random() - 0.5) * 0.34,
+      (wind ? wind.x : 0) * windScale + (Math.random() - 0.5) * 0.36, 0.72 + Math.random() * 0.72, (wind ? wind.z : 0) * windScale + (Math.random() - 0.5) * 0.36,
+      0.25 + Math.random() * 0.22, 0.22 + Math.random() * 0.18, 1.5 + Math.random() * 0.8, 0.48 + smokeLife * 0.35, true,
+    );
+    animateEngineFire(R.fire, t, R.boat.visible ? e.flame : 0, e.flash);
+    if (e.soundT <= 0 && d < 120 && !e.fireOut && (e.flame > 0.1 || e.flash > 0)) {
+      e.soundT = 1.05 + Math.random() * 0.65; if (this.audio.fire) this.audio.fire(0.12 + clamp(1 - d / 120) * 0.24);
+    }
+
+    if (R.boat.visible && d < 72) {
+      const fx = -Math.sin(e.heading), fz = -Math.cos(e.heading), o = this.fireObs;
+      o.ax = e.x + fx * 2; o.az = e.z + fz * 2; o.bx = e.x - fx * 2; o.bz = e.z - fz * 2; this.obs.push(o);
+    }
+    if (e.aboard && (e.fireOut || e.burned)) {
+      const q = e.drop, dd = Math.hypot(q.x - p.pos.x, q.z - p.pos.y); this.point(q.x, q.z, q.name, '#7be08a');
+      if (dd < 13 && mph < 5 && !this.game.dockJob && !this.game.atBoard) {
+        this.setPrompt(`put the operator ashore at ${q.name}`);
+        if (this.interact) {
+          if (this.reputation) this.reputation.change('fwc', e.fireOut ? 1.05 : 0.75, e.fireOut ? 'boat-fire-contained' : 'boat-fire-rescue', e.fireOut ? 'You used a marine extinguisher, evacuated the operator, and kept fuel out of the cut.' : 'You pulled an operator clear of a burning skiff and brought him to safety.', true);
+          if (e.burned) this.game.save.engineFireLosses = (this.game.save.engineFireLosses || 0) + 1;
+          this.complete(e.fireOut ? 'Operator and skiff saved' : 'Operator brought ashore', e.fireOut ? 'The fire stayed out. A camp tow will recover the disabled skiff.' : 'He is safe. FWC is containing the sheen around what is left of the skiff.', e.fireOut ? 320 : 220, e.fireOut ? 1.25 : 1, e.fireOut ? 'You stopped an outboard fire before the fuel tank opened.' : 'You pulled a skiff operator out of a fuel fire.', e.fireOut ? 'fire-contained' : 'fire-evacuation', q.name);
+          return;
+        }
+      }
+    } else if (e.known) {
+      if (e.overboard) this.point(e.swimmerX, e.swimmerZ, 'operator in the water', '#ff5a36');
+      else this.point(e.x, e.z, e.fireOut ? 'disabled skiff' : 'burning skiff', e.fireOut ? '#7be08a' : '#ff5a36');
     }
   }
 
@@ -768,13 +985,14 @@ export class EncounterDirector {
     if (!this.active) { this.next -= dt; if (this.next <= 0) this.start(); this.interact = false; this.alternate = false; return; }
     const e = this.active; e.t += dt; this.clearPrompt();
     if (e.type === 'distress') this.updateDistress(e, dt, t);
+    else if (e.type === 'fire') this.updateFire(e, dt, t);
     else if (e.type === 'patrol') this.updatePatrol(e, dt, t);
     else if (e.type === 'smuggler') this.updateSmuggler(e, dt, t);
     else if (e.type === 'netline') this.updateNetline(e, dt, t);
     else this.updateSalvage(e, dt, t);
-    const carryingDistress = e.type === 'distress' && e.state === 'aboard';
+    const carryingDistress = e.type === 'distress' && e.state === 'aboard', carryingFire = e.type === 'fire' && e.aboard;
     const focus = e.type === 'patrol' ? this.rigs.patrol.agent : e.type === 'smuggler' && e.state === 'chase' ? this.rigs.smuggler.agent : e;
-    if (this.active && ((!carryingDistress && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) || (carryingDistress && e.t > 600))) this.finish(false);
+    if (this.active && ((!carryingDistress && !carryingFire && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) || ((carryingDistress || carryingFire) && e.t > 600))) this.finish(false);
     this.interact = false; this.alternate = false;
   }
 

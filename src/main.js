@@ -195,7 +195,7 @@ async function init() {
   const encounters = new EncounterDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, plume, spray, law, reputation });
   game.encounters = encounters;
   law.onAttention = () => { if (!game.state) encounters.next = Math.min(encounters.next, 12); };
-  const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); condition.traffic = life.traffic; game.condition = condition;
+  const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   environment.onLightning = strike => hazards.lightning(strike);
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio });
@@ -207,12 +207,35 @@ async function init() {
   game.incidents = incidents; game.story = story; radio.incidents = incidents; radio.story = story;
   const aftermath = new StormRecovery({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, incidents, encounters, story, radio, reputation, condition });
   game.aftermath = aftermath; radio.aftermath = aftermath;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, ...pipeline.memoryStats() }) };
+  const debugSceneGraphStats = import.meta.env.DEV ? () => {
+    const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
+    const addMaterial = material => {
+      if (!material || materials.has(material)) return; materials.add(material);
+      for (const value of Object.values(material)) if (value?.isTexture) textures.add(value);
+      if (material.uniforms) for (const uniform of Object.values(material.uniforms)) if (uniform?.value?.isTexture) textures.add(uniform.value);
+    };
+    for (const root of roots) root.traverse(object => {
+      objects++; if (object.geometry) geometries.add(object.geometry);
+      if (Array.isArray(object.material)) for (const material of object.material) addMaterial(material); else addMaterial(object.material);
+    });
+    return { objects, geometries: geometries.size, materials: materials.size, textures: textures.size };
+  } : null;
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, spray, plume, game, tricks, gators, skiff, waders, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, condition, ecology, reputation, law, hazards, radio, debugSceneGraphStats, mode: 'full', renderQuality: () => ({ pixelRatio: renderer.getPixelRatio(), maxDrawPixels: MAX_DRAW_PIXELS, ...pipeline.memoryStats() }) };
 
   // ---- input ----
   const keys = {};
   window.addEventListener('keydown', e => {
     keys[e.code] = true;
+    if (import.meta.env.DEV && e.code === 'F7' && !e.repeat) {
+      e.preventDefault(); const types = ['distress', 'fire', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats(); let started = 0;
+      for (let i = 0; i < 6000; i++) if (encounters.start(types[i % types.length], true)) started++;
+      if (encounters.active) encounters.finish(false, true);
+      console.info('[emerald-encounter-stress]', JSON.stringify({ iterations: 6000, started, before, after: debugSceneGraphStats(), active: encounters.active, renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length } }));
+    }
+    if (import.meta.env.DEV && e.code === 'F8' && !e.repeat) {
+      e.preventDefault(); const memory = renderer.info.memory, quality = window.__dbg.renderQuality();
+      console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: debugSceneGraphStats(), fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
+    }
     if (e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
   });
   window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
