@@ -85,7 +85,13 @@ const SUN_DIR = new THREE.Vector3(-0.42, 0.72, -0.55).normalize();
 
 async function init() {
   const startupStartedAt = performance.now();
-  const startupTiming = { terrainPrimedMs: 0, environmentMapMs: 0, localTerrainReadyMs: 0, titleReadyMs: 0 };
+  const startupTiming = {
+    terrainPrimedMs: 0, landmarksReadyMs: 0, vegetationReadyMs: 0, renderTargetsReadyMs: 0,
+    livingWorldReadyMs: 0, directorsReadyMs: 0, environmentMapMs: 0, environmentMapReadyMs: 0,
+    loopReadyMs: 0, warmupReadyMs: 0, terrainWaitMs: 0, localTerrainReadyMs: 0, titleReadyMs: 0,
+  };
+  let terrainReadinessState = { ready: false, timedOut: false, visibleAtStart: false, settled: false, queued: 0, finalizing: 0, inFlight: 0, visible: 0, building: '' };
+  const markStartup = key => { startupTiming[key] = performance.now() - startupStartedAt; };
   const startup = startupPlan(renderProfile.id, { constrainedTransfer: constrainedAssetTransfer(navigator.connection) });
   configureModelLoading({
     deferOptional: startup.deferOptionalModels,
@@ -148,6 +154,7 @@ async function init() {
   dock.rotation.y = Math.atan2(dir.x, dir.y) + Math.PI; // dock extends along its local -Z
   dock.position.y = 0.0;
   scene.add(dock);
+  markStartup('landmarksReadyMs');
 
   const exclusions = [{ x: tower.position.x, z: tower.position.z, r: 7 }, { x: startX, z: startZ, r: 14 }, { x: dock.position.x, z: dock.position.z, r: 4 }, { x: (island.x + dock.position.x) / 2, z: (island.y + dock.position.z) / 2, r: 4 }];
   for (const b of terrain.bars) exclusions.push({ x: b.x, z: b.z, r: b.r });
@@ -166,6 +173,7 @@ async function init() {
   if (startup.solidGrass === 'blocking') await installSolidGrass(true);
   else if (startup.solidGrass === 'deferred') installSolidGrass().catch(error => console.warn('grass models failed to load', error));
   loadModel('tree_c').then(root => { const f = modelBox('tree_c'); if (root && f) root.traverse(o => { if (o.isMesh) veg.windMat(o.material, f.box.min.y, f.box.max.y, f.scale, 0.28); }); });
+  markStartup('vegetationReadyMs');
 
   await new Promise(r => setTimeout(r, 10));
 
@@ -219,6 +227,7 @@ async function init() {
   plume.mat.uniforms.tDepth.value = pipeline.sceneRT.depthTexture;
   plume.mat.uniforms.resolution.value.copy(pipeline.size);
   plume.mat.uniforms.near.value = camera.near; plume.mat.uniforms.far.value = camera.far;
+  markStartup('renderTargetsReadyMs');
   const sunView = new THREE.Vector3(); const camVel = new THREE.Vector3(); const camPrev = new THREE.Vector3();
   // wind: slowly veering direction, gusty strength
   const wind = new THREE.Vector3(0.8, 1.0, 0.6);
@@ -234,6 +243,7 @@ async function init() {
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
   const life = new Life({ terrain, scene, water, camera, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
+  markStartup('livingWorldReadyMs');
   life.traffic.setWildlife({ manatees, gators, waders });
   const playerWater = (x, z, t) => water.waveHeight(x, z, t) + life.traffic.wakeHeightAt(x, z, t);
   world.fx = { plume, spray, audio, fish: life.fish, playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) }; world.onShot = (x, z) => { waders.flushNear(x, z, 140, 'gunshot'); };
@@ -283,6 +293,7 @@ async function init() {
     encounters, incidents, story, aftermath, discoveries, navigationAids, fishing,
   });
   game.marshFire = marshFire;
+  markStartup('directorsReadyMs');
   environment.onLightning = strike => { hazards.lightning(strike); marshFire.lightning(strike); };
   // Apply the saved clock and weather before the first capture. Previously a saved night or hurricane still received
   // the default daytime PMREM for the whole session, even though the visible sky and direct lighting were correct.
@@ -291,6 +302,7 @@ async function init() {
   const environmentMapStartedAt = performance.now();
   if (!environmentReflections.capture(initialReflectionState, 'initial', environmentMapStartedAt)) console.warn('environment reflection capture failed', environmentReflections.lastError);
   startupTiming.environmentMapMs = performance.now() - environmentMapStartedAt;
+  markStartup('environmentMapReadyMs');
   let pageHibernated = false;
   const pageLifecycle = { hibernated: false, hiddenAt: 0, resumedAt: 0, releasedAttachmentBytes: 0, releasedCanvasBytes: 0, activations: 0 };
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
@@ -371,7 +383,7 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
@@ -936,6 +948,7 @@ async function init() {
     renderFrameNo++;
   }
   renderer.setAnimationLoop(frame);
+  markStartup('loopReadyMs');
   const attachmentBytes = () => pipeline.memoryStats().estimatedAttachmentBytes + water.memoryStats().estimatedAttachmentBytes + environmentReflections.resourceStats().retainedBytes + (sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0);
   const hibernatePage = () => {
     if (pageHibernated) return false;
@@ -992,11 +1005,18 @@ async function init() {
     warm.scale.setScalar(0.004); warm.position.set(startX, 0.3, startZ - 6);
     scene.add(warm); skiff.mesh.visible = true; skiff.mesh.position.set(startX, 0, startZ - 12);
   }
+  markStartup('warmupReadyMs');
   const t0 = performance.now();
   const terrainReady = new Promise(r => { const poll = () => {
     const elapsed = performance.now() - t0;
     const ready = startupTerrainReady(startup.terrainReadiness, { settled: terrain.settled(), localVisible: terrain.visibleAt(startX, startZ) });
-    if ((ready && elapsed >= startup.minWaitMs) || elapsed >= startup.maxWaitMs) { startupTiming.localTerrainReadyMs = performance.now() - startupStartedAt; r(); } else setTimeout(poll, 100);
+    if ((ready && elapsed >= startup.minWaitMs) || elapsed >= startup.maxWaitMs) {
+      terrainReadinessState = {
+        ready, timedOut: !ready && elapsed >= startup.maxWaitMs, visibleAtStart: terrain.visibleAt(startX, startZ), settled: terrain.settled(),
+        queued: terrain.queue.length, finalizing: terrain.finalize.length, inFlight: terrain.pool.inFlight, visible: terrain.visible.size, building: terrain.building?.key || '',
+      };
+      startupTiming.terrainWaitMs = elapsed; startupTiming.localTerrainReadyMs = performance.now() - startupStartedAt; r();
+    } else setTimeout(poll, 100);
   }; poll(); });
   await Promise.all([startup.blockingModels.length ? preload(startup.blockingModels) : Promise.resolve(), terrainReady]);
   loadingProgress('Pulling the boat off the trailer', 0.96);

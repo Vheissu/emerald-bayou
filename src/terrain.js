@@ -100,6 +100,7 @@ export class Terrain {
     this.visible = new Set(); this.nextVisible = new Set();
     this.streamNodes = []; this.streamNodeCount = 0;
     this.stats = { chunks: 0, visible: 0, inFlight: 0 };
+    this.finalizerTiming = { steps: 0, totalStepMs: 0, maxStepMs: 0, longSteps: 0, lastStepMs: 0 };
     this.indices = new Map();
     this.surfaceWetness = 0; this.surfaceWaterLevel = 0;
   }
@@ -386,7 +387,13 @@ export class Terrain {
         if (!c.build) { this.finish(c); continue; }
       }
       const c = this.building;
+      const stepStartedAt = performance.now();
       const r = c.build.next();
+      const stepMs = performance.now() - stepStartedAt;
+      const timing = this.finalizerTiming ||= { steps: 0, totalStepMs: 0, maxStepMs: 0, longSteps: 0, lastStepMs: 0 };
+      timing.steps++; timing.totalStepMs += stepMs; timing.lastStepMs = stepMs;
+      timing.maxStepMs = Math.max(timing.maxStepMs, stepMs);
+      if (stepMs > (this.finalizeBudgetMs || DEFAULT_FINALIZE_BUDGET_MS)) timing.longSteps++;
       if (r.done) this.finish(c);
     }
     this.stats.chunks = this.chunks.size; this.stats.visible = this.visible.size; this.stats.inFlight = this.pool.inFlight;
@@ -412,7 +419,8 @@ export class Terrain {
       terrainGrid += grid; terrainGeometry += geometry; vegetation += veg; vegetationInstances += instances; vegetationMeshes += meshes; colliders += c.colliders.length;
       l.terrainGrid += grid; l.terrainGeometry += geometry; l.vegetation += veg; l.vegetationInstances += instances; l.vegetationMeshes += meshes; l.colliders += c.colliders.length;
     }
-    return { chunks: this.chunks.size, visible: this.visible.size, terrainGrid, terrainGeometry, vegetation, vegetationInstances, vegetationMeshes, colliders, streamBudget: { prefetch: this.prefetch || DEFAULT_PREFETCH, finalizeBudgetMs: this.finalizeBudgetMs || DEFAULT_FINALIZE_BUDGET_MS, workerLimit: this.workerLimit || 4, workerCapacity: this.pool.capacity }, finalization: { queued: this.finalize.length, building: this.building?.key || '', paused: this.pausedBuilding?.key || '' }, streamNodes: { active: this.streamNodeCount, capacity: this.streamNodes.length }, levels };
+    const timing = this.finalizerTiming ||= { steps: 0, totalStepMs: 0, maxStepMs: 0, longSteps: 0, lastStepMs: 0 };
+    return { chunks: this.chunks.size, visible: this.visible.size, terrainGrid, terrainGeometry, vegetation, vegetationInstances, vegetationMeshes, colliders, streamBudget: { prefetch: this.prefetch || DEFAULT_PREFETCH, finalizeBudgetMs: this.finalizeBudgetMs || DEFAULT_FINALIZE_BUDGET_MS, workerLimit: this.workerLimit || 4, workerCapacity: this.pool.capacity }, finalization: { queued: this.finalize.length, building: this.building?.key || '', paused: this.pausedBuilding?.key || '', steps: timing.steps, averageStepMs: timing.steps ? timing.totalStepMs / timing.steps : 0, maxStepMs: timing.maxStepMs, longSteps: timing.longSteps, lastStepMs: timing.lastStepMs }, streamNodes: { active: this.streamNodeCount, capacity: this.streamNodes.length }, levels };
   }
   finish(c) {
     this.building = null; c.build = null; c.ready = true;

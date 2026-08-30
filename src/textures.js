@@ -47,6 +47,27 @@ function srgbTex(c, repeat = false) {
 }
 
 // Coverage-preserving mip chain for alpha-tested foliage so distant leaves don't evaporate.
+export function coveragePreservingAlphaScale(data, alphaTest, targetCoverage, iterations = 12) {
+  if (!data?.length) return 1;
+  const histogram = new Uint32Array(256);
+  let pixels = 0;
+  for (let i = 3; i < data.length; i += 4) { histogram[data[i]]++; pixels++; }
+  if (!pixels) return 1;
+  const target = Math.max(0, Math.min(1, Number(targetCoverage) || 0));
+  const coverageAt = scale => {
+    const first = Math.max(0, Math.min(256, Math.floor(alphaTest * 255 / scale) + 1));
+    let covered = 0;
+    for (let alpha = first; alpha < 256; alpha++) covered += histogram[alpha];
+    return covered / pixels;
+  };
+  let lo = 1, hi = 6;
+  for (let it = 0; it < iterations; it++) {
+    const scale = (lo + hi) / 2;
+    if (coverageAt(scale) < target) lo = scale; else hi = scale;
+  }
+  return (lo + hi) / 2;
+}
+
 function coverageMips(base, alphaTest) {
   const levels = [base];
   const ctx0 = base.getContext('2d');
@@ -60,14 +81,7 @@ function coverageMips(base, alphaTest) {
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(prev, 0, 0, w, h);
     const img = ctx.getImageData(0, 0, w, h); const d = img.data;
-    let lo = 1, hi = 6;
-    for (let it = 0; it < 12; it++) {
-      const s = (lo + hi) / 2; let cov = 0;
-      for (let i = 3; i < d.length; i += 4) if (Math.min(1, d[i] / 255 * s) > alphaTest) cov++;
-      cov /= (d.length / 4);
-      if (cov < cov0) lo = s; else hi = s;
-    }
-    const s = (lo + hi) / 2;
+    const s = coveragePreservingAlphaScale(d, alphaTest, cov0);
     for (let i = 3; i < d.length; i += 4) d[i] = Math.min(255, d[i] * s);
     ctx.putImageData(img, 0, 0);
     levels.push(c); prev = c;

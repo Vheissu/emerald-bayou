@@ -9,10 +9,12 @@ function deferredVegetation(chunks) {
     normalAt(x, z, out) { return out.set(0, 1, 0); },
   };
   return Object.assign(Object.create(Vegetation.prototype), {
-    terrain, exclusions: [], kinds: [], solid: [], solidRevision: 0,
+    terrain, exclusions: [], kinds: [], solid: [], solidRevision: 0, detail: 1,
     solidRefreshQueue: [], solidRefreshQueued: new Set(),
     _m: new THREE.Matrix4(), _q: new THREE.Quaternion(), _e: new THREE.Euler(),
     _s: new THREE.Vector3(), _p: new THREE.Vector3(), _normal: new THREE.Vector3(), _col: new THREE.Color(),
+    _tint: new THREE.Color(), _crown: new THREE.Vector4(), _hsl: { h: 0, s: 0, l: 0 },
+    cypTint: new THREE.Color(0.36, 0.48, 0.26), oakTint: new THREE.Color(0.30, 0.42, 0.25), palmTint: new THREE.Color(0.42, 0.55, 0.34),
   });
 }
 
@@ -30,11 +32,63 @@ const grassResource = () => ({
   height: 1,
 });
 
+function recordingBatch() {
+  return {
+    n: 0, sums: new Float64Array(3),
+    add(matrix, color, crown) {
+      this.n++;
+      for (let i = 0; i < matrix.elements.length; i++) this.sums[0] += matrix.elements[i] * (i + 1);
+      if (color) this.sums[1] += color.r * 3 + color.g * 5 + color.b * 7;
+      if (crown) this.sums[2] += crown.x * 3 + crown.y * 5 + crown.z * 7 + crown.w * 11;
+    },
+  };
+}
+
+function populateStreamingCell(interleaveScratch = false, tier = 0) {
+  const vegetation = deferredVegetation([]);
+  Object.assign(vegetation.terrain, {
+    hf: { compute: () => 0.25 }, island: { x: 5000, y: 5000 }, lagoon: { x: 0, y: 0 },
+    riverCenterX: () => 20,
+  });
+  const chunk = { level: tier, x0: 0, z0: -100, size: 100, bio: new Float32Array([0.2]), colliders: [], sample: () => 0.25 };
+  const batches = Object.fromEntries(['cyp', 'oak', 'palm', 'palmetto', 'moss', 'grass', 'reed', 'trunks', 'branches', 'knees'].map(name => [name, recordingBatch()]));
+  const stream = vegetation.populateCell(chunk, 0, -1, tier, batches);
+  let yields = 0, step;
+  do {
+    step = stream.next();
+    if (!step.done) {
+      yields++;
+      if (interleaveScratch) {
+        vegetation._m.makeScale(9, 8, 7); vegetation._q.set(0.2, 0.3, 0.4, 0.5); vegetation._e.set(1, 2, 3);
+        vegetation._s.set(6, 5, 4); vegetation._p.set(3000, 2000, 1000); vegetation._normal.set(1, 0, 0);
+        vegetation._col.set(0xff00ff); vegetation._tint.set(0x00ffff); vegetation._crown.set(9, 8, 7, 6);
+      }
+    }
+  } while (!step.done);
+  return {
+    yields,
+    colliders: chunk.colliders.map(collider => ({ ...collider })),
+    batches: Object.fromEntries(Object.entries(batches).map(([name, batch]) => [name, { n: batch.n, sums: [...batch.sums] }])),
+  };
+}
+
 test('foliage detail keeps silhouettes bounded while reducing retained cards', () => {
   assert.deepEqual([normalizeFoliageDetail(-2), normalizeFoliageDetail(0.56), normalizeFoliageDetail(4), normalizeFoliageDetail('bad')], [0.25, 0.56, 1, 1]);
   assert.deepEqual([0.36, 0.56, 0.82, 1].map(detail => foliageInstanceCount(100, detail, 12)), [36, 56, 82, 100]);
   assert.equal(foliageInstanceCount(5, 0.25, 2), 2);
   assert.equal(foliageInstanceCount(0, 0.5, 2), 0);
+});
+
+test('dense vegetation cells yield repeatedly without changing placements or collisions', () => {
+  const uninterrupted = populateStreamingCell(false), interleaved = populateStreamingCell(true);
+  assert.ok(uninterrupted.yields > 40);
+  assert.ok(uninterrupted.colliders.length > 0);
+  assert.ok(Object.values(uninterrupted.batches).reduce((sum, batch) => sum + batch.n, 0) > 100);
+  assert.deepEqual(interleaved, uninterrupted);
+
+  const distant = populateStreamingCell(false, 3);
+  assert.ok(distant.yields > 3);
+  assert.ok(distant.yields < uninterrupted.yields / 2);
 });
 
 test('retrofits deferred solid grass at one ready chunk per frame', () => {

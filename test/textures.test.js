@@ -1,7 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { bark, plank, scaleTextureUvs, sharedSurfaceTextureStats } from '../src/textures.js';
+import { bark, coveragePreservingAlphaScale, plank, scaleTextureUvs, sharedSurfaceTextureStats } from '../src/textures.js';
+
+test('foliage alpha coverage uses a histogram without changing the scale search', () => {
+  const data = new Uint8ClampedArray(4096 * 4);
+  for (let i = 0; i < 4096; i++) data[i * 4 + 3] = (i * 73 + (i >> 3) * 19) & 255;
+  const alphaTest = 0.5, targetCoverage = 0.417;
+  let lo = 1, hi = 6;
+  for (let iteration = 0; iteration < 12; iteration++) {
+    const scale = (lo + hi) / 2;
+    let covered = 0;
+    for (let i = 3; i < data.length; i += 4) if (Math.min(1, data[i] / 255 * scale) > alphaTest) covered++;
+    if (covered / 4096 < targetCoverage) lo = scale; else hi = scale;
+  }
+  assert.equal(coveragePreservingAlphaScale(data, alphaTest, targetCoverage), (lo + hi) / 2);
+  assert.equal(coveragePreservingAlphaScale(new Uint8ClampedArray(), alphaTest, targetCoverage), 1);
+});
 
 test('texture repeat can move into geometry UVs without changing the sampled coordinates', () => {
   const geometry = new THREE.BoxGeometry(2, 1, 4), uv = geometry.getAttribute('uv');
