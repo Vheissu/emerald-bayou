@@ -2,10 +2,12 @@ import * as THREE from 'three';
 import { spawn } from './models.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './noise.js';
+import { emitWakeStamp } from './wakestamps.js';
 
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const fract = v => v - Math.floor(v);
+const GATOR_WAKE_RANGE_SQ = 70 * 70;
 const feedingDive = (phase, osprey, scatter) => smooth(osprey ? 0.48 : 0.52, osprey ? 0.64 : 0.67, phase) * (1 - smooth(osprey ? 0.74 : 0.76, osprey ? 0.9 : 0.91, phase)) * (1 - scatter);
 
 function birdGeo() {
@@ -433,7 +435,7 @@ export class Gators {
     while (this.list.length < count && tries++ < 40000) {
       const big = this.list.length === 0; // one old bull
       const m = gatorMesh(big ? 1.55 : 0.8 + r() * 0.35);
-      const g = { mesh: m, float: -(0.68 * m.scale.x - 0.08), pos: new THREE.Vector3(0, 0, 0), heading: r() * Math.PI * 2, speed: 0.35 + r() * 0.3, ph: r() * 6, dive: 0, big, hitT: 0, bask: false, slide: 0, charge: 0, chargeCd: 8, bellowT: 5 + r() * 20 };
+      const g = { mesh: m, float: -(0.68 * m.scale.x - 0.08), pos: new THREE.Vector3(0, 0, 0), heading: r() * Math.PI * 2, speed: 0.35 + r() * 0.3, ph: r() * 6, dive: 0, big, hitT: 0, bask: false, slide: 0, charge: 0, chargeCd: 8, bellowT: 5 + r() * 20, wakeKick: 0, wakeSpeed: 0 };
       if (!big && this.list.length % 5 === 2) {
         const z = 120 - r() * 780; const sp = baskSpot(terrain, r, terrain.riverCenterX(z), z, 10, 120);
         if (sp) { g.pos.set(sp.x, sp.h + 0.02, sp.z); g.bask = true; g.toWater = sp.ang; g.heading = sp.ang + Math.PI + (r() - 0.5) * 1.2; this.list.push(g); continue; }
@@ -444,18 +446,27 @@ export class Gators {
     }
     this.eyeshinePool = new GatorEyeshinePool(count); this.eyeshine = this.eyeshinePool.mesh;
     this.calm = false; this.onCharge = null; this.onSlide = null; this.audio = null; this.spooked = 0; this.activity = 1;
+    this.wakeBoatX = 0; this.wakeBoatZ = 0; this.wakeActive = 0;
   }
   // scare(x, z, radius): gators inside the radius slip under for a while
-  scare(x, z, radius = 24) { for (const g of this.list) if (Math.hypot(g.pos.x - x, g.pos.z - z) < radius && g.dive <= 0) g.dive = 6 + Math.random() * 4; }
+  scare(x, z, radius = 24) {
+    for (const g of this.list) if (Math.hypot(g.pos.x - x, g.pos.z - z) < radius && g.dive <= 0) {
+      g.dive = 6 + Math.random() * 4;
+      g.wakeKick = Math.max(Number(g.wakeKick) || 0, 0.85);
+    }
+  }
   update(dt, t, boatX, boatZ, boatSpeed, boatHeading = 0, spotlight = false, night = 0, fog = 0, storm = 0, waterLevel = 0) {
     if (!this.rand) this.rand = mulberry32(91);
+    this.wakeBoatX = boatX; this.wakeBoatZ = boatZ;
     for (const g of this.list) {
+      g.wakeKick = Math.max(0, (Number(g.wakeKick) || 0) - dt * 1.35);
+      g.wakeSpeed = 0;
       if (!g.towed && !g.parked && Math.hypot(g.pos.x - boatX, g.pos.z - boatZ) > 700) {
         const sp = (!g.big && this.rand() < 0.4) ? baskSpot(this.T, this.rand, boatX, boatZ, 160, 450) : null;
-        if (sp) { g.pos.set(sp.x, sp.h + 0.02, sp.z); g.bask = true; g.slide = 0; g.toWater = sp.ang; g.heading = sp.ang + Math.PI + (this.rand() - 0.5) * 1.2; g.dive = 0; }
-        else { const spot = findNear(this.T, this.rand, boatX, boatZ, 160, 450, waterLevel - 3.5, waterLevel - 0.9); if (spot) { g.pos.x = spot.x; g.pos.z = spot.z; g.pos.y = alligatorFloatHeight(g.float, waterLevel); g.dive = 0; g.bask = false; } }
+        if (sp) { g.pos.set(sp.x, sp.h + 0.02, sp.z); g.bask = true; g.slide = 0; g.toWater = sp.ang; g.heading = sp.ang + Math.PI + (this.rand() - 0.5) * 1.2; g.dive = 0; g.wakeKick = 0; }
+        else { const spot = findNear(this.T, this.rand, boatX, boatZ, 160, 450, waterLevel - 3.5, waterLevel - 0.9); if (spot) { g.pos.x = spot.x; g.pos.z = spot.z; g.pos.y = alligatorFloatHeight(g.float, waterLevel); g.dive = 0; g.bask = false; g.wakeKick = 0; } }
       }
-      if (g.towed) { g.pos.y += (alligatorFloatHeight(g.float, waterLevel) - g.pos.y) * (1 - Math.exp(-dt * 4)); g.mesh.position.copy(g.pos); g.mesh.rotation.set(0.05, g.heading, Math.sin(t * 5) * 0.12); g.surfaced = true; continue; }
+      if (g.towed) { g.pos.y += (alligatorFloatHeight(g.float, waterLevel) - g.pos.y) * (1 - Math.exp(-dt * 4)); g.mesh.position.copy(g.pos); g.mesh.rotation.set(0.05, g.heading, Math.sin(t * 5) * 0.12); g.surfaced = true; g.wakeSpeed = Math.min(5.5, Math.abs(boatSpeed) * 0.65); continue; }
       const dB = Math.hypot(boatX - g.pos.x, boatZ - g.pos.z);
       if (g.bask) {
         // sunning on the bank: the boat coming close sends it down the mud and into the water
@@ -471,7 +482,7 @@ export class Gators {
         const gh = this.T.heightAt(g.pos.x, g.pos.z);
         g.pos.y = Math.max(gh + 0.02, alligatorFloatHeight(g.float, waterLevel));
         g.mesh.position.copy(g.pos); g.mesh.rotation.set(Math.sin(t * 14) * 0.03, g.heading, Math.sin(t * 14) * 0.08); // scramble
-        if (gh < waterLevel - 0.35 || g.slide <= 0) { g.bask = false; g.dive = 5 + this.rand() * 3; g.pos.y = alligatorFloatHeight(g.float, waterLevel); if (this.onSplash) this.onSplash(g.pos.x, g.pos.z, g.mesh.scale.x); }
+        if (gh < waterLevel - 0.35 || g.slide <= 0) { g.bask = false; g.dive = 5 + this.rand() * 3; g.wakeKick = Math.max(g.wakeKick, 1); g.pos.y = alligatorFloatHeight(g.float, waterLevel); if (this.onSplash) this.onSplash(g.pos.x, g.pos.z, g.mesh.scale.x); }
         continue;
       }
       // the bull: idle near him for long and he comes at the hull
@@ -482,10 +493,10 @@ export class Gators {
       if (g.charge > 0) {
         g.charge -= dt;
         const want = Math.atan2(-(boatX - g.pos.x), -(boatZ - g.pos.z)); let dh = want - g.heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh)); g.heading += Math.max(-1.5, Math.min(1.5, dh * 3)) * dt;
-        const fx = -Math.sin(g.heading), fz = -Math.cos(g.heading); g.pos.x += fx * 5.5 * dt; g.pos.z += fz * 5.5 * dt;
+        const fx = -Math.sin(g.heading), fz = -Math.cos(g.heading); g.pos.x += fx * 5.5 * dt; g.pos.z += fz * 5.5 * dt; g.wakeSpeed = 5.5;
         g.pos.y += (alligatorFloatHeight(g.float, waterLevel) + 0.15 - g.pos.y) * (1 - Math.exp(-dt * 4));
         g.mesh.position.copy(g.pos); g.mesh.rotation.set(-0.08, g.heading, Math.sin(t * 12) * 0.12); g.surfaced = true;
-        if (dB < 3.4) { g.charge = 0; g.dive = 6; g.hitT = 4; if (this.onCharge) this.onCharge(g); }
+        if (dB < 3.4) { g.charge = 0; g.dive = 6; g.hitT = 4; g.wakeKick = Math.max(g.wakeKick, 1.2); if (this.onCharge) this.onCharge(g); }
         else if (dB > 40) g.charge = 0;
         continue;
       }
@@ -499,11 +510,12 @@ export class Gators {
       if (depthAhead < 0.7 || depthAhead > 3.6) g.heading += (Math.abs(waterLevel - hL - 2) < Math.abs(waterLevel - hR - 2) ? 1 : -1) * dt * 0.9;
       g.heading += Math.sin(t * 0.2 + g.ph) * dt * 0.2;
       const d = Math.hypot(boatX - g.pos.x, boatZ - g.pos.z);
-      if (!g.parked && g.dive <= 0 && d < 22 && boatSpeed > 4.5) g.dive = 7 + Math.random() * 4; // a boat coming in fast: under it goes
+      if (!g.parked && g.dive <= 0 && d < 22 && boatSpeed > 4.5) { g.dive = 7 + Math.random() * 4; g.wakeKick = Math.max(g.wakeKick, 0.85); } // a boat coming in fast: under it goes
       const under = g.dive > 0;
       if (under) g.dive -= dt;
       g.hitT = Math.max(0, g.hitT - dt);
       const sp = g.speed * this.activity * (under ? 1.6 : 1) * (g.parked ? 0.3 : 1);
+      if (!under) g.wakeSpeed = sp;
       g.pos.x += fx * sp * dt; g.pos.z += fz * sp * dt;
       const tgtY = alligatorFloatHeight(g.float, waterLevel, under ? 1 : 0) + (under ? 0 : Math.sin(t * 0.7 + g.ph) * 0.02);
       g.pos.y += (tgtY - g.pos.y) * (1 - Math.exp(-dt * 2.2));
@@ -513,5 +525,34 @@ export class Gators {
     }
     this.eyeshinePool.update(this.list, t, boatX, boatZ, boatHeading, spotlight, night, fog, storm);
   }
-  resourceStats() { return { animals: this.list.length, eyeshine: this.eyeshinePool.resourceStats() }; }
+  // One nearest animal can disturb the existing wake field. A dive pulse replaces its two travelling stamps, keeping
+  // wildlife bounded to two frame slots without creating another texture, mesh, particle pool or per-frame object.
+  stamps(out) {
+    let nearest = null, nearestDistanceSq = GATOR_WAKE_RANGE_SQ;
+    for (const g of this.list) {
+      const speed = Math.max(0, Number(g.wakeSpeed) || 0), kick = Math.max(0, Number(g.wakeKick) || 0);
+      if (g.mesh?.visible === false || g.bask || (kick <= 0.035 && (!g.surfaced || speed <= 0.12))) continue;
+      const dx = g.pos.x - this.wakeBoatX, dz = g.pos.z - this.wakeBoatZ, distanceSq = dx * dx + dz * dz;
+      if (distanceSq < nearestDistanceSq) { nearest = g; nearestDistanceSq = distanceSq; }
+    }
+    this.wakeActive = 0;
+    if (!nearest) return 0;
+
+    const scale = clamp(Number(nearest.mesh?.scale?.x) || 1, 0.6, 1.8);
+    const kick = clamp(Number(nearest.wakeKick) || 0);
+    if (kick > 0.035) {
+      const radius = scale * (1.05 + kick * 0.72);
+      if (emitWakeStamp(out, nearest.pos.x, nearest.pos.z, radius, -0.48 * kick, 0.82 * kick, radius * 1.18) !== null) this.wakeActive = 1;
+      return this.wakeActive;
+    }
+
+    const speed = Math.max(0, Number(nearest.wakeSpeed) || 0), drive = clamp(speed / 5.5);
+    if (drive <= 0.02) return 0;
+    const fx = -Math.sin(nearest.heading), fz = -Math.cos(nearest.heading);
+    const pressureRadius = scale * (0.4 + drive * 0.12), tailRadius = scale * (0.54 + drive * 0.2);
+    if (emitWakeStamp(out, nearest.pos.x + fx * scale * 0.72, nearest.pos.z + fz * scale * 0.72, pressureRadius, -0.2 * drive, 0.015 * drive, pressureRadius) !== null) this.wakeActive++;
+    if (emitWakeStamp(out, nearest.pos.x - fx * scale * 0.92, nearest.pos.z - fz * scale * 0.92, tailRadius, 0.16 * drive, 0.04 * drive + 0.42 * drive * drive, tailRadius * 1.25) !== null) this.wakeActive++;
+    return this.wakeActive;
+  }
+  resourceStats() { return { animals: this.list.length, wakeActive: this.wakeActive, wakeCapacity: 2, eyeshine: this.eyeshinePool.resourceStats() }; }
 }
