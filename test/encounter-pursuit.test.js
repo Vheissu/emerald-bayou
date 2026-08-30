@@ -196,8 +196,50 @@ test('backup rams use one shared contact window and damage the player craft', ()
 
   assert.equal(director.attemptPatrolRam(e, R, 1, 5, 3, 3), true);
   assert.ok(e.contactCd > 0 && e.ramCd > 0); assert.ok(director.phys.vel.y < 0); assert.equal(director.phys.hitTag, 'boat');
+  assert.ok(R.agent.shz > 3, 'the interceptor should recoil astern after driving into the player');
+  assert.ok(R.agent.impactCd > 0); assert.ok(Math.hypot(R.agent.shx || 0, R.agent.shz || 0) <= 5.2000001);
   assert.equal(damage.length, 1); assert.equal(director.law.stats.backupContacts, 1);
   assert.equal(director.attemptPatrolRam(e, R, 2, 5, 4, 4), false); assert.equal(damage.length, 1);
+});
+
+test('a moving encounter hull retains a bounded reciprocal slide, yaw, and heel until hydrodynamic damping absorbs it', () => {
+  const transforms = {}, director = Object.create(EncounterDirector.prototype);
+  Object.assign(director, {
+    phys: { pos: { x: -1, y: -1.6 } }, environment: { waterLevel: 0 }, terrain: { heightAt: () => -2 },
+    water: { waveHeight: () => 0 }, currents: null, _flow: {},
+  });
+  const agent = {
+    active: true, enforcement: false, x: 0, z: 0, heading: 0, speed: 8, want: 8, turn: 0, targetX: 0, targetZ: -100, choice: 0, decisionT: 1,
+    shx: 0, shz: 0, yawKick: 0, heelKick: 0, impactCd: 0,
+    mesh: { userData: {}, position: { set: (...values) => { transforms.position = values; } }, rotation: { set: (...values) => { transforms.rotation = values; } } },
+  };
+  const obstacle = { agent }, retainedMesh = agent.mesh;
+
+  assert.equal(director.hitMovingBoat(obstacle, 8, -1, 0), true);
+  assert.ok(agent.shx > 3.2 && agent.shx <= 5.2); assert.ok(agent.yawKick < 0); assert.ok(agent.heelKick > 0); assert.ok(agent.speed < 8);
+  const before = { x: agent.x, shove: Math.hypot(agent.shx, agent.shz), yaw: Math.abs(agent.yawKick), heel: Math.abs(agent.heelKick), cd: agent.impactCd };
+  director.updateAgent(agent, 0.1, 1, 0, -100, 8);
+  assert.ok(agent.x > before.x); assert.ok(Math.hypot(agent.shx, agent.shz) < before.shove); assert.ok(Math.abs(agent.yawKick) < before.yaw); assert.ok(Math.abs(agent.heelKick) < before.heel);
+  assert.ok(agent.impactCd < before.cd); assert.ok(transforms.rotation[2] > 0); assert.equal(agent.mesh, retainedMesh);
+
+  agent.impactCd = 0; director.impactAgent(agent, 40, 1, 1, 0.8, -20);
+  assert.ok(Math.hypot(agent.shx, agent.shz) <= 5.2000001); assert.ok(Math.abs(agent.yawKick) <= 1.1); assert.ok(Math.abs(agent.heelKick) <= 0.22);
+  director.resetAgentImpact(agent); assert.deepEqual([agent.shx, agent.shz, agent.yawKick, agent.heelKick, agent.impactCd], [0, 0, 0, 0, 0]);
+});
+
+test('striking an active patrol boat starts pursuit and physically knocks the same pooled unit away', () => {
+  const director = Object.create(EncounterDirector.prototype), violations = [], pursuit = [];
+  const agent = { active: true, x: 0, z: 0, heading: 0, speed: 10, shx: 0, shz: 0, yawKick: 0, heelKick: 0, impactCd: 0 };
+  director.active = { type: 'patrol', state: 'check', ramCd: 0, ramHits: 0 };
+  director.rigs = { patrol: { agent }, patrolBackups: [] }; director.phys = { pos: { x: -1, y: -1.6 } };
+  director.law = { stats: {}, add: (...args) => violations.push(args) }; director.reputation = { change() {} };
+  director.audio = { warn() {} }; director.game = { shake: 0, toast() {} };
+  director.beginPatrolPursuit = (e, reason, addViolation) => { pursuit.push([reason, addViolation]); e.state = 'pursuit'; return true; };
+
+  director.hitPatrol(6, -1, 0);
+  assert.equal(director.active.state, 'pursuit'); assert.equal(director.active.ramHits, 1); assert.ok(director.active.ramCd > 0);
+  assert.ok(agent.speed < 10); assert.ok(agent.shx > 2.5); assert.ok(agent.yawKick < 0); assert.ok(agent.heelKick > 0);
+  assert.equal(director.law.stats.patrolRams, 1); assert.equal(violations.length, 1); assert.deepEqual(pursuit, [['rammed FWC patrol', false]]);
 });
 
 test('a downburst sample stays retained while outflow drifts and heels a pursuit hull', () => {

@@ -244,7 +244,10 @@ function makeSpotlightRig(rr, boat, scene) {
 
 function boatAgent(mesh, searchRole = -1) {
   const enforcement = searchRole >= 0;
-  const agent = { mesh, x: 0, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: 0, targetZ: 0, decisionT: 0, active: false, enforcement, tactic: { lead: 0, fore: 0, side: 0 } };
+  const agent = {
+    mesh, x: 0, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: 0, targetZ: 0, decisionT: 0, active: false, enforcement,
+    shx: 0, shz: 0, yawKick: 0, heelKick: 0, impactCd: 0, tactic: { lead: 0, fore: 0, side: 0 },
+  };
   if (enforcement) Object.assign(agent, {
     downburstResponse: 0, downburstDistance: Infinity, downburstNoticeT: 0, downburstReactionDelay: 0.38 + searchRole * 0.16, downburstReacted: false,
     downburstField: {}, localOutflow: { x: 0, z: 0 }, surfaceWind: { x: 0, z: 0, speed: 0 }, windDrift: { x: 0, z: 0, speed: 0 },
@@ -259,7 +262,11 @@ export class EncounterDirector {
   constructor(o) {
     Object.assign(this, o); // scene, terrain, world, water, phys, boat, game, audio, environment, plume, spray, law, reputation
     this.next = 48; this.active = null; this.seenT = 0; this.interact = false; this.alternate = false; this.enabled = false; this.debugIndex = 0;
-    this.obs = []; this.boatObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat' }; this.boatObs2 = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat' }; this.echoObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'skiff' }; this.fixedObs = { x: 0, z: 0, r: 2.1, tag: 'wreck' };
+    this.obs = [];
+    this.boatObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat', agent: null, onHit: (into, nx, nz) => this.hitMovingBoat(this.boatObs, into, nx, nz) };
+    this.boatObs2 = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat', agent: null, onHit: (into, nx, nz) => this.hitMovingBoat(this.boatObs2, into, nx, nz) };
+    this.echoObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'skiff', agent: null, onHit: (into, nx, nz) => this.hitMovingBoat(this.echoObs, into, nx, nz) };
+    this.fixedObs = { x: 0, z: 0, r: 2.1, tag: 'wreck' };
     this.netObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.32, tag: 'monofilament net', onHit: (into) => {
       const e = this.active; if (!e || e.type !== 'netline' || e.state === 'recovering' || e.state === 'secured' || e.hitCd > 0 || into < 1.8) return;
       e.hitCd = 3.5; e.snag = clamp((e.snag || 0) + into * 0.035, 0, 0.65);
@@ -276,9 +283,9 @@ export class EncounterDirector {
       e.hitCd = 2.8; e.scour += into * 0.18; this.game.shake = Math.max(this.game.shake, Math.min(0.28, into * 0.03));
       this.game.toast('Contact with the grounded skiff', 'Back into the deep water and pass the line at idle.', 2.8);
     } };
-    this.raceObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'racing johnboat', onHit: (into) => {
+    this.raceObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'racing johnboat', onHit: (into, nx, nz) => {
       const e = this.active; if (!e || e.type !== 'race' || (e.state !== 'countdown' && e.state !== 'running') || e.hitCd > 0 || into < 2.2) return;
-      e.hitCd = 1.8; e.rams++; e.dirty = true; this.rigs.smuggler.agent.speed *= clamp(1 - into * 0.025, 0.68, 0.92);
+      const A = this.rigs.smuggler.agent; e.hitCd = 1.8; e.rams++; e.dirty = true; A.speed *= clamp(1 - into * 0.025, 0.68, 0.92); this.impactAgent(A, into, nx, nz, 0.46);
       this.game.shake = Math.max(this.game.shake, Math.min(0.3, into * 0.032)); this.audio.warn();
       this.game.toast('Rub rails hit', e.rams > 1 ? 'That is not a clean race anymore.' : 'The johnboat crew is keeping count.', 2.4);
     } };
@@ -481,7 +488,7 @@ export class EncounterDirector {
 
   clearDistressEcho() {
     const R = this.rigs.distress;
-    this.distressEcho = null; R.echoAgent.active = false; R.boat.visible = false; R.survivor.visible = true;
+    this.distressEcho = null; R.echoAgent.active = false; this.resetAgentImpact(R.echoAgent); if (this.echoObs) this.echoObs.agent = null; R.boat.visible = false; R.survivor.visible = true;
     R.flare.group.visible = false; R.flare.light.intensity = 0; R.flare.bulb.scale.setScalar(1);
   }
 
@@ -625,6 +632,7 @@ export class EncounterDirector {
     e.state = 'depart'; e.departT = 7.5; e.assisted = assisted; e.cleanTow = e.scour < 1.8; R.rope.visible = false; this.phys.towDrag = 0;
     if (this.game.wpTarget?.encounter) this.game.wpTarget = null;
     const heading = Math.atan2(-dx, -dz), A = R.agent;
+    this.resetAgentImpact(A);
     Object.assign(A, { x: e.x, z: e.z, heading, speed: 0.25, want: 5.2, turn: 0, decisionT: 0, targetX: e.x + dx / d * 320, targetZ: e.z + dz / d * 320, active: true });
     R.boat.userData.motor.rotation.x = 0.18; this.audio.checkpoint();
     this.game.toast(assisted ? 'Skiff floating clear' : 'Flood tide lifted the skiff', assisted ? 'Line is off. Let the outboard open a safe gap.' : 'The operator waited it out with the motor trimmed.', 3.2);
@@ -1141,7 +1149,7 @@ export class EncounterDirector {
     if (this.terrain.heightAt(gatorX, gatorZ) > -0.48 || this.world.blockedAt(gatorX, gatorZ)) {
       gatorX = at.x + Math.cos(heading) * 13; gatorZ = at.z - Math.sin(heading) * 13;
     }
-    Object.assign(A, { x: at.x, z: at.z, heading, speed: 0.18, want: 0, turn: 0, decisionT: 0, active: true });
+    this.resetAgentImpact(A); Object.assign(A, { x: at.x, z: at.z, heading, speed: 0.18, want: 0, turn: 0, decisionT: 0, active: true });
     A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.set(0, heading, 0); A.mesh.visible = true;
     this.rigs.smuggler.pack.visible = false; S.gunner.visible = true; S.gator.visible = true; S.eyes.visible = false;
     this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0; this.hidePatrolSearchlight(this.rigs.patrol); this.resetPatrolBackups();
@@ -1156,9 +1164,12 @@ export class EncounterDirector {
   updateSpotlightRig(e, dt, t) {
     const S = this.rigs.spotlight, A = this.rigs.smuggler.agent;
     if (e.state === 'waiting') {
+      A.heading += (Number(A.yawKick) || 0) * dt; A.x += (Number(A.shx) || 0) * dt; A.z += (Number(A.shz) || 0) * dt;
+      e.x = A.x; e.z = A.z; e.heading = A.heading;
       A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, t) - 0.05, A.z);
-      A.mesh.rotation.set(0, A.heading, Math.sin(t * 0.72 + e.ph) * 0.025, 'YXZ');
+      A.mesh.rotation.set(0, A.heading, Math.sin(t * 0.72 + e.ph) * 0.025 + (Number(A.heelKick) || 0), 'YXZ');
       if (A.mesh.userData.motor) A.mesh.userData.motor.userData.prop.rotation.z += dt * 8;
+      this.decayAgentImpact(A, dt);
     }
     if (S.gator.visible) {
       const waveY = this.water.waveHeight(e.gatorX, e.gatorZ, t);
@@ -1270,7 +1281,7 @@ export class EncounterDirector {
     const gates = this.raceCourse(at); if (!gates) return false;
     const R = this.rigs.smuggler, A = R.agent, first = gates[0]; R.pack.visible = false;
     const heading = Math.atan2(-(first.x - at.x), -(first.z - at.z));
-    Object.assign(A, { x: at.x, z: at.z, heading, speed: 1.8, want: 4.2, turn: 0, targetX: first.x, targetZ: first.z, decisionT: 0, active: true });
+    this.resetAgentImpact(A); Object.assign(A, { x: at.x, z: at.z, heading, speed: 1.8, want: 4.2, turn: 0, targetX: first.x, targetZ: first.z, decisionT: 0, active: true });
     A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading; A.mesh.visible = true;
     const last = gates[gates.length - 1], fx = -Math.sin(last.heading), fz = -Math.cos(last.heading);
     this.active = {
@@ -1384,18 +1395,18 @@ export class EncounterDirector {
     return fresh;
   }
 
-  hitPatrol(into) {
-    this.hitPatrolUnit(-1, into);
+  hitPatrol(into, nx, nz) {
+    this.hitPatrolUnit(-1, into, nx, nz);
   }
 
-  hitPatrolBackup(index, into) {
-    this.hitPatrolUnit(index, into);
+  hitPatrolBackup(index, into, nx, nz) {
+    this.hitPatrolUnit(index, into, nx, nz);
   }
 
-  hitPatrolUnit(index, into) {
+  hitPatrolUnit(index, into, nx, nz) {
     const e = this.active; if (!e || e.type !== 'patrol' || e.ramCd > 0 || into < 1.6) return;
     const R = index < 0 ? this.rigs.patrol : this.rigs.patrolBackups[index]; if (!R?.agent.active) return;
-    e.ramCd = 2.2; e.ramHits++; R.agent.speed *= clamp(1 - into * 0.025, 0.66, 0.9);
+    e.ramCd = 2.2; e.ramHits++; R.agent.speed *= clamp(1 - into * 0.025, 0.66, 0.9); this.impactAgent(R.agent, into, nx, nz, 0.44);
     if (this.law) {
       this.law.stats.patrolRams = (this.law.stats.patrolRams || 0) + 1;
       if (index >= 0) this.law.stats.backupRams = (this.law.stats.backupRams || 0) + 1;
@@ -1572,7 +1583,7 @@ export class EncounterDirector {
   startSmuggler(at) {
     const R = this.rigs.smuggler; R.pack.visible = true; R.pack.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) + 0.05, at.z);
     const a = at.heading + Math.PI * 0.6, A = R.agent;
-    Object.assign(A, { x: at.x + Math.cos(a) * 115, z: at.z + Math.sin(a) * 115, heading: at.heading, speed: 4, want: 6, active: true });
+    this.resetAgentImpact(A); Object.assign(A, { x: at.x + Math.cos(a) * 115, z: at.z + Math.sin(a) * 115, heading: at.heading, speed: 4, want: 6, active: true });
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading; A.mesh.visible = true;
     const standing = this.reputation ? this.reputation.score('runners') : 0;
     this.active = { type: 'smuggler', x: at.x, z: at.z, state: 'waiting', t: 0, known: false, chase: 0, originX: at.x, originZ: at.z, trusted: standing >= 3, hostile: standing <= -3 };
@@ -1739,7 +1750,7 @@ export class EncounterDirector {
     this.distressEcho = { mode, x: e.x, z: e.z, heading, t: mode === 'depart' ? 34 : 80, ph: e.t || 0 };
     R.boat.position.set(e.x, this.water.waveHeight(e.x, e.z, 0) - 0.05, e.z); R.boat.rotation.set(0, heading, 0); R.boat.visible = true;
     R.survivor.visible = mode === 'depart'; R.passenger.visible = false; R.flare.group.visible = mode === 'adrift';
-    const A = R.echoAgent;
+    const A = R.echoAgent; this.resetAgentImpact(A);
     if (mode === 'depart') Object.assign(A, { x: e.x, z: e.z, heading, speed: 0.8, want: 5.4, turn: 0, decisionT: 0, targetX: e.x - Math.sin(heading) * 420, targetZ: e.z - Math.cos(heading) * 420, active: true });
     else A.active = false;
     return true;
@@ -1761,7 +1772,7 @@ export class EncounterDirector {
     if (R.survivor.visible && d < 180) { const boat = this._personBoat; boat.x = this.phys.pos.x; boat.z = this.phys.pos.y; boat.speed = this.phys.speed; animatePerson(R.survivor, t, dt, boat); }
     if (d < 70) {
       const fx = -Math.sin(E.heading), fz = -Math.cos(E.heading), o = this.echoObs;
-      o.ax = E.x + fx * 2; o.az = E.z + fz * 2; o.bx = E.x - fx * 2; o.bz = E.z - fz * 2; o.tag = E.mode === 'depart' ? 'repaired skiff' : 'abandoned skiff'; this.obs.push(o);
+      o.ax = E.x + fx * 2; o.az = E.z + fz * 2; o.bx = E.x - fx * 2; o.bz = E.z - fz * 2; o.tag = E.mode === 'depart' ? 'repaired skiff' : 'abandoned skiff'; o.agent = E.mode === 'depart' ? A : null; this.obs.push(o);
     }
   }
 
@@ -1782,6 +1793,7 @@ export class EncounterDirector {
     this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
     this.rigs.fire.boat.visible = false; this.rigs.fire.operator.visible = true; this.rigs.fire.swimmer.visible = false; animateEngineFire(this.rigs.fire.fire, 0, 0, 0);
     this.rigs.grounding.boat.visible = false; this.rigs.grounding.operator.visible = true; this.rigs.grounding.rope.visible = false; this.rigs.grounding.lamp.light.intensity = 0; this.rigs.grounding.agent.active = false;
+    for (const A of this.agents) this.resetAgentImpact(A);
     this.resetPatrolAviation(); this.resetPatrolSound(); this.resetPatrolSearch();
     this.rigs.manatee.animal.visible = false; this.rigs.manatee.buoy.visible = false; this.rigs.manatee.rope.visible = false; this.rigs.manatee.rope.material.opacity = 0.86;
     this.rigs.spotlight.gunner.visible = false; this.rigs.spotlight.gator.visible = false; this.rigs.spotlight.eyes.visible = false; this.rigs.spotlight.light.intensity = 0; this.rigs.spotlight.pool.visible = false; this.rigs.spotlight.uniforms.uOpacity.value = 0;
@@ -1795,7 +1807,48 @@ export class EncounterDirector {
     this.next = this.patrolAlert > 0 ? Math.min(normalDelay, this.patrolAlert >= 3 ? 1.5 : this.patrolAlert >= 2 ? 3 : 8) : normalDelay;
   }
 
+  resetAgentImpact(A) {
+    if (!A) return A;
+    A.shx = 0; A.shz = 0; A.yawKick = 0; A.heelKick = 0; A.impactCd = 0;
+    return A;
+  }
+
+  impactAgent(A, into, nx, nz, shoveScale = 0.44, contactAlong = null) {
+    const hit = clamp(Number(into) || 0, 0, 12), normalLength = Math.hypot(nx, nz);
+    if (!A || hit <= 0 || !Number.isFinite(normalLength) || normalLength < 1e-5 || (Number(A.impactCd) || 0) > 0) return false;
+    nx /= normalLength; nz /= normalLength;
+    const impulse = Math.min(4.8, hit * Math.max(0.1, Number(shoveScale) || 0.44));
+    A.shx = (Number(A.shx) || 0) - nx * impulse; A.shz = (Number(A.shz) || 0) - nz * impulse;
+    const shoveSpeed = Math.hypot(A.shx, A.shz), maxShove = 5.2;
+    if (shoveSpeed > maxShove) { const scale = maxShove / shoveSpeed; A.shx *= scale; A.shz *= scale; }
+    const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading);
+    const derivedAlong = this.phys?.pos ? (this.phys.pos.x - A.x) * fx + (this.phys.pos.y - A.z) * fz : 0;
+    const along = clamp(contactAlong === null ? derivedAlong : Number(contactAlong) || 0, -2, 2);
+    const forceX = -nx * impulse, forceZ = -nz * impulse, torque = (fz * along) * forceX - (fx * along) * forceZ;
+    A.yawKick = clamp((Number(A.yawKick) || 0) + clamp(torque * 0.1, -0.85, 0.85), -1.1, 1.1);
+    const rightX = -Math.cos(A.heading), rightZ = Math.sin(A.heading), contactSide = nx * rightX + nz * rightZ;
+    A.heelKick = clamp((Number(A.heelKick) || 0) + contactSide * hit * 0.022, -0.22, 0.22);
+    A.impactCd = 0.16;
+    return true;
+  }
+
+  decayAgentImpact(A, dt) {
+    if (!A) return;
+    const step = Math.max(0, Number(dt) || 0), shoveDecay = Math.exp(-step * 1.9);
+    A.impactCd = Math.max(0, (Number(A.impactCd) || 0) - step);
+    A.shx = (Number(A.shx) || 0) * shoveDecay; A.shz = (Number(A.shz) || 0) * shoveDecay;
+    A.yawKick = (Number(A.yawKick) || 0) * Math.exp(-step * 3.2); A.heelKick = (Number(A.heelKick) || 0) * Math.exp(-step * 2.8);
+  }
+
+  hitMovingBoat(obstacle, into, nx, nz) {
+    const A = obstacle?.agent;
+    if (!A?.active || into < 0.65 || !this.impactAgent(A, into, nx, nz, 0.42)) return false;
+    A.speed *= clamp(1 - into * 0.03, 0.68, 0.98);
+    return true;
+  }
+
   resetPatrolWeather(A) {
+    this.resetAgentImpact(A);
     if (!A?.enforcement) return;
     A.downburstResponse = 0; A.downburstDistance = Infinity; A.downburstNoticeT = 0; A.downburstReacted = false; A.windHeel = 0;
     downburstCraftUrgency(null, A.x, A.z, 'john', A.downburstField); A.localOutflow.x = 0; A.localOutflow.z = 0;
@@ -1845,13 +1898,14 @@ export class EncounterDirector {
     const weatherScale = A.enforcement ? A.weatherTactic.speedScale : 1;
     const want = maxSpeed * weatherScale * (holdRadius && d < holdRadius ? clamp(d / holdRadius, 0.05, 1) : 1) * (1 - Math.min(0.35, Math.abs(dh) * 0.22));
     A.want = want; A.turn = turn;
-    A.speed += (want - A.speed) * (1 - Math.exp(-dt * (want > A.speed ? 0.7 : 2.4))); A.heading += turn * dt;
+    A.speed += (want - A.speed) * (1 - Math.exp(-dt * (want > A.speed ? 0.7 : 2.4))); A.heading += (turn + (Number(A.yawKick) || 0)) * dt;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading);
     const flow = this.currents ? this.currents.flowAt(A.x, A.z, this._flow) : null, drift = A.enforcement ? A.windDrift : null;
-    A.x += (fx * A.speed + (flow ? flow.x : 0) + (drift ? drift.x : 0)) * dt; A.z += (fz * A.speed + (flow ? flow.y : 0) + (drift ? drift.z : 0)) * dt;
+    A.x += (fx * A.speed + (flow ? flow.x : 0) + (drift ? drift.x : 0) + (Number(A.shx) || 0)) * dt; A.z += (fz * A.speed + (flow ? flow.y : 0) + (drift ? drift.z : 0) + (Number(A.shz) || 0)) * dt;
     const y = this.water.waveHeight(A.x, A.z, t), windHeel = A.enforcement ? A.windHeel : 0;
-    A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -turn * A.speed * 0.018 + windHeel, 'YXZ');
+    A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -turn * A.speed * 0.018 + windHeel + (Number(A.heelKick) || 0), 'YXZ');
     if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
+    this.decayAgentImpact(A, dt);
   }
 
   patrolChannelClosureClear(x, z, courseX, courseZ) {
@@ -1891,18 +1945,19 @@ export class EncounterDirector {
 
   holdPatrolChannel(A, C, dt, t) {
     const dh = Math.atan2(Math.sin(C.heading - A.heading), Math.cos(C.heading - A.heading)), turn = clamp(dh * 2.2, -1.1, 1.1), want = 0.35;
-    A.targetX = C.x; A.targetZ = C.z; A.decisionT = 0.1; A.speed += (want - A.speed) * (1 - Math.exp(-dt * 3.2)); A.heading += turn * dt;
+    A.targetX = C.x; A.targetZ = C.z; A.decisionT = 0.1; A.speed += (want - A.speed) * (1 - Math.exp(-dt * 3.2)); A.heading += (turn + (Number(A.yawKick) || 0)) * dt;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), flow = this.currents ? this.currents.flowAt(A.x, A.z, this._flow) : null, drift = A.enforcement ? A.windDrift : null;
-    A.x += (fx * A.speed + (flow ? flow.x : 0) + (drift ? drift.x : 0)) * dt; A.z += (fz * A.speed + (flow ? flow.y : 0) + (drift ? drift.z : 0)) * dt;
+    A.x += (fx * A.speed + (flow ? flow.x : 0) + (drift ? drift.x : 0) + (Number(A.shx) || 0)) * dt; A.z += (fz * A.speed + (flow ? flow.y : 0) + (drift ? drift.z : 0) + (Number(A.shz) || 0)) * dt;
     const y = this.water.waveHeight(A.x, A.z, t), windHeel = A.enforcement ? A.windHeel : 0;
-    A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -turn * A.speed * 0.018 + windHeel, 'YXZ');
+    A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -turn * A.speed * 0.018 + windHeel + (Number(A.heelKick) || 0), 'YXZ');
     if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
+    this.decayAgentImpact(A, dt);
   }
 
   addBoatObstacle(A, tag = 'boat', slot = 0) {
     if (!A.active || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 70) return;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading);
-    const o = slot ? this.boatObs2 : this.boatObs; o.ax = A.x + fx * 2; o.az = A.z + fz * 2; o.bx = A.x - fx * 2; o.bz = A.z - fz * 2; o.tag = tag; this.obs.push(o);
+    const o = slot ? this.boatObs2 : this.boatObs; o.ax = A.x + fx * 2; o.az = A.z + fz * 2; o.bx = A.x - fx * 2; o.bz = A.z - fz * 2; o.tag = tag; o.agent = A; this.obs.push(o);
   }
 
   addPatrolObstacle(A) {
@@ -1943,7 +1998,7 @@ export class EncounterDirector {
     const pulse = 0.5 + 0.5 * Math.sin(t * 7); R.flare.light.intensity = 50 + pulse * 95; R.flare.bulb.scale.setScalar(0.7 + pulse * 0.8);
     if (d < 120) this.known(e, evacuation ? 'Surge pickup' : 'Distress flare', evacuation ? `${e.campName} has one resident waiting at the dock.` : e.recognized ? 'He knows the hull and is waving you in.' : 'A skiff is dead in the water ahead.');
     if (e.known && e.state !== 'aboard') this.point(e.x, e.z, evacuation ? `${e.campName} pickup` : 'distress flare', '#ff5a36');
-    if (d < 70 && R.boat.visible) { const o = this.boatObs; o.ax = e.x - Math.sin(e.heading) * 2; o.az = e.z - Math.cos(e.heading) * 2; o.bx = e.x + Math.sin(e.heading) * 2; o.bz = e.z + Math.cos(e.heading) * 2; o.tag = 'boat'; this.obs.push(o); }
+    if (d < 70 && R.boat.visible) { const o = this.boatObs; o.ax = e.x - Math.sin(e.heading) * 2; o.az = e.z - Math.cos(e.heading) * 2; o.bx = e.x + Math.sin(e.heading) * 2; o.bz = e.z + Math.cos(e.heading) * 2; o.tag = 'boat'; o.agent = null; this.obs.push(o); }
     if (evacuation && e.state === 'waiting') {
       const phase = this.environment.hurricane?.phase;
       if (this.environment.key !== 'hurricane' || phase === 'back-eyewall' || phase === 'trailing-bands') {
@@ -2710,8 +2765,10 @@ export class EncounterDirector {
     const A = R.agent, p = this.phys; if (!pursuitUnitCanRam(role, heat) || A.weatherTactic?.canRam === false || distance >= 6.4 || e.contactCd > 0 || A.speed <= 5) return false;
     const dx = p.pos.x - A.x, dz = p.pos.y - A.z, dd = Math.hypot(dx, dz) || 1, nx = dx / dd, nz = dz / dd;
     const afx = -Math.sin(A.heading), afz = -Math.cos(A.heading), closing = afx * nx + afz * nz; if (closing <= 0.28) return false;
+    const relativeClosing = Math.max(0, A.speed * closing - (p.vel.x * nx + p.vel.y * nz));
     const backup = role > 0, force = backup ? 1.2 + stars * 0.34 : 1.65 + stars * 0.42, cross = afx * nz - afz * nx, impactSide = cross < 0 ? -1 : 1;
     e.contactCd = Math.max(backup ? 2.6 : 2.2, 4.25 - stars * 0.3); e.ramCd = Math.max(e.ramCd, 0.8); A.speed *= backup ? 0.72 : 0.68;
+    this.impactAgent(A, Math.max(2.2, relativeClosing), nx, nz, backup ? 0.32 : 0.36, 1.8);
     p.vel.x += nx * force + afx * (backup ? 0.62 : 0.75); p.vel.y += nz * force + afz * (backup ? 0.62 : 0.75); p.hit = Math.max(p.hit, (backup ? 3.8 : 4.1) + stars * 0.52); p.hitNormal.set(nx, nz); p.hitTag = 'boat';
     p.angVel += impactSide * (backup ? 1.05 + stars * 0.2 : 1.25 + stars * 0.25); p.rollVel += impactSide * (backup ? 1.18 + stars * 0.2 : 1.4 + stars * 0.24); this.game.shake = Math.max(this.game.shake, (backup ? 0.26 : 0.3) + stars * 0.04);
     if (this.condition) this.condition.damage((backup ? 0.26 : 0.35) + stars * 0.16, backup ? 0.04 : 0.06);
