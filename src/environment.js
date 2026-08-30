@@ -535,6 +535,7 @@ export class Environment {
       else this.audio.horn(0.38);
       this.hornCooldown = prolonged ? 5.1 : 0.65;
       this.traffic?.signalPlayerHorn(prolonged);
+      this.onPlayerHorn?.(prolonged);
     }
     // Test hooks are keys as well as methods on window.__dbg.environment. They make every extreme state inspectable.
     if (import.meta.env.DEV && e.code === 'F7') { e.preventDefault(); this.setHour((this.hour + 2) % 24); }

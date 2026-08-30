@@ -116,6 +116,46 @@ export function pursuitVisualHeld(nearestUnitDistance, lostDistance, lineOfSight
   return lineOfSight !== false && Number.isFinite(nearestUnitDistance) && nearestUnitDistance <= Math.max(0, Number(lostDistance) || 0);
 }
 
+// The airboat's fan dominates at throttle, while a fast hull still throws audible spray when the prop is backed off.
+// Idle RPM is deliberately below the perceptible threshold so hiding behind a bank with the engine at idle remains
+// useful counterplay. These values are gameplay ranges, not claims of measured real-world acoustic performance.
+export function pursuitEngineNoise(rpm = 0, speed = 0, throttle = 0, wet = 1) {
+  const prop = clamp((Math.max(0, Number(rpm) || 0) - 0.2) / 0.8, 0, 1);
+  const thrust = clamp(Number(throttle) || 0, 0, 1), hull = clamp((Math.max(0, Number(speed) || 0) - 2) / 13, 0, 1) * clamp(Number(wet) || 0, 0, 1);
+  return clamp(prop * 0.66 + prop * thrust * 0.22 + hull * hull * 0.36, 0, 1);
+}
+
+export function pursuitHearingRange(noise, attention, wind = 0, rain = 0, storm = 0, banked = false) {
+  const level = clamp(Number(noise) || 0, 0, 1); if (level <= 0.015) return 0;
+  const clear = 26 + Math.pow(level, 0.72) * (128 + wantedLevel(attention) * 12);
+  const weatherMask = clamp(1 - Math.max(0, Number(wind) || 0) / 115 - clamp(Number(rain) || 0, 0, 1) * 0.19 - clamp(Number(storm) || 0, 0, 1) * 0.12, 0.48, 1);
+  return clear * weatherMask * (banked ? 0.78 : 1);
+}
+
+export function pursuitHornRange(prolonged = false, wind = 0, rain = 0, storm = 0, banked = false) {
+  const clear = prolonged ? 390 : 245;
+  const weatherMask = clamp(1 - Math.max(0, Number(wind) || 0) / 150 - clamp(Number(rain) || 0, 0, 1) * 0.13 - clamp(Number(storm) || 0, 0, 1) * 0.08, 0.56, 1);
+  return clear * weatherMask * (banked ? 0.82 : 1);
+}
+
+export function pursuitSoundContact(distance, range) {
+  const d = Number(distance), r = Math.max(0, Number(range) || 0);
+  return Number.isFinite(d) && d >= 0 && r > 0 && d <= r;
+}
+
+export function pursuitSoundUncertainty(source = 'engine', signal = 0) {
+  const strength = clamp(Number(signal) || 0, 0, 1);
+  if (source === 'fog horn') return 12 + (1 - strength) * 21;
+  if (source === 'horn') return 15 + (1 - strength) * 24;
+  return 8 + (1 - strength) * 30;
+}
+
+export function pursuitLostProgress(lostFor, dt, visual = false, soundContact = false) {
+  const lost = Math.max(0, Number(lostFor) || 0), step = Math.max(0, Number(dt) || 0);
+  if (visual) return Math.max(0, lost - step * 2.2);
+  return soundContact ? lost : lost + step;
+}
+
 export function pursuitLostDistance(attention, restrictedVisibility = 0, storm = 0) {
   const stars = wantedLevel(attention), concealment = clamp(restrictedVisibility, 0, 1) * 58 + clamp(storm, 0, 1) * 24;
   return clamp(165 + stars * 24 - concealment, 105, 275);

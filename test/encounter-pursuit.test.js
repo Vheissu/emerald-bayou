@@ -71,6 +71,39 @@ test('surface pursuit perception checks banks at AI cadence and any clear unit c
   assert.equal(director.patrolSurfaceVisual(0.06, 180), true);
 });
 
+test('engine noise behind a bank gives patrols an uncertain search fix without granting visual', () => {
+  const director = Object.create(EncounterDirector.prototype), toasts = [], calls = [];
+  director.phys = { pos: { x: 100, y: 0 }, rpm: 1, speed: 13, throttle: 1, wet: 1 };
+  director.environment = { values: { wind: 3, rain: 0, storm: 0 } };
+  director.rigs = { patrol: { agent: { active: true, x: 0, z: 0 } }, patrolBackups: [{ agent: { active: false } }, { agent: { active: false } }] };
+  director.game = { toast: (...args) => toasts.push(args) }; director.radio = { transmit: call => calls.push(call) }; director.law = { stats: {} };
+  director.resetPatrolSound();
+  const e = { type: 'patrol', state: 'pursuit', pursuit: 4, lostT: 0.6, surfaceOccluded: true, lastKnownX: 0, lastKnownZ: 0 };
+
+  assert.equal(director.patrolSurfaceSound(e, 0.25, 3, false), true);
+  assert.equal(director._patrolSound.source, 'engine'); assert.equal(director._patrolSound.contact, true);
+  assert.equal(e.lastKnownX, director._patrolSound.fixX); assert.equal(e.lastKnownZ, director._patrolSound.fixZ);
+  assert.ok(Math.hypot(e.lastKnownX - director.phys.pos.x, e.lastKnownZ - director.phys.pos.y) >= 8);
+  assert.equal(toasts.length, 1); assert.equal(calls.length, 1); assert.equal(director.law.stats.soundContacts, 1);
+
+  director.phys.rpm = 0.18; director.phys.speed = 0; director.phys.throttle = 0; director._patrolSound.timer = 0;
+  assert.equal(director.patrolSurfaceSound(e, 0.25, 3, false), false);
+});
+
+test('a prolonged horn can betray a quiet hull farther away than a normal blast', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 280, y: 0 }, rpm: 0.18, speed: 0, throttle: 0, wet: 1 };
+  director.environment = { values: { wind: 3, rain: 0, storm: 0 } };
+  director.rigs = { patrol: { agent: { active: true, x: 0, z: 0 } }, patrolBackups: [{ agent: { active: false } }, { agent: { active: false } }] };
+  director.game = { toast() {} }; director.law = { stats: {} }; director.resetPatrolSound();
+  const e = { type: 'patrol', state: 'pursuit', pursuit: 5, lostT: 0, surfaceOccluded: true, lastKnownX: 0, lastKnownZ: 0 }; director.active = e;
+
+  assert.equal(director.notePlayerHorn(false), true); assert.equal(director.patrolSurfaceSound(e, 0.1, 3, false), false);
+  director.resetPatrolSound(); assert.equal(director.notePlayerHorn(true), true);
+  assert.equal(director.patrolSurfaceSound(e, 0.1, 3, false), true); assert.equal(director._patrolSound.source, 'fog horn');
+  director.active = null; assert.equal(director.notePlayerHorn(true), false);
+});
+
 test('backup rams use one shared contact window and damage the player craft', () => {
   const director = Object.create(EncounterDirector.prototype), damage = [];
   director.phys = {

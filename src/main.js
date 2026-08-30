@@ -251,6 +251,7 @@ async function init() {
   life.traffic.reputation = reputation; life.traffic.law = law;
   const encounters = new EncounterDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, plume, spray, law, reputation });
   game.encounters = encounters;
+  environment.onPlayerHorn = prolonged => encounters.notePlayerHorn(prolonged);
   law.onAttention = attention => { encounters.requestPatrol(attention); };
   const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, hullDamage: boat.hullDamage, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
   const anchor = new BoatAnchor({ scene, terrain, water, phys, game, audio, environment, currents }); condition.anchor = anchor; game.anchor = anchor;
@@ -259,7 +260,7 @@ async function init() {
   life.traffic.hazards = hazards;
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio, currents, phys, terrain });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
-  environment.radio = radio;
+  environment.radio = radio; encounters.radio = radio;
   hazards.radio = radio;
   ecology.radio = radio;
   condition.radio = radio; life.traffic.radio = radio;

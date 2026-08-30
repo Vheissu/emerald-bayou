@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitAviationVisualRange,
-  pursuitBackupDelay, pursuitChannelClosurePlan, pursuitLostDistance, pursuitLostTime, pursuitSightSampleCount, pursuitSpeed,
+  pursuitBackupDelay, pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance,
+  pursuitLostProgress, pursuitLostTime, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
   pursuitSirenLevel, pursuitSurfaceLineOfSight, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
 
@@ -94,6 +95,27 @@ test('emergent banks break surface visual while submerged bars do not', () => {
   assert.equal(pursuitSurfaceLineOfSight(island, 0, 0, 100, 0, 0), false);
   assert.equal(pursuitSurfaceLineOfSight(island, 0, 0, 12, 0, 0), true);
   assert.ok(pursuitSightSampleCount(275) <= 20); assert.ok(pursuitSightSampleCount(30) >= 3);
+});
+
+test('surface patrols can hear a working airboat without hearing quiet idle through a bank', () => {
+  const idle = pursuitEngineNoise(0.18, 0, 0, 1), working = pursuitEngineNoise(0.72, 9, 0.65, 1), full = pursuitEngineNoise(1, 14, 1, 1);
+  assert.equal(idle, 0); assert.ok(working > 0.4); assert.ok(full > working && full <= 1);
+  const open = pursuitHearingRange(full, 3, 3, 0, 0, false), banked = pursuitHearingRange(full, 3, 3, 0, 0, true), storm = pursuitHearingRange(full, 3, 30, 1, 1, true);
+  assert.ok(open > banked); assert.ok(banked > storm); assert.equal(pursuitHearingRange(idle, 5), 0);
+  assert.equal(pursuitSoundContact(banked, banked), true); assert.equal(pursuitSoundContact(banked + 0.01, banked), false);
+});
+
+test('horn blasts carry farther than prop noise but still yield only an uncertain bearing', () => {
+  const short = pursuitHornRange(false, 3, 0, 0, true), prolonged = pursuitHornRange(true, 3, 0, 0, true), masked = pursuitHornRange(true, 32, 1, 1, true);
+  assert.ok(prolonged > short); assert.ok(masked < prolonged);
+  assert.ok(pursuitSoundUncertainty('engine', 0.8) < pursuitSoundUncertainty('engine', 0.2));
+  assert.ok(pursuitSoundUncertainty('fog horn', 0.5) > 0);
+});
+
+test('visual rapidly clears lost time while a rough sound contact only pauses escape progress', () => {
+  assert.ok(Math.abs(pursuitLostProgress(3, 1, true, false) - 0.8) < 1e-9);
+  assert.equal(pursuitLostProgress(3, 1, false, true), 3);
+  assert.equal(pursuitLostProgress(3, 1, false, false), 4);
 });
 
 test('patrol siren is distance driven, heat aware, and silent outside pursuit', () => {
