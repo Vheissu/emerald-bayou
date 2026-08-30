@@ -133,7 +133,11 @@ The habitat split follows Florida Fish and Wildlife Conservation Commission prof
 
 Fishing owns one rod, one dynamic line buffer, one lure and one landing fish. Those resources are reused on every cast, and the recent-catch ledger stops at twelve entries.
 
-Rare field signs depend on the place and the water rather than a mission marker. Roseate spoonbills settle in Rookery Lakes around first and last light, and a real player wake reaching the bank will flush them. A tagged smalltooth sawfish moves through Mangrove Reach on a rising tide; its receiver ping closes up as the boat approaches, but the fix only resolves while the hull stays at idle distance. Falling water in Cypress Reach can uncover a logging skiff long enough to copy its builder plate. Successful observations stay in the boat log and on the chart.
+Rare field signs depend on the place and the water rather than a mission marker. Roseate spoonbills settle in Rookery Lakes around first and last light, and a real player wake reaching the bank will flush them. A tagged smalltooth sawfish moves through Mangrove Reach on a rising tide; its receiver ping closes up as the boat approaches, but the fix only resolves while the hull stays at idle distance. Falling water in Cypress Reach can uncover a logging skiff long enough to copy its builder plate.
+
+Around dusk or dawn, a Burmese python may cross a still Cypress Reach cut. The boat has to hold 13–38 m off with an open waterline while the field camera records its body, heading and position; a cypress island or trunk between the boat and animal blocks the sequence. Prop wash can make it dive before the fix is complete. The report goes to FWC with no capture attempt, matching the agency's advice to photograph, note the location and report a sighting. Burmese pythons are established in South Florida and are often found near or in water; see the [FWC species profile](https://myfwc.com/wildlifehabitats/profiles/reptiles/snakes/burmese-python/) and [USGS waterway research](https://www.usgs.gov/centers/wetland-and-aquatic-research-center/science/burmese-python-environmental-dna-edna-surveys). Successful observations stay in the boat log and on the chart.
+
+The python is one 18-segment instanced mesh with one procedural geometry and one material. Its surface wake uses one record from the existing wake pool. Repeated sightings reuse the same rig.
 
 On some calm nights, a plankton bloom reaches Mangrove Reach. The water stays black until something moves through it: hull wakes, fish, paddles and splashes leave blue fire behind them. A bright Moon takes some contrast out of the glow without switching off the bloom; moonset and thick cloud bring the darker water back. The bloom runs through the existing wake and particle buffers, so it adds no extra scene assets.
 
@@ -200,6 +204,7 @@ __dbg.environment.setHour(17.4)           // pick the light
 __dbg.environment.lunarSnapshot()         // phase, illumination, tide range, altitude, live light
 __dbg.ecology.setBioluminescence(1, true) // force the disturbed-water glow
 __dbg.discoveries.start('roseate-roost', true, true) // force a nearby field sign
+__dbg.discoveries.start('python-crossing', true, true) // force the swimming-python report
 __dbg.navigationAids.resourceStats()     // active aids, draw calls, faults and reports
 __dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fish budget
 __dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspection
@@ -219,6 +224,8 @@ __dbg.audio.spatialStats()                 // listener direction and spatial-nod
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera
 __dbg.terrain.hf.computeBase(x, z)        // { h, s, lake, prairie, hammock }
 ```
+
+In development, `Shift+F12` toggles a frozen, safe-distance python inspection and restores the previous boat position and clock when pressed again. It is stripped from the production build.
 
 `import('/src/inspect.js')` from the console gives you a helper for measuring and previewing a GLB, which is how the entries in `SPEC` in `src/models.js` were worked out.
 

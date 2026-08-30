@@ -805,7 +805,7 @@ async function init() {
       const sediment = shallowWaterSediment(sedimentConditions);
       const sedimentStamp = addPlayerStamp(pt, 2.4, 0, 0, 2.2);
       if (sedimentStamp) { sedimentStamp.sediment = sediment * 2.2; sedimentStamp.sedimentRadius = sedimentPlumeRadius(sedimentConditions.depth, phys.speed); }
-      skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); dolphins.stamps(stamps); encounters.stamps(stamps); gators.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); hazards.stamps(stamps);
+      skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); dolphins.stamps(stamps); encounters.stamps(stamps); gators.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); discoveries.stamps(stamps); hazards.stamps(stamps);
       wakeCenter.set(phys.pos.x + fwd2.x * -25, phys.pos.y + fwd2.y * -25);
       water.simulate(wakeCenter, stamps, dt, currentFlow);
     }
