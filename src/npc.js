@@ -126,10 +126,12 @@ export class SkiffAI {
     this.roll = 0; this.pitch = 0; this.dist = 0;
     this.lookAhead = 14; this._flow = new THREE.Vector2(); this._forward = new THREE.Vector2();
   }
-  start(path, speed) {
-    this.path = path; this.i = 0; this.maxSpeed = speed || 11.6;
+  start(path, speed, lookAhead = 14) {
+    this.path = path; this.i = 0; this.maxSpeed = speed || 11.6; this.lookAhead = Math.max(4, Number(lookAhead) || 14);
     this.pos.set(path[0].x, path[0].z); this.heading = Math.atan2(-(path[1].x - path[0].x), -(path[1].z - path[0].z));
-    this.vel.set(0, 0); this.speed = 0; this.active = true; this.done = false; this.mesh.visible = true; this.dist = 0;
+    this.vel.set(0, 0); this.speed = 0; this.active = true; this.done = false; this.dist = 0; this.roll = 0; this.pitch = 0;
+    this.mesh.position.set(this.pos.x, this.waveFn(this.pos.x, this.pos.y, 0) - 0.05, this.pos.y);
+    this.mesh.rotation.set(0, this.heading, 0); this.mesh.userData.motor.rotation.y = 0; this.mesh.visible = true;
   }
   stop() { this.active = false; this.mesh.visible = false; }
   forward(out = new THREE.Vector2()) { return out.set(-Math.sin(this.heading), -Math.cos(this.heading)); }
