@@ -25,6 +25,7 @@ import { configureModelLoading, loadGeo, loadModel, modelBox, modelLoadingStats,
 import { Environment } from './environment.js';
 import { EncounterDirector } from './encounters.js';
 import { BoatCondition } from './condition.js';
+import { BoatAnchor } from './anchor.js';
 import { Ecology } from './ecology.js';
 import { Law } from './law.js';
 import { StormHazards } from './stormhazards.js';
@@ -246,6 +247,7 @@ async function init() {
   game.encounters = encounters;
   law.onAttention = attention => { encounters.requestPatrol(attention); };
   const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, hullDamage: boat.hullDamage, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
+  const anchor = new BoatAnchor({ scene, terrain, water, phys, game, audio, environment, currents }); condition.anchor = anchor; game.anchor = anchor;
   loadingProgress('Waking the backcountry', 0.68);
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   life.traffic.hazards = hazards;
@@ -324,6 +326,7 @@ async function init() {
       fieldDiscoveries: discoveries.resourceStats(),
       navigationAids: navigationAids.resourceStats(),
       fishing: fishing.resourceStats(),
+      anchor: anchor.resourceStats(),
       nocturnalWetland: nocturnal.resourceStats(),
       settlementPower: environment.settlementPowerSnapshot(),
       residentRoutines: ecology.residentRoutineSnapshot(),
@@ -352,7 +355,7 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
@@ -614,6 +617,7 @@ async function init() {
     }
     else { phys.impact = 0; phys.hit = 0; phys.landedFrame = false; }
     environment.applyPhysics(dt);
+    anchor.update(dt, time, started && !game.paused);
     phys.forward(fwd2); phys.right(rgt2);
     tricks.update(dt, time);
     game.update(dt, time);

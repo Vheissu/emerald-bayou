@@ -316,10 +316,11 @@ export class BoatCondition {
 
   render() {
     if (!this.el || !this.promptEl) return;
-    const S = this.state;
+    const S = this.state, anchor = this.anchor?.hud?.();
     const row = (name, text, pct) => `<div class="condition-row"><span>${name}</span><b>${text}</b><i><em style="width:${clamp(pct) * 100}%"></em></i></div>`;
-    this.el.innerHTML = row('Fuel', `${S.fuel.toFixed(1)} gal`, S.fuel / this.maxFuel) + row('Hull', `${Math.round(S.hull)}%`, S.hull / 100) + row('Engine', `${Math.round(S.engine)}%`, S.engine / 100) + (S.bilge > 0.035 ? row('Bilge', `${Math.round(S.bilge * 100)}%`, 1 - S.bilge) : '');
-    this.el.classList.toggle('warn', S.fuel < 3.6 || S.hull < 50 || S.engine < 40 || S.bilge > 0.55);
+    const anchorRow = anchor?.active ? row('Anchor', anchor.text, 1 - anchor.load) : '';
+    this.el.innerHTML = row('Fuel', `${S.fuel.toFixed(1)} gal`, S.fuel / this.maxFuel) + row('Hull', `${Math.round(S.hull)}%`, S.hull / 100) + row('Engine', `${Math.round(S.engine)}%`, S.engine / 100) + (S.bilge > 0.035 ? row('Bilge', `${Math.round(S.bilge * 100)}%`, 1 - S.bilge) : '') + anchorRow;
+    this.el.classList.toggle('warn', S.fuel < 3.6 || S.hull < 50 || S.engine < 40 || S.bilge > 0.55 || anchor?.warning);
     if (!this.enabled || this.game.paused) { this.promptEl.classList.remove('on'); return; }
     if (this.towPending) {
       const A = (this.traffic || this.game.life?.traffic)?.towStatus?.(), dist = A?.active ? `${Math.max(0, Math.round(A.distance * 3.28084 / 10) * 10)} ft` : '';
@@ -328,6 +329,7 @@ export class BoatCondition {
       const cost = this.estimate(this.serviceHere), note = this.serviceHere.note ? ` · ${this.serviceHere.note}` : '';
       this.promptEl.innerHTML = `<b>F</b> ${cost > 1 || S.bilge > 0.01 ? `service at ${this.serviceHere.name} · $${cost}${note}` : `boat ready · ${this.serviceHere.name}${note}`}`; this.promptEl.classList.add('on');
     } else if (this.needsTow()) { this.promptEl.innerHTML = '<b>T</b> call a tow to the tower · up to $120'; this.promptEl.classList.add('on'); }
+    else if (anchor?.active) { this.promptEl.innerHTML = '<b>G</b> weigh anchor'; this.promptEl.classList.add('on'); }
     else this.promptEl.classList.remove('on');
   }
 }

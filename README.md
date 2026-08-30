@@ -56,6 +56,7 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 | `E` | interact (job posts, docks, traps, field notes, aid reports) |
 | `C` | cast, set the hook, and reel while held |
 | `X` | reel in or cut the line |
+| `G` | set or weigh the anchor while nearly stopped |
 | `M` | jobs board |
 | `Tab` | chart |
 | `L` | spotlight |
@@ -83,6 +84,8 @@ The horn is live on `H`. It gives a short warning in clear water and a 4.5-secon
 The marked channels now match the radio traffic. Red aids carry even numbers, green aids carry odd numbers, and each light keeps its own flash characteristic while the float moves with chop and current. Hail, tropical weather, hurricanes and vessel strikes can leave a marker dim, dark, off station or down. Idle alongside a bad aid to report the exact fix; it stays on the working chart until FWC maintenance clears it.
 
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
+
+At idle, `G` drops the bow anchor. Water depth sets the amount of rode, and the hull drifts within that scope before the line comes tight. Firm mud holds best; soft muck, shell and sawgrass give sooner. Current, storm load or too much throttle can make the anchor drag while the bow swings into the load. The rode is one fixed 12-point line, reused for every drop.
 
 Rain stays on the world after the curtain passes. Banks and tidal mud keep a dark wet film, while roofs, dock timber, trees and sawgrass lose roughness and catch sharper light until the sun and wind dry them. Hail melt and dense night fog can leave moisture too. The pass changes two terrain uniforms and the existing cached materials; it creates no textures, meshes, draw calls, render targets or shader programs.
 

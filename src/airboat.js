@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { anchorConstraintForce } from './anchor.js';
 import * as TEX from './textures.js';
 import { WORLD_HALF } from './heightfield.js';
 import { loadModel } from './models.js';
@@ -346,6 +347,8 @@ export class AirboatPhysics {
     this.topSpeed = 0;
     this.windHeel = 0; this.apparentWind = 0; this.crosswind = 0;
     this.current = new THREE.Vector2(); this.waterSpeed = 0;
+    this.anchorConstraint = null;
+    this._anchorForce = { x: 0, z: 0, force: 0, load: 0, distance: 0, extension: 0, taut: false };
     this._g = new THREE.Vector2(); this._n = new THREE.Vector2(); this._f = new THREE.Vector2(); this._r = new THREE.Vector2();
   }
   forward(out = new THREE.Vector2()) { return out.set(-Math.sin(this.heading), -Math.cos(this.heading)); }
@@ -404,6 +407,8 @@ export class AirboatPhysics {
     this.resolveCircle(cx, cz, obstacle.r, obstacle, forward);
   }
   reset(x, z, heading = this.heading) {
+    if (this.anchorConstraint) this.anchorConstraint.resetRequested = true;
+    this.anchorConstraint = null;
     this.pos.set(x, z); this.vel.set(0, 0); this.heading = heading; this.angVel = 0; this.y = 0; this.vy = 0;
     this.pitch = this.roll = this.pitchVel = this.rollVel = 0; this.prevFloor = null; this.airTime = 0; this.airPeak = 0; this.lastFloat.set(x, z);
     this.airborne = false; this.landedFrame = false; this.takeoffFrame = false; this.landQuality = ''; this.wipeT = 0; this.stuffT = 0; this.impact = 0; this.hit = 0;
@@ -479,6 +484,13 @@ export class AirboatPhysics {
     const rvx = this.vel.x - cx, rvz = this.vel.y - cz;
     const vf = rvx * fwd.x + rvz * fwd.y, vl = rvx * rgt.x + rvz * rgt.y;
     this.waterSpeed = Math.hypot(rvx, rvz);
+    const anchor = this.anchorConstraint, anchorForce = this._anchorForce;
+    if (anchor?.active && anchor.engaged && this.wet > 0.2 && !this.airborne) {
+      anchorConstraintForce(anchor, px + fwd.x * 2.2, pz + fwd.y * 2.2, this.vel.x, this.vel.y, anchorForce);
+    } else {
+      anchorForce.x = 0; anchorForce.z = 0; anchorForce.force = 0; anchorForce.load = 0; anchorForce.distance = 0; anchorForce.extension = 0; anchorForce.taut = false;
+      if (anchor) { anchor.load = 0; anchor.force = 0; anchor.taut = false; }
+    }
 
     // ---- yaw ----
     const wash = (0.25 + Math.max(this.throttle, 0) * 0.75) * powerScale;
@@ -488,6 +500,7 @@ export class AirboatPhysics {
     let torque = this.airborne ? steer * 6.0 * wash : steer * (0.8 * wash + Math.abs(vf) * 0.045 * wet);
     torque -= this.angVel * ((this.airborne ? 1.0 : 0.55) + (1.35 + Math.abs(vf) * 0.08) * wet + land * 1.2);
     torque -= vl * 0.045 * wet * (vf >= 0 ? 1 : -1);
+    if (anchorForce.taut) torque -= (fwd.x * 2.2 * anchorForce.z - fwd.y * 2.2 * anchorForce.x) * 0.055 / massF;
     this.angVel += torque * dt;
     this.heading += this.angVel * dt;
 
@@ -497,6 +510,7 @@ export class AirboatPhysics {
     const dl = (-vl * Math.abs(vl) * 0.22 - vl * 0.9) * wet;
     let ax = fwd.x * (thrust + df) + rgt.x * dl;
     let az = fwd.y * (thrust + df) + rgt.y * dl;
+    ax += anchorForce.x / massF; az += anchorForce.z / massF;
     // air drag
     const sp0 = this.vel.length();
     ax -= this.vel.x * sp0 * 0.012; az -= this.vel.y * sp0 * 0.012;

@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.playwright-cli/
+output/playwright/
 
 # Meshy GLBs — shipped as a release asset, not in the repo.
 # See the Assets section of the README.
