@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './noise.js';
 import { buildModelBoatFallback, buildSkiff } from './npc.js';
-import { buildAirboat, loadDriver } from './airboat.js';
+import { buildAirboat, installDriver } from './airboat.js';
 import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
 import * as TEX from './textures.js';
 import { spawn, loadGeo, SPEC } from './models.js';
@@ -380,7 +380,7 @@ export class Traffic {
     this.state = saved && saved.version === 1 ? saved : { version: 1, operators: {} };
     this.state.operators ||= {}; fx.game.save.traffic = this.state;
     const john = (hull) => { const m = buildSkiff({ crew: true }); if (hull) recolor(m, 0x6f7570, hull); return { kind: 'john', mesh: m, crew: m.userData.crew, people: m.userData.people, max: 6.5 + this.rand() * 2.5 }; };
-    const air = (hull) => { const b = buildAirboat(); recolor(b.group, 0xd8dcda, hull); loadDriver(b.group).catch(() => {}); return { kind: 'air', mesh: b.group, prop: b.prop, blur: b.blur, rudders: b.rudders, max: 10.5 + this.rand() * 2.5 }; };
+    const air = (hull) => { const b = buildAirboat(); recolor(b.group, 0xd8dcda, hull); installDriver(b.group); return { kind: 'air', mesh: b.group, prop: b.prop, blur: b.blur, rudders: b.rudders, max: 10.5 + this.rand() * 2.5 }; };
     const cruiser = () => { const m = spawn('boat_dreams', buildModelBoatFallback('boat_dreams')); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0.45, 0.95, 0.3); d.rotation.y = Math.PI; m.add(d); const pas = person(rr, { pose: 'sit', hat: false, vest: true }); pas.position.set(-0.45, 0.95, 0.3); pas.rotation.y = Math.PI; m.add(pas); pair(d, pas); return { kind: 'cruiser', mesh: m, max: 8.5 + rr() * 2, people: [d, pas] }; };
     const skiff = () => { const m = spawn('beau_boat', buildModelBoatFallback('beau_boat')); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0, 0.32, 0.7); d.rotation.y = Math.PI; m.add(d); return { kind: 'skiff', mesh: m, max: 5 + rr() * 1.5, people: [d] }; };
     const paddlers = () => ({ kind: 'canoe', mesh: canoe(this.rand), max: 1.3 + this.rand() * 0.4 });

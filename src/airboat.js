@@ -4,6 +4,8 @@ import * as TEX from './textures.js';
 import { WORLD_HALF } from './heightfield.js';
 import { loadModel } from './models.js';
 import { HullDamageMaterial } from './hulldamage.js';
+import { person } from './folk.js';
+import { mulberry32 } from './noise.js';
 
 // Boat local frame: +X starboard, +Y up, -Z forward (bow at -Z).
 // The player boat and scheduled traffic use the same detailed hull. Keep one immutable render template so its
@@ -291,7 +293,7 @@ export function buildAirboat({ dynamicWetness = false, initialWetness = 0.06, pr
 let driverTemplatePromise = null;
 function driverTemplate() {
   if (!driverTemplatePromise) driverTemplatePromise = loadModel('driver').then(root => {
-    if (!root) throw new Error('driver model unavailable');
+    if (!root) return null;
     root.name = 'seated driver template';
     root.traverse(o => {
       if (!o.isMesh) return;
@@ -309,8 +311,63 @@ export function createSeatedDriverMount(root, { scale = 0.65, position = [0, 1.7
   const model = root.clone(true); model.name = 'seated driver model'; model.scale.setScalar(scale); model.rotation.y = yaw;
   mount.userData.model = model; mount.add(model); return mount;
 }
+
+let proceduralDriverSeatResources = null, proceduralDriverSerial = 0;
+function fallbackDriverSeatResources() {
+  if (!proceduralDriverSeatResources) proceduralDriverSeatResources = {
+    cushionGeometry: new THREE.BoxGeometry(0.58, 0.12, 0.52),
+    pedestalGeometry: new THREE.CylinderGeometry(0.075, 0.1, 0.5, 8),
+    cushionMaterial: new THREE.MeshStandardMaterial({ color: 0x242625, roughness: 0.88 }),
+    pedestalMaterial: new THREE.MeshStandardMaterial({ color: 0x4c5150, roughness: 0.4, metalness: 0.72 }),
+  };
+  return proceduralDriverSeatResources;
+}
+
+// Fallback and Performance deliberately skip the optional 563 kB driver GLB. Keep a real operator at the helm on
+// those tiers by reusing the jointed resident body resources; only the tiny seat cushion and pedestal are unique.
+export function createProceduralDriverMount({ seed = 0x51a7b0a7, position = [0, 1.7, 0.4], yaw = Math.PI } = {}) {
+  const root = new THREE.Group(); root.name = 'procedural seated driver root';
+  const operator = person(mulberry32(Number(seed) >>> 0), { pose: 'sit', drive: true, hat: true, vest: true });
+  operator.name = 'procedural airboat operator';
+  // The authored model's mount stays fixed. These child offsets put the hips on the 1.62 m seat and the boots over
+  // the existing footrest, letting an eventual GLB swap preserve the whole-body spring state without a visible pop.
+  operator.position.set(0, -0.55, -0.22); root.add(operator);
+  const resources = fallbackDriverSeatResources();
+  const cushion = new THREE.Mesh(resources.cushionGeometry, resources.cushionMaterial); cushion.name = 'procedural driver seat'; cushion.position.set(0, -0.14, -0.3); cushion.castShadow = true; root.add(cushion);
+  const pedestal = new THREE.Mesh(resources.pedestalGeometry, resources.pedestalMaterial); pedestal.name = 'procedural driver pedestal'; pedestal.position.set(0, -0.41, -0.3); pedestal.castShadow = true; root.add(pedestal);
+  const mount = createSeatedDriverMount(root, { scale: 1, position, yaw });
+  mount.userData.fallback = true; mount.userData.operator = mount.userData.model.getObjectByName('procedural airboat operator');
+  return mount;
+}
+
+export function replaceSeatedDriverModel(mount, root, { scale = 0.65, yaw = Math.PI } = {}) {
+  if (!mount?.isGroup || !root) return null;
+  const previous = mount.userData.model, model = root.clone(true);
+  model.name = 'seated driver model'; model.scale.setScalar(scale); model.rotation.y = yaw;
+  if (previous) mount.remove(previous);
+  mount.add(model); mount.userData.model = model; mount.userData.operator = null; mount.userData.fallback = false;
+  return model;
+}
+
+// Installs a visible operator synchronously, then upgrades that same animated mount if the authored model is allowed
+// to load. The retained promise is cleared after settlement so low-memory sessions do not keep loader bookkeeping.
+export function installDriver(group, options = {}) {
+  const seed = Number.isFinite(Number(options.seed)) ? Number(options.seed) : 0x51a7b0a7 + proceduralDriverSerial++ * 977;
+  const position = options.position || [0, 1.7, 0.4], yaw = Number.isFinite(Number(options.yaw)) ? Number(options.yaw) : Math.PI;
+  const mount = createProceduralDriverMount({ seed, position, yaw }); group.add(mount);
+  const ready = driverTemplate().then(root => {
+    if (root) replaceSeatedDriverModel(mount, root, { scale: options.scale, yaw });
+    mount.userData.modelReady = null; return mount;
+  }).catch(error => {
+    mount.userData.modelReady = null; mount.userData.modelLoadFailed = true;
+    console.warn('driver model upgrade failed', error); return mount;
+  });
+  mount.userData.modelReady = ready; return mount;
+}
+
 export function loadDriver(group, options = {}) {
   return driverTemplate().then(root => {
+    if (!root) return null;
     const mount = createSeatedDriverMount(root, options); group.add(mount); return mount;
   });
 }

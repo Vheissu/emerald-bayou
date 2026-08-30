@@ -4,7 +4,7 @@ import { Sky } from './sky.js';
 import { MAX_WAKE_STAMPS, Water } from './water.js';
 import { Vegetation } from './vegetation.js';
 import { buildTower, buildDock } from './tower.js';
-import { airboatSprayExposure, buildAirboat, AirboatPhysics, loadDriver, updateAirboatWetness, updateSeatedDriverPose } from './airboat.js';
+import { airboatSprayExposure, buildAirboat, AirboatPhysics, installDriver, updateAirboatWetness, updateSeatedDriverPose } from './airboat.js';
 import { Birds, Waders, Manatees, Gators } from './wildlife.js';
 import { SkiffAI } from './npc.js';
 import { Spray, Plume } from './particles.js';
@@ -181,8 +181,7 @@ async function init() {
   // ---- boat ----
   const boat = buildAirboat({ dynamicWetness: true, profile: renderProfile });
   scene.add(boat.group);
-  let playerDriver = null;
-  loadDriver(boat.group).then(driver => { playerDriver = driver; }).catch(e => console.warn('driver model failed to load', e));
+  const playerDriver = installDriver(boat.group);
   const phys = new AirboatPhysics(terrain, startX, startZ, 0);
   // streamed chunks: vegetation is built per chunk as its ground arrives; tree trunks register as colliders
   terrain.onReady(c => veg.buildChunk(c));
