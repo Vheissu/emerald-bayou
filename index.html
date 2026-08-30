@@ -155,13 +155,16 @@
   #start .meta { margin-top:15px; font-size:11px; letter-spacing:0.19em; opacity:0.62; text-transform:uppercase; }
   #start .controls { margin-top:28px; padding-top:14px; border-top:1px solid rgba(243,237,224,0.19); font-size:12px; letter-spacing:0.11em; line-height:1.8; opacity:0.76; text-transform:uppercase; }
   #start .controls b { color:var(--foam); font-weight:600; }
+  .input-gamepad { display:none; }
+  html[data-input="gamepad"] .input-keyboard { display:none; }
+  html[data-input="gamepad"] .input-gamepad { display:inline; }
   #start .title-actions { align-self:end; min-width:0; padding:17px 0 5px; border-top:1px solid rgba(243,237,224,0.26); border-bottom:1px solid rgba(243,237,224,0.16); }
   #start .action-label { margin:0 16px 10px; color:var(--gold); font-size:10px; font-weight:650; letter-spacing:0.28em; text-transform:uppercase; }
   #start .title-action { position:relative; display:block; width:100%; box-sizing:border-box; padding:13px 16px 12px 19px; border:0; border-left:3px solid transparent; background:rgba(5,14,11,0.28); color:var(--foam); text-align:left; cursor:pointer; transition:background .16s,border-color .16s,transform .16s; }
   #start .title-action + .title-action { margin-top:2px; }
-  #start .title-action:hover, #start .title-action:focus-visible { outline:none; border-left-color:var(--marker); background:rgba(243,237,224,0.1); transform:translateX(3px); }
+  #start .title-action:hover, #start .title-action:focus-visible, html[data-input="gamepad"] #start .title-action:focus { outline:none; border-left-color:var(--marker); background:rgba(243,237,224,0.1); transform:translateX(3px); }
   #start .title-action.primary { border-left-color:var(--marker); background:var(--marker); color:#1b160e; box-shadow:0 12px 34px rgba(0,0,0,0.28); }
-  #start .title-action.primary:hover, #start .title-action.primary:focus-visible { background:#ff8a3c; }
+  #start .title-action.primary:hover, #start .title-action.primary:focus-visible, html[data-input="gamepad"] #start .title-action.primary:focus { background:#ff8a3c; }
   #start .title-action.danger { border-left-color:#d45642; background:rgba(80,25,18,0.48); }
   #start .title-action .action-name { display:flex; align-items:center; justify-content:space-between; gap:14px; font-size:18px; font-weight:700; letter-spacing:0.18em; text-transform:uppercase; }
   #start .title-action .action-name::after { content:"›"; font-size:24px; font-weight:400; line-height:.7; opacity:.58; }
@@ -245,6 +248,11 @@
   #menu .system-action small { grid-column:1; margin-top:-11px; font-family:"Avenir Next","Futura",sans-serif; font-size:12px; line-height:1.4; opacity:.58; }
   #menu .system-action em { grid-column:2; grid-row:1 / 3; align-self:center; color:var(--gold); font-size:12px; font-style:normal; letter-spacing:.12em; text-transform:uppercase; }
   #menu .menu-keybar { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:0 clamp(30px,5vw,74px); border-top:1px solid rgba(243,237,224,.13); background:rgba(4,13,10,.72); font-size:10px; letter-spacing:.14em; text-transform:uppercase; opacity:.72; }
+  #menu .menu-keybar > .input-keyboard { display:flex; }
+  #menu .menu-keybar > .input-gamepad { display:none; }
+  #menu .menu-keybar > .input-keyboard, #menu .menu-keybar > .input-gamepad { width:100%; align-items:center; justify-content:space-between; gap:20px; }
+  html[data-input="gamepad"] #menu .menu-keybar > .input-keyboard { display:none; }
+  html[data-input="gamepad"] #menu .menu-keybar > .input-gamepad { display:flex; }
   #menu .menu-keybar b { color:var(--gold); font-weight:650; }
   /* results */
   #result { text-align:center; }
@@ -288,7 +296,7 @@
     #menu .m .d { grid-column:2; }
     #menu .kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
     #menu .menu-keybar { padding:0 16px; font-size:9px; }
-    #menu .menu-keybar span:last-child { display:none; }
+    #menu .menu-keybar > span > span:last-child { display:none; }
     #worldState { right:18px; top:84px; }
     #worldState .world-detail { display:none; }
     #fireState { right:18px; }
@@ -360,7 +368,7 @@
     <h1>Emerald <em>Bayou</em></h1>
     <p class="deck">Run freight. Race the cuts. Stay off FWC’s board when the weather turns.</p>
     <p class="meta">250 sq mi of open bayou &nbsp;·&nbsp; living wildlife &nbsp;·&nbsp; no road home</p>
-    <p class="controls"><b>W / S</b> throttle &nbsp; <b>A / D</b> rudder &nbsp; <b>drag</b> look &nbsp; <b>L</b> spotlight<br><b>H</b> horn &nbsp; <b>C</b> fish &nbsp; <b>G</b> anchor &nbsp; <b>M</b> jobs &nbsp; <b>Tab</b> chart &nbsp; <b>R</b> reset</p>
+    <p class="controls"><span class="input-keyboard"><b>W / S</b> throttle &nbsp; <b>A / D</b> rudder &nbsp; <b>drag</b> look &nbsp; <b>E</b> interact<br><b>L</b> spotlight &nbsp; <b>H</b> horn &nbsp; <b>C</b> fish &nbsp; <b>G</b> anchor &nbsp; <b>M</b> jobs &nbsp; <b>Tab</b> chart &nbsp; <b>R</b> reset</span><span class="input-gamepad"><b>RT / LT</b> throttle &nbsp; <b>left stick</b> rudder &nbsp; <b>right stick</b> look / click to centre<br><b>A / Cross</b> interact &nbsp; <b>B / Circle</b> alternate / cut &nbsp; <b>X / Square</b> fish &nbsp; <b>Y / Triangle</b> anchor<br><b>LB</b> light &nbsp; <b>RB</b> horn &nbsp; <b>D-pad up</b> jobs &nbsp; <b>View</b> chart &nbsp; <b>Menu / Options</b> pause</span></p>
   </div>
   <nav class="title-actions" aria-label="Main menu">
     <p class="action-label">Tower dock</p>
@@ -368,7 +376,7 @@
     <button type="button" class="title-action" data-title-action="jobs"><span class="action-name">Jobs &amp; story</span><span class="action-detail" id="titleJobsDetail">Sixteen jobs, resident work and Running Dark</span></button>
     <button type="button" class="title-action" id="titleNew" data-title-action="new" hidden><span class="action-name">New game</span><span class="action-detail">Clear this hull and return to the tower dock</span></button>
     <button type="button" class="title-action" data-title-action="graphics"><span class="action-name">Graphics</span><span class="action-detail" id="titleGraphicsDetail">Auto</span></button>
-    <div class="title-foot"><span id="titleWorldDetail">Day 1 · fair</span><span>Enter select</span></div>
+    <div class="title-foot"><span id="titleWorldDetail">Day 1 · fair</span><span><span class="input-keyboard">Enter to select</span><span class="input-gamepad">A / Cross to select</span></span></div>
   </nav>
 </div>
 <div id="menu" class="overlay hidden" tabindex="-1" aria-hidden="true"></div>

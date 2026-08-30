@@ -53,6 +53,7 @@ import { CHASE_CAMERA_SAMPLES, chaseCameraBoomLimit, chaseCameraBoomStep } from 
 import { environmentCaptureAllowed, SkyEnvironmentMap } from './environmentmap.js';
 import { sampleWakeFields } from './wakefield.js';
 import { warmDeferredShaders } from './shaderwarmup.js';
+import { GAMEPAD_BUTTON, STANDARD_GAMEPAD_BUTTONS, StandardGamepadInput, gamepadActionCode, gamepadBoatInput } from './gamepad.js';
 
 const app = document.getElementById('app');
 const loadingProgress = (message, value) => window.__loadingScreen?.progress?.(message, value);
@@ -406,14 +407,22 @@ async function init() {
     },
   }) : null;
   let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, durationMs: 0 };
+  let controller = null;
   window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
-  }) };
+  }), controllerStats: () => controller?.snapshot?.() || { connected: false } };
 
   // ---- input ----
   const keys = {};
   let started = false;
+  let dispatchingControllerKey = false, activeInputMode = 'keyboard';
+  const setInputMode = mode => {
+    const next = mode === 'gamepad' ? 'gamepad' : 'keyboard';
+    if (next === activeInputMode && document.documentElement.dataset.input === next) return;
+    activeInputMode = next; document.documentElement.dataset.input = next;
+  };
+  setInputMode('keyboard');
   const reflectionState = { hour: environment.hour, sunAltitude: environment.sunDir.y, storm: environment.values.storm, cover: environment.values.cloud };
   let reflectionIdleJob = 0, reflectionIdleKind = '';
   const syncReflectionState = () => {
@@ -449,6 +458,7 @@ async function init() {
   };
   let encounterStressRunning = false;
   window.addEventListener('keydown', e => {
+    if (!dispatchingControllerKey) setInputMode('keyboard');
     keys[e.code] = true;
     if (import.meta.env.DEV && e.code === 'F9' && e.shiftKey && !e.repeat) {
       e.preventDefault(); story.resetDebug(); if (encounters.active) encounters.finish(false, true); encounters.next = 999; return;
@@ -524,15 +534,16 @@ async function init() {
   window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
   window.addEventListener('keyup', e => { keys[e.code] = false; });
   let dragging = false, camYaw = 0, camPitch = 0, lastX = 0, lastY = 0, idle = 0, camDist = 8.2;
-  renderer.domElement.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+  renderer.domElement.addEventListener('mousedown', e => { setInputMode('keyboard'); dragging = true; lastX = e.clientX; lastY = e.clientY; });
   window.addEventListener('mouseup', () => { dragging = false; idle = 0; });
   window.addEventListener('mousemove', e => {
     if (!dragging) return;
+    setInputMode('keyboard');
     camYaw -= (e.clientX - lastX) * 0.005; camPitch += (e.clientY - lastY) * 0.003;
     camPitch = Math.max(-0.25, Math.min(0.6, camPitch));
     lastX = e.clientX; lastY = e.clientY;
   });
-  window.addEventListener('wheel', e => { camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
+  window.addEventListener('wheel', e => { setInputMode('keyboard'); camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
   let resizeTimer = 0; const drawingSize = new THREE.Vector2();
   const resize = () => {
     if (pageHibernated) return false;
@@ -600,7 +611,7 @@ async function init() {
     return profile;
   };
   const beginGame = (jobs = false) => {
-    audio.start(); started = true; game.playing = true; game.paused = false;
+    audio.start(); void audio.resume(); started = true; game.playing = true; game.paused = false;
     startEl.classList.add('hidden'); startEl.setAttribute('aria-hidden', 'true');
     scheduleDeferredModels(startup.modelReleaseDelayMs, true);
     if (jobs) game.openMenu('jobs');
@@ -642,6 +653,46 @@ async function init() {
   };
   const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2(), skiffForward = new THREE.Vector2();
   const input = { throttle: 0, steer: 0, pitch: 0 };
+  const controllerBoatInput = { throttle: 0, steer: 0, pitch: 0 };
+  const controllerActionContext = { overlay: false, fishing: false, result: false };
+  const controllerKeyCodes = new Array(STANDARD_GAMEPAD_BUTTONS).fill('');
+  const emitControllerKey = (type, code) => {
+    if (!code) return false;
+    dispatchingControllerKey = true;
+    try { return window.dispatchEvent(new KeyboardEvent(type, { code, bubbles: true, cancelable: true, repeat: false })); }
+    finally { dispatchingControllerKey = false; }
+  };
+  const moveTitleFocus = direction => {
+    const options = Array.from(startEl.querySelectorAll('[data-title-action]')).filter(button => !button.hidden);
+    if (!options.length) return false;
+    const current = options.indexOf(document.activeElement), next = current < 0 ? 0 : (current + options.length + direction) % options.length;
+    options[next].focus({ preventScroll: true }); return true;
+  };
+  controller = new StandardGamepadInput({
+    onUse: () => setInputMode('gamepad'),
+    onDisconnect: () => { if (activeInputMode === 'gamepad') setInputMode('keyboard'); },
+    onButtonDown: index => {
+      controllerKeyCodes[index] = '';
+      if (!started && !startEl.classList.contains('hidden')) {
+        if (index === GAMEPAD_BUTTON.SOUTH) (document.activeElement?.matches?.('[data-title-action]') ? document.activeElement : titlePrimary).click();
+        else if (index === GAMEPAD_BUTTON.DPAD_UP || index === GAMEPAD_BUTTON.DPAD_LEFT) moveTitleFocus(-1);
+        else if (index === GAMEPAD_BUTTON.DPAD_DOWN || index === GAMEPAD_BUTTON.DPAD_RIGHT) moveTitleFocus(1);
+        return;
+      }
+      if (index === GAMEPAD_BUTTON.RIGHT_STICK && !game.menuOpen && !game.mapOpen && !game.resultOpen) {
+        camYaw = 0; camPitch = 0; idle = 0; return;
+      }
+      controllerActionContext.overlay = game.menuOpen || game.mapOpen || game.resultOpen;
+      controllerActionContext.fishing = fishing.blocking();
+      controllerActionContext.result = game.resultOpen;
+      const code = gamepadActionCode(index, controllerActionContext);
+      controllerKeyCodes[index] = code; emitControllerKey('keydown', code);
+    },
+    onButtonUp: index => {
+      const code = controllerKeyCodes[index] || '';
+      controllerKeyCodes[index] = ''; emitControllerKey('keyup', code);
+    },
+  });
   const boatWetnessConditions = { dt: 0, rain: 0, spray: 0, splash: 0, wind: 0, speed: 0, daylight: 0, windScreen: 0 };
   const sedimentConditions = { depth: 0, speed: 0, rpm: 0, throttle: 0, wet: 0, murk: 0 };
   const clock = new THREE.Timer(); clock.connect(document);
@@ -703,6 +754,8 @@ async function init() {
     clock.update();
     const frameDelta = clock.getDelta();
     const dtRaw = Math.min(frameDelta, 0.05);
+    const controllerState = controller.poll();
+    gamepadBoatInput(controllerState, controllerBoatInput);
     reportModelFramePressure(frameDelta, started && !game.paused && !document.hidden);
     const qualityChange = qualityController.observe(frameDelta, started && !game.paused && !document.hidden);
     if (qualityChange) {
@@ -721,6 +774,11 @@ async function init() {
       if (keys.KeyA || keys.ArrowLeft) input.steer += 1;
       if (keys.KeyD || keys.ArrowRight) input.steer -= 1;
       input.pitch = ((keys.KeyS || keys.ArrowDown) ? 1 : 0) - ((keys.ShiftLeft || keys.ShiftRight) ? 1 : 0); // in the air: S leans back (nose up), Shift leans forward
+      if (controllerState.connected) {
+        if (!input.throttle) input.throttle = controllerBoatInput.throttle;
+        if (!input.steer) input.steer = controllerBoatInput.steer;
+        if (!input.pitch) input.pitch = controllerBoatInput.pitch;
+      }
     }
 
     if (started && !game.paused) {
@@ -745,6 +803,7 @@ async function init() {
       if (phys.wet > 0.25) { audio.splash(Math.min(2.4, phys.impact / 3), q === 'stuffed' || q === 'wipeout'); landingSplash(phys.impact, q); }
       else audio.thud(Math.min(1.5, phys.impact / 4));
       fovKick = Math.min(14, fovKick + phys.impact * 1.1);
+      controller.rumble(Math.min(1, 0.22 + phys.impact * 0.075), Math.min(0.82, 0.12 + phys.impact * 0.05), Math.min(280, 75 + phys.impact * 14));
       if (q === 'wipeout') { slowT = 1.0; slowK = 0.32; }
       else if (q === 'stuffed') { slowT = 0.7; slowK = 0.4; }
       else if (q === 'clean' && phys.airTime > 1.2) { slowT = 0.28; slowK = 0.5; }
@@ -755,6 +814,7 @@ async function init() {
     }
     if (phys.hit > 3) {
       audio.thud(Math.min(1.5, phys.hit / 6)); fovKick = Math.min(14, fovKick + phys.hit * 0.6);
+      controller.rumble(Math.min(1, 0.28 + phys.hit * 0.065), Math.min(0.85, 0.18 + phys.hit * 0.045), Math.min(260, 80 + phys.hit * 12));
       // bark and leaf litter knocked loose, plus the water thrown up by the hull slewing sideways
       const nx = phys.hitNormal.x, nz = phys.hitNormal.y; const n = Math.floor(10 + phys.hit * 4);
       for (let i = 0; i < n; i++) plume.emit(phys.pos.x - nx * 1.6 + jitter() * 1.2, 0.3 + Math.random() * 1.2, phys.pos.y - nz * 1.6 + jitter() * 1.2, nx * (1 + Math.random() * 2) + jitter() * 2, 0.5 + Math.random() * 2, nz * (1 + Math.random() * 2) + jitter() * 2, 0.2 + Math.random() * 0.3, 0.9, 0.5 + Math.random() * 0.4, 0.28);
@@ -773,6 +833,12 @@ async function init() {
     fishing.update(dtRaw, time, started && !game.paused);
 
     // camera
+    const controllerLooking = Math.abs(controllerState.lookX) > 0.001 || Math.abs(controllerState.lookY) > 0.001;
+    if (controllerLooking && started && !game.paused && !game.menuOpen && !game.mapOpen && !game.resultOpen) {
+      camYaw -= controllerState.lookX * dtRaw * 2.2;
+      camPitch += controllerState.lookY * dtRaw * 1.45;
+      camPitch = Math.max(-0.25, Math.min(0.6, camPitch)); idle = 0;
+    }
     if (!dragging) { idle += dt; if (idle > 2.5) { camYaw *= Math.exp(-dt * 1.2); camPitch *= Math.exp(-dt * 1.2); } }
     const yaw = phys.heading + camYaw;
     camBack.set(Math.sin(yaw), 0, Math.cos(yaw));
