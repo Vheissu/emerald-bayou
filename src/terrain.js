@@ -87,6 +87,7 @@ export class Terrain {
     this.streamNodes = []; this.streamNodeCount = 0;
     this.stats = { chunks: 0, visible: 0, inFlight: 0 };
     this.indices = new Map();
+    this.surfaceWetness = 0; this.surfaceWaterLevel = 0;
   }
   // ---- queries ----
   heightAt(x, z) {
@@ -142,14 +143,16 @@ export class Terrain {
       shader.uniforms.tSand = { value: tex.sand };
       shader.uniforms.tNoise = { value: tex.noise };
       shader.uniforms.uTime = { value: 0 };
+      shader.uniforms.uSurfaceWetness = { value: this.surfaceWetness };
+      shader.uniforms.uWaterLevel = { value: this.surfaceWaterLevel };
       this.uniforms = shader.uniforms;
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
-        .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying float vWorldUp;')
+        .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vWorldUp = normalize(mat3(modelMatrix) * normal).y;');
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>
-          varying vec3 vWPos;
-          uniform sampler2D tGrass, tMud, tSand, tNoise; uniform float uTime;
+          varying vec3 vWPos; varying float vWorldUp;
+          uniform sampler2D tGrass, tMud, tSand, tNoise; uniform float uTime, uSurfaceWetness, uWaterLevel;
           float caustic(vec2 p, float t) {
             float a = texture2D(tNoise, p * 0.55 + vec2(t * 0.021, t * 0.017)).g;
             float b = texture2D(tNoise, p * 0.62 - vec2(t * 0.019, -t * 0.023) + 0.37).b;
@@ -170,22 +173,32 @@ export class Terrain {
           vec3 sandB = texture2D(tSand, tuv * 0.031 + 0.2).rgb;
           sand = mix(sand, sandB, 0.5) * 0.75;
           float h = vWPos.y;
-          float slope = 1.0 - clamp(normalize(vNormal).z, 0.0, 1.0);
+          float slope = 1.0 - clamp(vWorldUp, 0.0, 1.0);
           float wMud = smoothstep(1.9, 0.2, h + macro2 * 1.2);
           float wSand = smoothstep(-0.05, -0.9, h);
           wSand = max(wSand, smoothstep(0.7, 0.15, abs(h - 0.45)) * smoothstep(0.3, 0.55, macro) * (1.0 - slope * 3.0));
           vec3 col = mix(grass, mud, wMud);
           col = mix(col, sand, wSand);
           col *= mix(0.45, 1.0, smoothstep(-0.25, 1.2, h));
+          float shorelineDamp = 1.0 - smoothstep(uWaterLevel + 0.1, uWaterLevel + 1.1, h);
+          float wetFilm = clamp((uSurfaceWetness + shorelineDamp * 0.38) * smoothstep(0.2, 0.82, vWorldUp), 0.0, 1.0);
+          col *= mix(1.0, 0.72, wetFilm);
           if (h < 0.05) {
             float c = caustic(tuv, uTime);
             col *= 1.0 + c * 0.75 * smoothstep(-6.0, -0.3, h) * smoothstep(0.05, -0.15, h);
           }
-          diffuseColor.rgb *= col;`);
+          diffuseColor.rgb *= col;`)
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.2, wetFilm * wetFilm);');
     };
-    mat.customProgramCacheKey = () => 'terrain';
+    mat.customProgramCacheKey = () => 'terrain-wet-v1';
     this.material = mat;
     return this.group;
+  }
+
+  setSurfaceWetness(wetness = 0, waterLevel = 0) {
+    this.surfaceWetness = Math.max(0, Math.min(1, Number(wetness) || 0));
+    this.surfaceWaterLevel = Number.isFinite(Number(waterLevel)) ? Number(waterLevel) : 0;
+    if (this.uniforms) { this.uniforms.uSurfaceWetness.value = this.surfaceWetness; this.uniforms.uWaterLevel.value = this.surfaceWaterLevel; }
   }
   makeGeometry(c) {
     const n = c.segs, w = n + 1, step = c.size / n, shared = this.indexFor(n), count = w * w + shared.skirtCount;

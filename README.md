@@ -82,6 +82,8 @@ The marked channels now match the radio traffic. Red aids carry even numbers, gr
 
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
 
+Rain stays on the world after the curtain passes. Banks and tidal mud keep a dark wet film, while roofs, dock timber, trees and sawgrass lose roughness and catch sharper light until the sun and wind dry them. Hail melt and dense night fog can leave moisture too. The pass changes two terrain uniforms and the existing cached materials; it creates no textures, meshes, draw calls, render targets or shader programs.
+
 Severe tropical bands can now lift loose planks and sheet metal over the channel. They move with the gusts, tumble, become solid only as they drop to cage height, then splash down and remain as floating prop hazards. Logs stay in the water. The behavior follows National Weather Service and National Hurricane Center guidance that tropical-storm and hurricane winds can turn loose outdoor material into [windborne debris](https://www.weather.gov/mhx/hurricaneprep) and [flying missiles](https://www.nhc.noaa.gov/prepare/hazards.php); the debris left obstructing shallow channels follows [NOAA's account of storm-driven marine debris](https://oceanservice.noaa.gov/facts/disaster-debris.html).
 
 The storm system still owns twelve debris bodies and 44 meshes. Sharing their immutable parts cut the pool from 44 geometries and 16 materials to six geometries and seven materials. Its seventeen wake records are reused every frame, and thunder loops the existing engine-noise sample instead of generating a new 2.8 second buffer for every strike.
@@ -138,6 +140,7 @@ Minimap tiles are 200 m and rendered by the same workers, then cached. The chart
 src/
   heightfield.js   terrain function, no three.js, shared with the workers
   terrain.js       quadtree streaming and LOD
+  surfacewetness.js retained rain film and shared outdoor material response
   vegetation.js    per-chunk instancing, wind shader
   water.js         reflection, refraction, murk, tide
   airboat.js       hull physics, air control, landing quality
@@ -175,6 +178,7 @@ __dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspect
 __dbg.nocturnal.resourceStats()           // point count, draw count and geometry bytes
 __dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
 __dbg.environment.settlementPowerSnapshot() // five-light pool, live grid stress and saved strike outages
+__dbg.environment.surfaceWetnessSnapshot()  // live film target, shared material writes and terrain uniforms
 __dbg.encounters.pursuitSnapshot()        // surface units, shared visual and pooled aviation state
 __dbg.hazards.resourceStats()             // debris pool, shared resources and wake-stamp budget
 __dbg.audio.spatialStats()                 // listener direction and spatial-node allocation totals

@@ -6,6 +6,7 @@ import * as TEX from './textures.js';
 import { person, animatePerson, wave, aim, fishingUpdate, cooler, chair, bucket, fishingLine } from './folk.js';
 import { spawn, SPEC } from './models.js';
 import { cachedResource, sharedResource } from './cache.js';
+import { registerWetMaterial } from './surfacewetness.js';
 
 // The people who live out here: stilt houses with a dock and a washing line, public boat ramps with a truck and an
 // empty trailer, tin-roof boathouses over the water, duck blinds in the shallows. One per ~800 m cell, seeded, placed
@@ -18,7 +19,7 @@ const boxGeometry = (w, h, d) => geometry('box', [w, h, d], () => new THREE.BoxG
 const cylinderGeometry = (r0, r1, h, seg = 8) => geometry('cylinder', [r0, r1, h, seg], () => new THREE.CylinderGeometry(r0, r1, h, seg));
 const sphereGeometry = (r, w, h) => geometry('sphere', [r, w, h], () => new THREE.SphereGeometry(r, w, h));
 const torusGeometry = (r, tube, radial, tubular) => geometry('torus', [r, tube, radial, tubular], () => new THREE.TorusGeometry(r, tube, radial, tubular));
-const material = (key, params) => cachedResource(materialCache, key, () => new THREE.MeshStandardMaterial(params));
+const material = (key, params) => cachedResource(materialCache, key, () => registerWetMaterial(new THREE.MeshStandardMaterial(params)));
 
 const wood = material('wood', { color: 0x6b5641, roughness: 0.95 });
 const greyWood = material('grey-wood', { color: 0x8e877a, roughness: 0.95 });
@@ -92,7 +93,7 @@ function recolor(group, from, to) {
   group.traverse(o => {
     if (!o.isMesh || !o.material?.color || o.material.color.getHex() !== from) return;
     const source = o.material, key = `${source.uuid}:${to}`;
-    o.material = cachedResource(tintCache, key, () => { const tinted = source.clone(); tinted.color.setHex(to); return tinted; });
+    o.material = cachedResource(tintCache, key, () => { const tinted = source.clone(); tinted.color.setHex(to); return registerWetMaterial(tinted); });
   });
 }
 // ---- kinds ----

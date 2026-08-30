@@ -307,6 +307,7 @@ async function init() {
       fishing: fishing.resourceStats(),
       nocturnalWetland: nocturnal.resourceStats(),
       settlementPower: environment.settlementPowerSnapshot(),
+      surfaceWetness: environment.surfaceWetnessSnapshot(),
       feedingActivity: ecology.feedingSnapshot(),
     },
     chart: worldMap.memoryStats(),

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as TEX from './textures.js';
 import { sharedResource } from './cache.js';
+import { registerWetMaterial } from './surfacewetness.js';
 
 function box(w, h, d, x, y, z, ry = 0, rz = 0) {
   const g = new THREE.BoxGeometry(w, h, d);
@@ -97,8 +98,8 @@ export function buildTower() {
   const frameGeo = mergeGeometries(parts.map(g => g.toNonIndexed()), false);
   const plankGeo = mergeGeometries(plankParts.map(g => g.toNonIndexed()), false);
   const woodTex = TEX.plank();
-  const frameMat = new THREE.MeshStandardMaterial({ color: 0x3a352f, roughness: 0.85, metalness: 0.1 });
-  const plankMat = new THREE.MeshStandardMaterial({ map: woodTex, color: 0x9a8f80, roughness: 0.9 });
+  const frameMat = registerWetMaterial(new THREE.MeshStandardMaterial({ color: 0x3a352f, roughness: 0.85, metalness: 0.1 }));
+  const plankMat = registerWetMaterial(new THREE.MeshStandardMaterial({ map: woodTex, color: 0x9a8f80, roughness: 0.9 }));
   const group = new THREE.Group();
   const frame = new THREE.Mesh(frameGeo, frameMat); frame.castShadow = true; frame.receiveShadow = true;
   const planks = new THREE.Mesh(plankGeo, plankMat); planks.castShadow = true; planks.receiveShadow = true;
@@ -113,8 +114,8 @@ function dockMaterials() {
   if (sharedDockMaterials) return sharedDockMaterials;
   const woodTex = sharedResource(TEX.plank());
   sharedDockMaterials = {
-    frameMat: sharedResource(new THREE.MeshStandardMaterial({ color: 0x3a352f, roughness: 0.85 })),
-    plankMat: sharedResource(new THREE.MeshStandardMaterial({ map: woodTex, color: 0x9a8f80, roughness: 0.9 })),
+    frameMat: sharedResource(registerWetMaterial(new THREE.MeshStandardMaterial({ color: 0x3a352f, roughness: 0.85 }))),
+    plankMat: sharedResource(registerWetMaterial(new THREE.MeshStandardMaterial({ map: woodTex, color: 0x9a8f80, roughness: 0.9 }))),
   };
   return sharedDockMaterials;
 }

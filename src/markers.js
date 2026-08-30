@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { cachedResource } from './cache.js';
+import { registerWetMaterial } from './surfacewetness.js';
 
 // Objective markers: a soft light column rising from a ring on the water (waypoint / checkpoint gate),
 // crab-trap floats to collect, and a stranded kayaker for the rescue mission.
@@ -34,7 +35,7 @@ const sphereGeometry = (r, w, h) => geometry('sphere', [r, w, h], () => new THRE
 const capsuleGeometry = (r, l, caps, radial) => geometry('capsule', [r, l, caps, radial], () => new THREE.CapsuleGeometry(r, l, caps, radial));
 const planeGeometry = (w, h) => geometry('plane', [w, h], () => new THREE.PlaneGeometry(w, h));
 const torusGeometry = (r, tube, radial, tubular) => geometry('torus', [r, tube, radial, tubular], () => new THREE.TorusGeometry(r, tube, radial, tubular));
-const material = (key, params) => cachedResource(materialCache, key, () => new THREE.MeshStandardMaterial(params));
+const material = (key, params) => cachedResource(materialCache, key, () => registerWetMaterial(new THREE.MeshStandardMaterial(params)));
 
 export class Beacon {
   constructor(color = 0xf07a2e, radius = 5, height = 34) {

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as TEX from './textures.js';
 import { mulberry32 } from './noise.js';
 import { HOME_X, HOME_Z } from './heightfield.js';
+import { registerWetMaterial } from './surfacewetness.js';
 
 const WIND_GLSL_V1 = `
 uniform float uTime; uniform vec3 uWind; // xz = direction, y = strength
@@ -153,7 +154,7 @@ function trunkGeo() {
 class Kind {
   constructor(geo, texture, opts, { color = 0xffffff, alphaTest = 0.5, shadow = true, small = false } = {}) {
     this.geo = geo; this.opts = opts; this.shadow = shadow; this.small = small;
-    this.mat = new THREE.MeshStandardMaterial({ map: texture, alphaTest, side: THREE.DoubleSide, roughness: 0.92, metalness: 0, color, alphaToCoverage: true });
+    this.mat = registerWetMaterial(new THREE.MeshStandardMaterial({ map: texture, alphaTest, side: THREE.DoubleSide, roughness: 0.92, metalness: 0, color, alphaToCoverage: true }));
     patchFoliage(this.mat, opts);
     this.depth = makeDepthMat(texture, alphaTest, opts);
   }
@@ -303,9 +304,9 @@ export class Vegetation {
       mat.customProgramCacheKey = () => `trunk-${amp}`;
       return mat;
     };
-    this.trunkMat = patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, metalness: 0, color: 0x8a867c }), 0.34);
-    this.branchMat = patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, color: 0x8f8375 }), 0.30);
-    this.kneeMat = new THREE.MeshStandardMaterial({ color: 0x5a4d3f, roughness: 1 });
+    this.trunkMat = registerWetMaterial(patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, metalness: 0, color: 0x8a867c }), 0.34));
+    this.branchMat = registerWetMaterial(patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, color: 0x8f8375 }), 0.30));
+    this.kneeMat = registerWetMaterial(new THREE.MeshStandardMaterial({ color: 0x5a4d3f, roughness: 1 }));
     this.trunkGeo = TEX.scaleTextureUvs(trunkGeo(), 2, 6);
     this.branchGeo = TEX.scaleTextureUvs(new THREE.CylinderGeometry(0.06, 0.16, 1, 6, 1), 2, 6); this.branchGeo.translate(0, 0.5, 0);
     this.kneeGeo = new THREE.ConeGeometry(0.18, 1, 6); this.kneeGeo.translate(0, 0.5, 0);
@@ -648,8 +649,8 @@ export class Vegetation {
     let added = 0;
     for (const resource of resources) {
       if (!resource?.geo || !resource?.mat) continue;
-      const k = new Kind(resource.geo, resource.mat.map, { pin: 'y', pinH: resource.height, amp: 0.2, fade: [150, 210] }, { shadow: false, alphaTest: 0.01, small: true });
-      k.mat.side = THREE.FrontSide; k.mat.color.setHex(0xd8dcc8); this.kinds.push(k); this.solid.push(k); added++;
+      const k = new Kind(resource.geo, resource.mat.map, { pin: 'y', pinH: resource.height, amp: 0.2, fade: [150, 210] }, { color: 0xd8dcc8, shadow: false, alphaTest: 0.01, small: true });
+      k.mat.side = THREE.FrontSide; this.kinds.push(k); this.solid.push(k); added++;
     }
     if (!added) return 0;
     this.solidRevision++;
@@ -661,6 +662,7 @@ export class Vegetation {
   }
   // wind for a one-off model (a hero tree at a homestead): sway about its own origin, in metres despite the model's scale
   windMat(mat, yMin, yMax, scale, amp = 0.3) {
+    registerWetMaterial(mat);
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = { value: 0 }; shader.uniforms.uWind = { value: new THREE.Vector3(1, 1, 0) }; mat.userData.shader = shader;
       shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${WIND_GLSL}`).replace('#include <project_vertex>', `

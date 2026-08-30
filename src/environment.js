@@ -8,6 +8,9 @@ import {
   resetSettlementCandidates, serializeSettlementOutages, settlementGridStress, settlementLightLevel,
   settlementPowerRoll, settlementPowerStep, settlementPowerTarget, settlementStrikeOutageMinutes,
 } from './settlementpower.js';
+import {
+  normalizeSurfaceWetness, setGlobalSurfaceWetness, surfaceWetMaterialStats, surfaceWetnessStep, surfaceWetnessTarget,
+} from './surfacewetness.js';
 
 const FT = 3.28084;
 const MPS_TO_MPH = 2.23694;
@@ -270,6 +273,7 @@ export class Environment {
     this.lastHurricanePhase = ''; this.updateHurricanePassage(false);
     this.gust = 1; this.waterLevel = 0; this.astronomicalTideRate = 0; this.tideRate = 0; this.daylight = 0; this.night = 1; this.syncClockAndTide(); this.persistT = 10;
     this.rainbowMoisture = smooth(0.08, 0.72, this.values.rain); this.rainbow = 0; this.rainbowOverride = null;
+    this.surfaceWetness = normalizeSurfaceWetness(saved.surfaceWetness, surfaceWetnessTarget(this.values.rain, this.values.hail, this.values.fog, this.daylight));
     this.navVisibility = { port: true, starboard: true, stern: true }; this.hornCooldown = 0;
     this.precip = new Precipitation(this.fxScene, this.effectBudget);
     this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
@@ -281,6 +285,7 @@ export class Environment {
     this.settlementPowerFailures = Math.max(0, Math.trunc(Number(saved.powerFailures) || 0));
     this.windLoad = { ax: 0, az: 0, yaw: 0, heel: 0, apparentSpeed: 0, crosswind: 0 };
     this.makeLightning(); this.makeBoatLights(); this.makeSettlementLights();
+    setGlobalSurfaceWetness(this.surfaceWetness); this.terrain.setSurfaceWetness(this.surfaceWetness, this.waterLevel);
     this.el = document.getElementById('worldState'); this.alertEl = document.getElementById('weatherAlert'); this.alertT = 0; this.hudT = 0;
     this.keyHandler = (e) => this.onKey(e); window.addEventListener('keydown', this.keyHandler);
     this.pagehideHandler = () => this.persistState(true); window.addEventListener('pagehide', this.pagehideHandler);
@@ -371,6 +376,7 @@ export class Environment {
       remaining: this.remaining,
       duration: this.weatherDuration,
       windAngle: this.windAngle,
+      surfaceWetness: Math.round(this.surfaceWetness * 10000) / 10000,
       powerOutages: serializeSettlementOutages(this.settlementOutages, this.minutes),
       powerFailures: Math.max(0, Math.trunc(Number(this.settlementPowerFailures) || 0)),
       savedAt: Date.now(),
@@ -389,6 +395,14 @@ export class Environment {
   }
   rainbowSnapshot() {
     return { intensity: this.rainbow, moisture: this.rainbowMoisture, forced: this.rainbowOverride !== null };
+  }
+  surfaceWetnessSnapshot() {
+    return {
+      value: this.surfaceWetness,
+      target: surfaceWetnessTarget(this.values.rain, this.values.hail, this.values.fog, this.daylight),
+      terrainUniforms: this.terrain.uniforms ? 2 : 0,
+      materials: surfaceWetMaterialStats(),
+    };
   }
   hurricaneSnapshot() {
     const H = this.hurricane;
@@ -605,6 +619,8 @@ export class Environment {
     this.moonDir.set(-Math.cos(lunar) * 0.86, Math.sin(lunar), -0.42 * Math.cos(this.lunarPhase)).normalize();
     const daylight = smooth(-0.08, 0.16, sunY), night = 1 - smooth(-0.04, 0.18, sunY);
     this.daylight = daylight; this.night = night;
+    this.surfaceWetness = surfaceWetnessStep(this.surfaceWetness, V.rain, V.hail, V.fog, daylight, V.wind * this.gust, V.storm, step);
+    setGlobalSurfaceWetness(this.surfaceWetness); this.terrain.setSurfaceWetness(this.surfaceWetness, this.waterLevel);
     const horizon = 1 - smooth(0.04, 0.52, Math.max(0, sunY));
     const stormShade = 1 - V.storm * 0.7;
     const moonLight = night * smooth(0.01, 0.68, this.moonDir.y) * lerp(0, 0.14, Math.pow(this.moonIllumination, 0.72)) * lerp(1, 0.34, V.storm);
