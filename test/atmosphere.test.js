@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { cloudShadowPotential, heatHazePotential, rainbowMoistureStep, rainbowPotential, rainbowResponse, surfaceMistEnvelope } from '../src/environment.js';
+import { cloudShadowPotential, eyeExposureStep, eyeExposureTarget, heatHazePotential, rainbowMoistureStep, rainbowPotential, rainbowResponse, surfaceMistEnvelope } from '../src/environment.js';
 import { Sky } from '../src/sky.js';
 
 test('surface mist follows calm dawn cooling and real fog without surviving hurricane wind', () => {
@@ -44,6 +44,38 @@ test('heat haze belongs to clear calm afternoon low air rather than every bright
   assert.equal(heatHazePotential(14, 1, 0.94, 0.52, 0, 1.6, 0.02, 0.0034), 0);
   assert.equal(heatHazePotential({ hour: 1, daylight: 0, sunAltitude: -0.5, cloud: 0.49, wind: 3.5 }), 0);
   assert.equal(heatHazePotential({ hour: 14, daylight: 1, sunAltitude: 0.94, cloud: 0.16, rain: 1, wind: 36, storm: 1, fog: 0.00134 }), 0);
+});
+
+test('eye exposure responds to visible bright sources without dimming hidden sun', () => {
+  const fair = { baseExposure: 1, daylight: 1, night: 0, sunAltitude: 0.8, cloud: 0.49, cloudLight: 1, rain: 0, fog: 0.00028, storm: 0 };
+  const neutral = eyeExposureTarget({ ...fair, viewSunDot: 0 });
+  const lookingAtSun = eyeExposureTarget({ ...fair, viewSunDot: 1 });
+  const overcastSun = eyeExposureTarget({ ...fair, viewSunDot: 1, cloud: 0.4 });
+  const fogboundSun = eyeExposureTarget({ ...fair, viewSunDot: 1, fog: 0.0034 });
+  const dark = eyeExposureTarget({ baseExposure: 1, daylight: 0, night: 1 });
+  const spotlight = eyeExposureTarget({ baseExposure: 1, daylight: 0, night: 1, spotlight: true, restrictedVisibility: 0.7 });
+  const lightning = eyeExposureTarget({ baseExposure: 1, daylight: 0, night: 1, flash: 1 });
+
+  assert.equal(neutral, 1);
+  assert.ok(lookingAtSun < neutral * 0.7);
+  assert.equal(overcastSun, neutral);
+  assert.equal(fogboundSun, neutral);
+  assert.ok(dark > 0.58 && dark < 0.59);
+  assert.ok(spotlight < dark);
+  assert.equal(lightning, 0.36);
+});
+
+test('eye exposure contracts quickly and recovers gradually without frame-time jumps', () => {
+  const target = 0.62;
+  const contracted = eyeExposureStep(1, target, 0.25);
+  const recovered = eyeExposureStep(target, 1, 0.25);
+  const contractionProgress = (1 - contracted) / (1 - target);
+  const recoveryProgress = (recovered - target) / (1 - target);
+
+  assert.ok(contractionProgress > 0.89);
+  assert.ok(recoveryProgress > 0.12 && recoveryProgress < 0.14);
+  assert.equal(eyeExposureStep(0.8, 0.5, 0), 0.8);
+  assert.equal(eyeExposureStep(1, target, 10), contracted);
 });
 
 test('a rainbow needs a clearing rain curtain and a low unobscured sun', () => {

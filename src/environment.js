@@ -20,6 +20,40 @@ const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t *
 const smoothSlope = (a, b, v) => { const t = (v - a) / (b - a); return t > 0 && t < 1 ? 6 * t * (1 - t) / (b - a) : 0; };
 const lerp = (a, b, t) => a + (b - a) * t;
 
+// Exposure is already part of the retained grade pass. This model changes only that scalar: it contracts quickly
+// around a visible sun, lightning or the night spotlight, then recovers more slowly after the bright source leaves.
+// Weather transmission prevents a hidden sun from darkening an overcast or fog-bound frame.
+export function eyeExposureTarget({
+  baseExposure = 1, daylight = 0, night = 1, sunAltitude = 0, viewSunDot = -1,
+  cloud = 0.49, cloudLight = 1, rain = 0, fog = 0, storm = 0, flash = 0,
+  spotlight = false, restrictedVisibility = 0,
+} = {}) {
+  const dayN = clamp(Number(daylight) || 0), nightN = clamp(Number(night) || 0);
+  const parsedExposure = Number(baseExposure), dayExposure = clamp(Number.isFinite(parsedExposure) ? parsedExposure : 1, 0.4, 1.2);
+  const baseline = lerp(0.54, dayExposure, dayN);
+  const sunTransmission = smooth(0.405, 0.485, Number(cloud) || 0)
+    * smooth(0.89, 0.985, Number(cloudLight) || 0)
+    * (1 - smooth(0.02, 0.45, Number(rain) || 0))
+    * (1 - smooth(0.00045, 0.0018, Number(fog) || 0))
+    * (1 - smooth(0.12, 0.72, Number(storm) || 0));
+  const directSun = dayN * smooth(0.002, 0.055, Number(sunAltitude) || 0)
+    * smooth(0.82, 0.965, Number(viewSunDot) || -1) * sunTransmission;
+  const lightning = smooth(0.02, 0.65, Number(flash) || 0);
+  const localLight = spotlight ? nightN * lerp(0.18, 0.32, clamp(Number(restrictedVisibility) || 0)) : 0;
+  const brightSource = clamp(directSun * 0.96 + lightning + localLight);
+  const darkRecovery = nightN * 0.085 * (1 - clamp(lightning + localLight));
+  return clamp(baseline * (1 + darkRecovery) * (1 - brightSource * 0.34), 0.36, 1.12);
+}
+
+export function eyeExposureStep(current = 1, target = 1, dt = 0) {
+  const parsedTarget = Number(target), targetN = clamp(Number.isFinite(parsedTarget) ? parsedTarget : 1, 0.36, 1.12);
+  const parsedCurrent = Number(current), currentN = clamp(Number.isFinite(parsedCurrent) ? parsedCurrent : targetN, 0.36, 1.12);
+  const seconds = clamp(Number(dt) || 0, 0, 0.25);
+  if (!seconds) return currentN;
+  const rate = targetN < currentN ? 9 : 0.55;
+  return targetN + (currentN - targetN) * Math.exp(-seconds * rate);
+}
+
 export function surfaceMistEnvelope({ hour = 12, fog = 0, rain = 0, wind = 0, storm = 0 } = {}) {
   const dawnCooling = Math.exp(-Math.pow((hour - 6.35) / 1.75, 2));
   const calm = 1 - smooth(5, 18, wind);
@@ -411,12 +445,14 @@ export class Environment {
     this.surfaceWetness = normalizeSurfaceWetness(saved.surfaceWetness, surfaceWetnessTarget(this.values.rain, this.values.hail, this.values.fog, this.daylight));
     this.navVisibility = { port: true, starboard: true, stern: true }; this.hornCooldown = 0;
     this.precip = new Precipitation(this.fxScene, this.effectBudget);
-    this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
+    this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3(); this.viewDir = new THREE.Vector3(0, 0, -1);
     this.cloudShadowOffset = new THREE.Vector2(); this.cloudShadowAmount = 0; this.heatHaze = 0; this.heatHazeTarget = 0;
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
     this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
+    const initialSunY = Math.sin((this.hour - 6) / 24 * Math.PI * 2), initialDaylight = smooth(-0.08, 0.16, initialSunY), initialNight = 1 - smooth(-0.04, 0.18, initialSunY);
+    this.sunGaze = -1; this.eyeExposure = eyeExposureTarget({ baseExposure: this.values.exposure, daylight: initialDaylight, night: initialNight, cloud: this.values.cloud, rain: this.values.rain, fog: this.values.fog, storm: this.values.storm }); this.eyeExposureTarget = this.eyeExposure;
     this.settlementOutages = normalizeSettlementOutages(saved.powerOutages, this.minutes);
     this.settlementPowerFailures = Math.max(0, Math.trunc(Number(saved.powerFailures) || 0));
     this.windLoad = { ax: 0, az: 0, yaw: 0, heel: 0, apparentSpeed: 0, crosswind: 0 };
@@ -557,6 +593,12 @@ export class Environment {
     return {
       amount: this.heatHaze, target: this.heatHazeTarget, quality: grade.heatQuality.value,
       extraPasses: 0, extraPrograms: 0, extraTextures: 0, extraAttachmentBytes: 0,
+    };
+  }
+  eyeAdaptationSnapshot() {
+    return {
+      exposure: this.eyeExposure, target: this.eyeExposureTarget, sunGaze: this.sunGaze,
+      extraPasses: 0, extraPrograms: 0, extraTextures: 0, extraUniforms: 0, extraAttachmentBytes: 0,
     };
   }
   hurricaneSnapshot() {
@@ -828,7 +870,15 @@ export class Environment {
     this.water.uniforms.rippleStrength.value = 0.13 + V.sea * 0.075 + V.rain * 0.08;
 
     const fog = this.pipeline.grade.material.uniforms;
-    fog.exposure.value = lerp(0.54, V.exposure, daylight) + this.flash * 0.25;
+    if (daylight > 0.001) { this.camera.getWorldDirection(this.viewDir); this.sunGaze = this.viewDir.dot(this.sunDir); }
+    else this.sunGaze = -1;
+    this.eyeExposureTarget = eyeExposureTarget({
+      baseExposure: V.exposure, daylight, night, sunAltitude: this.sunDir.y, viewSunDot: this.sunGaze,
+      cloud: V.cloud, cloudLight: this.cloudLight, rain: V.rain, fog: V.fog, storm: V.storm, flash: this.flash,
+      spotlight: this.spotOn, restrictedVisibility: this.restrictedVisibility,
+    });
+    this.eyeExposure = eyeExposureStep(this.eyeExposure, this.eyeExposureTarget, dt);
+    fog.exposure.value = this.eyeExposure;
     const dawnHaze = Math.exp(-Math.pow((this.hour - 6.5) / 1.8, 2)) * (1 - smooth(5, 19, V.wind));
     fog.fogDensity.value = V.fog * lerp(1.28, 1, daylight) * (1 + dawnHaze * 0.3);
     fog.fogColor.value.copy(this.fogNight).lerp(this.fogDay, daylight).lerp(this.fogStorm, V.storm * 0.78);
