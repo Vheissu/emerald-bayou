@@ -19,7 +19,7 @@ export function minimapTileLimit(profile = {}) {
   const value = typeof profile === 'number' ? profile : profile.minimapTileLimit;
   return Math.max(1, Math.round(Number(value) || DEFAULT_TILE_LIMIT));
 }
-const MARKER_ORDER = { trap: 0, blind: 0, boathouse: 1, house: 1, ramp: 1, camp: 2, angler: 3, gator: 3, boat: 4, home: 5, dot: 5, job: 6, hazard: 7, objective: 8 };
+const MARKER_ORDER = { search: -1, trap: 0, blind: 0, boathouse: 1, house: 1, ramp: 1, camp: 2, angler: 3, gator: 3, boat: 4, home: 5, dot: 5, job: 6, hazard: 7, objective: 8 };
 export const markerDrawPriority = kind => MARKER_ORDER[kind] || 0;
 
 const drawRim = (c, x, y, r, fill, stroke = INK, lw = 2) => { c.beginPath(); c.arc(x, y, r, 0, 6.283); c.fillStyle = fill; c.fill(); if (stroke) { c.lineWidth = lw; c.strokeStyle = stroke; c.stroke(); } };
@@ -118,8 +118,8 @@ export class Minimap {
     const cr = Math.cos(rot), sr = Math.sin(rot);
     // keep a point inside the radar's rim
     const inset = 22;
-    // Nine allocation-free passes preserve stable draw order: quiet things first, the objective last.
-    for (let priority = 0; priority <= 8; priority++) for (let markerIndex = 0; markerIndex < markers.length; markerIndex++) {
+    // Ten allocation-free passes preserve stable draw order: uncertainty areas below quiet marks, objective last.
+    for (let priority = -1; priority <= 8; priority++) for (let markerIndex = 0; markerIndex < markers.length; markerIndex++) {
       const mk = markers[markerIndex]; if (markerDrawPriority(mk.kind) !== priority) continue;
       const mx = (mk.x - boat.pos.x) * k, mz = (mk.z - boat.pos.y) * k;
       let sx = CX + cr * mx - sr * mz, sy = CY + sr * mx + cr * mz, pinned = false;
@@ -130,8 +130,18 @@ export class Minimap {
         const kk = Math.min(1, kx, Math.abs(dy) > 1e-3 ? (H - CY - inset) / Math.abs(dy) : 1e9, ky);
         sx = CX + dx * kk; sy = CY + dy * kk; pinned = kk < 1;
       }
-      else if (sx < -12 || sy < -12 || sx > W + 12 || sy > H + 12) continue;
+      else {
+        const margin = mk.kind === 'search' ? Math.max(12, mk.r * k) : 12;
+        if (sx < -margin || sy < -margin || sx > W + margin || sy > H + margin) continue;
+      }
       switch (mk.kind) {
+        case 'search': {
+          const radius = Math.max(14, mk.r * k), phase = this.pulse * 0.7 % 1;
+          c.save(); c.beginPath(); c.arc(sx, sy, radius, 0, 6.283); c.fillStyle = 'rgba(75,145,235,0.075)'; c.fill();
+          c.setLineDash([8, 6]); c.lineDashOffset = -this.pulse * 8; c.lineWidth = 1.8; c.strokeStyle = 'rgba(105,175,255,0.72)'; c.stroke(); c.setLineDash([]);
+          c.beginPath(); c.arc(sx, sy, 4 + phase * 9, 0, 6.283); c.lineWidth = 1.5; c.strokeStyle = `rgba(125,190,255,${0.72 * (1 - phase)})`; c.stroke();
+          c.beginPath(); c.moveTo(sx - 3, sy); c.lineTo(sx + 3, sy); c.moveTo(sx, sy - 3); c.lineTo(sx, sy + 3); c.strokeStyle = 'rgba(185,220,255,0.85)'; c.stroke(); c.restore(); break;
+        }
         case 'objective': {
           const col = mk.color || '#f07a2e';
           if (!pinned) { const pr = 9 + (this.pulse * 1.2 % 1) * 10; c.beginPath(); c.arc(sx, sy, pr, 0, 6.283); c.lineWidth = 2; c.strokeStyle = col; c.globalAlpha = 1 - (this.pulse * 1.2 % 1); c.stroke(); c.globalAlpha = 1; }

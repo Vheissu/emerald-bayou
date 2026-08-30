@@ -9,10 +9,11 @@ import { findGroundingSite } from './grounding.js';
 import { makeAirRescueRig, setAirRescueRole, updateAirRescueAircraft, updateAirRescueBeam } from './airrescue.js';
 import { WORLD_HALF } from './heightfield.js';
 import { buildRaceCourse } from './racecourse.js';
+import { emitMapMarker } from './mapmarkers.js';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitBackupDelay,
   pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance, pursuitLostProgress, pursuitSightSampleCount,
-  pursuitSirenLevel, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed, pursuitSurfaceLineOfSight, pursuitTactic,
+  pursuitSearchRadius, pursuitSirenLevel, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed, pursuitSurfaceLineOfSight, pursuitTactic,
   pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from './pursuit.js';
 import { emitWakeStamp } from './wakestamps.js';
@@ -291,6 +292,7 @@ export class EncounterDirector {
     this._f = new THREE.Vector2(); this._r = new THREE.Vector2(); this._flow = new THREE.Vector2(); this._personBoat = { x: 0, z: 0, speed: 0 };
     this._patrolSight = { timer: 0, clear: true, held: true, inRange: true, blockedFor: 0, clearFor: 0, occluded: false, checkedUnits: 0, samples: 0 };
     this._patrolSound = { timer: 0, hornT: 0, hornProlonged: false, contact: false, source: '', range: 0, distance: Infinity, engineNoise: 0, fixAge: Infinity, fixX: 0, fixZ: 0, uncertainty: 0, reportCd: 0 };
+    this._patrolSearch = { active: false, x: 0, z: 0, r: 0, label: 'FWC last-fix area', color: '#5aa7ff' };
     this.stormEvacuationUsed = false; this.stormEvacuationWeather = this.environment.key;
     this.stormEvacuationContext = { weather: '', phase: '', progress: 0, surge: 0, surgeRate: 0, duration: 0, playerX: 0, playerZ: 0, waterLevel: 0, leadSeconds: 0 };
     this.airWashStamp = { x: 0, z: 0, radius: 8.5, height: -0.82, foam: 2.2, foamRadius: 9.5 };
@@ -1198,7 +1200,7 @@ export class EncounterDirector {
     if (!e || e.type !== 'patrol') return false;
     const fresh = e.state !== 'pursuit'; e.state = 'pursuit'; e.wanted = true; e.lostT = 0; e.surrender = 0;
     if (fresh) {
-      this.resetPatrolSight(); this.resetPatrolSound();
+      this.resetPatrolSight(); this.resetPatrolSound(); this.resetPatrolSearch();
       e.pursuit = 0; e.tacticT = 0; e.tacticSide = Math.random() < 0.5 ? -1 : 1; e.lastKnownX = this.phys.pos.x; e.lastKnownZ = this.phys.pos.y;
       e.backupRequested = 0; e.backupCount = 0; e.units = 1; e.backupDue[0] = Infinity; e.backupDue[1] = Infinity; this.resetPatrolBackups();
       e.aviationRequested = false; e.aviationDue = Infinity; e.aviationActive = false; e.aviationVisual = false; e.aviationBeamActive = false;
@@ -1358,7 +1360,7 @@ export class EncounterDirector {
   }
 
   startPatrol(at, options = {}) {
-    this.resetPatrolBackups(); this.resetPatrolAviation(); this.resetPatrolSight(); this.resetPatrolSound();
+    this.resetPatrolBackups(); this.resetPatrolAviation(); this.resetPatrolSight(); this.resetPatrolSound(); this.resetPatrolSearch();
     const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: Number(options.speed) || 4, want: 8, turn: 0, active: true });
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading;
     A.mesh.visible = true;
@@ -1587,7 +1589,7 @@ export class EncounterDirector {
     this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
     this.rigs.fire.boat.visible = false; this.rigs.fire.operator.visible = true; this.rigs.fire.swimmer.visible = false; animateEngineFire(this.rigs.fire.fire, 0, 0, 0);
     this.rigs.grounding.boat.visible = false; this.rigs.grounding.operator.visible = true; this.rigs.grounding.rope.visible = false; this.rigs.grounding.lamp.light.intensity = 0; this.rigs.grounding.agent.active = false;
-    this.resetPatrolAviation(); this.resetPatrolSound();
+    this.resetPatrolAviation(); this.resetPatrolSound(); this.resetPatrolSearch();
     this.rigs.manatee.animal.visible = false; this.rigs.manatee.buoy.visible = false; this.rigs.manatee.rope.visible = false; this.rigs.manatee.rope.material.opacity = 0.86;
     this.rigs.spotlight.gunner.visible = false; this.rigs.spotlight.gator.visible = false; this.rigs.spotlight.eyes.visible = false; this.rigs.spotlight.light.intensity = 0; this.rigs.spotlight.pool.visible = false; this.rigs.spotlight.uniforms.uOpacity.value = 0;
     if (e.type === 'fire' && e.aboard) this.phys.loaded = 0;
@@ -2218,6 +2220,25 @@ export class EncounterDirector {
     Object.assign(sound, { timer: 0, hornT: 0, hornProlonged: false, contact: false, source: '', range: 0, distance: Infinity, engineNoise: 0, fixAge: Infinity, fixX: 0, fixZ: 0, uncertainty: 0, reportCd: 0 });
   }
 
+  resetPatrolSearch() {
+    const search = this._patrolSearch || (this._patrolSearch = { label: 'FWC last-fix area', color: '#5aa7ff' });
+    search.active = false; search.x = 0; search.z = 0; search.r = 0;
+  }
+
+  markPatrolSearch(e, heat) {
+    const search = this._patrolSearch || (this._patrolSearch = { label: 'FWC last-fix area', color: '#5aa7ff' });
+    if (!e || e.state !== 'pursuit' || e.visual) { search.active = false; return null; }
+    const sound = this._patrolSound || {};
+    search.active = true; search.x = e.lastKnownX; search.z = e.lastKnownZ;
+    search.r = pursuitSearchRadius(heat, e.lostT, e.soundContact, sound.uncertainty, sound.fixAge);
+    emitMapMarker(this.game, search.x, search.z, 'search', search.color, 0, false, '', false, false, false, true, search.r);
+    return search;
+  }
+
+  pursuitSearchArea() {
+    return this._patrolSearch?.active ? this._patrolSearch : null;
+  }
+
   notePlayerHorn(prolonged = false) {
     const e = this.active; if (!e || e.type !== 'patrol' || e.state !== 'pursuit') return false;
     const sound = this._patrolSound || (this._patrolSound = {});
@@ -2335,6 +2356,7 @@ export class EncounterDirector {
         range: e ? finite(this._patrolSound.range) : null, distance: e ? finite(this._patrolSound.distance) : null,
         uncertainty: e ? finite(this._patrolSound.uncertainty) : null, fixAge: e ? finite(this._patrolSound.fixAge) : null,
       },
+      searchArea: { active: Boolean(e && this._patrolSearch.active), radius: e ? finite(this._patrolSearch.r) : null, centerX: e ? finite(this._patrolSearch.x) : null, centerZ: e ? finite(this._patrolSearch.z) : null },
       channelClosure: { active: Boolean(e && closure?.active), holding: Boolean(e && closure?.holding), cooldown: e && closure ? finite(closure.cooldown) : null },
       aviation: {
         requested: Boolean(e?.aviationRequested), active: Boolean(e?.aviationActive), directVisual: Boolean(e?.aviationVisual), beamActive: Boolean(e?.aviationBeamActive),
@@ -2476,6 +2498,7 @@ export class EncounterDirector {
       if (stopped) this.setPrompt(`hold idle <i>· ${e.units > 1 ? 'patrol line alongside' : 'patrol alongside'} · ${Math.max(0, 4 - e.surrender).toFixed(1)}s</i>`, 'STOP');
       if (e.surrender >= 4) { this.resolvePatrolStop(e); return; }
       e.lostT = pursuitLostProgress(e.lostT, dt, visual, e.soundContact);
+      this.markPatrolSearch(e, heat);
       if (canEscapePursuit(heat, e.pursuit, e.lostT, this.environment.restrictedVisibility || 0)) {
         if (this.law) this.law.escaped();
         this.complete('Visual broken', 'The patrol line lost the hull, but FWC kept the wanted report open.', 0, 0, '', 'patrol-escaped');

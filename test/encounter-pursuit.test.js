@@ -104,6 +104,16 @@ test('a prolonged horn can betray a quiet hull farther away than a normal blast'
   director.active = null; assert.equal(director.notePlayerHorn(true), false);
 });
 
+test('visual loss emits one retained last-fix uncertainty area and clears it on reacquisition', () => {
+  const director = Object.create(EncounterDirector.prototype); director.game = { mapMarkers: [] };
+  director._patrolSound = { uncertainty: 16, fixAge: 0.4 }; director.resetPatrolSearch();
+  const e = { state: 'pursuit', visual: false, soundContact: true, lostT: 2.5, lastKnownX: 84, lastKnownZ: -31 };
+  const area = director.markPatrolSearch(e, 3);
+  assert.equal(director.pursuitSearchArea(), area); assert.equal(area.active, true); assert.deepEqual([area.x, area.z], [84, -31]); assert.ok(area.r > 22);
+  assert.equal(director.game.mapMarkers.length, 1); assert.equal(director.game.mapMarkers[0].kind, 'search'); assert.equal(director.game.mapMarkers[0].r, area.r);
+  e.visual = true; assert.equal(director.markPatrolSearch(e, 3), null); assert.equal(director.pursuitSearchArea(), null);
+});
+
 test('backup rams use one shared contact window and damage the player craft', () => {
   const director = Object.create(EncounterDirector.prototype), damage = [];
   director.phys = {

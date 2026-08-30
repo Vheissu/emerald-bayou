@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitAviationVisualRange,
   pursuitBackupDelay, pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance,
-  pursuitLostProgress, pursuitLostTime, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
+  pursuitLostProgress, pursuitLostTime, pursuitSearchRadius, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
   pursuitSirenLevel, pursuitSurfaceLineOfSight, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
 
@@ -116,6 +116,14 @@ test('visual rapidly clears lost time while a rough sound contact only pauses es
   assert.ok(Math.abs(pursuitLostProgress(3, 1, true, false) - 0.8) < 1e-9);
   assert.equal(pursuitLostProgress(3, 1, false, true), 3);
   assert.equal(pursuitLostProgress(3, 1, false, false), 4);
+});
+
+test('the last-fix search area expands with uncertainty without becoming unbounded', () => {
+  const freshOneStar = pursuitSearchRadius(1, 0), freshFiveStar = pursuitSearchRadius(5, 0), lost = pursuitSearchRadius(3, 7);
+  assert.ok(freshFiveStar > freshOneStar); assert.ok(lost > freshFiveStar);
+  assert.ok(pursuitSearchRadius(5, 999) <= 165);
+  const soundFix = pursuitSearchRadius(3, 7, true, 12, 0), staleSoundFix = pursuitSearchRadius(3, 7, true, 12, 3);
+  assert.ok(soundFix < lost); assert.ok(staleSoundFix > soundFix); assert.ok(staleSoundFix <= 84);
 });
 
 test('patrol siren is distance driven, heat aware, and silent outside pursuit', () => {

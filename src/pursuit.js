@@ -156,6 +156,15 @@ export function pursuitLostProgress(lostFor, dt, visual = false, soundContact = 
   return soundContact ? lost : lost + step;
 }
 
+export function pursuitSearchRadius(attention, lostFor = 0, soundContact = false, soundUncertainty = 0, fixAge = 0) {
+  const stars = wantedLevel(attention), lost = Math.max(0, Number(lostFor) || 0);
+  if (soundContact) {
+    const uncertainty = Math.max(0, Number(soundUncertainty) || 0), age = Math.max(0, Number(fixAge) || 0);
+    return clamp(14 + uncertainty + Math.min(24, age * 6), 22, 84);
+  }
+  return clamp(22 + stars * 4 + lost * 8.5, 26, 105 + stars * 12);
+}
+
 export function pursuitLostDistance(attention, restrictedVisibility = 0, storm = 0) {
   const stars = wantedLevel(attention), concealment = clamp(restrictedVisibility, 0, 1) * 58 + clamp(storm, 0, 1) * 24;
   return clamp(165 + stars * 24 - concealment, 105, 275);

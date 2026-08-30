@@ -86,7 +86,7 @@ export class WorldMap {
   render() {
     if (!this.open) return;
     const c = this.ctx, W = this.canvas.width, H = this.canvas.height, dpr = this.dpr;
-    const p = this.G.phys;
+    const p = this.G.phys, pursuitSearch = this.G.encounters?.pursuitSearchArea?.() || null;
     if (this.follow) { this.cx = p.pos.x; this.cz = p.pos.y; }
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.fillStyle = '#0b1512'; c.fillRect(0, 0, W, H);
@@ -123,11 +123,17 @@ export class WorldMap {
       }
       c.restore();
     }
+    if (pursuitSearch) {
+      c.save(); c.beginPath(); c.arc(pursuitSearch.x, pursuitSearch.z, pursuitSearch.r, 0, Math.PI * 2); c.fillStyle = 'rgba(75,145,235,0.07)'; c.fill();
+      c.setLineDash([9 / k, 6 / k]); c.lineWidth = 1.8 / k; c.strokeStyle = 'rgba(105,175,255,0.72)'; c.stroke(); c.setLineDash([]);
+      c.beginPath(); c.moveTo(pursuitSearch.x - 4 / k, pursuitSearch.z); c.lineTo(pursuitSearch.x + 4 / k, pursuitSearch.z); c.moveTo(pursuitSearch.x, pursuitSearch.z - 4 / k); c.lineTo(pursuitSearch.x, pursuitSearch.z + 4 / k); c.strokeStyle = 'rgba(185,220,255,0.82)'; c.stroke(); c.restore();
+    }
     c.restore();
     // markers in screen space
     const toS = (x, z) => [W / 2 + (x - this.cx) * k, H / 2 + (z - this.cz) * k];
     const font = (px, w = 500) => `${w} ${px * dpr}px "Avenir Next Condensed", "Avenir Next", sans-serif`;
     const label = (x, y, text, col = '#f3ede0', px = 13, dy = 0) => { c.font = font(px, 600); c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillStyle = 'rgba(8,20,15,0.8)'; c.fillText(text, x + 9 * dpr + 1, y + dy + 1); c.fillStyle = col; c.fillText(text, x + 9 * dpr, y + dy); };
+    if (pursuitSearch) { const [x, y] = toS(pursuitSearch.x, pursuitSearch.z); if (x > -80 && y > -40 && x < W + 40 && y < H + 40) label(x, y, 'FWC LAST-FIX AREA', '#69afff', 10, -14 * dpr); }
     // home
     { const [x, y] = toS(HOME_X + 65, HOME_Z - 115); c.fillStyle = '#e5c063'; c.beginPath(); c.moveTo(x, y - 7 * dpr); c.lineTo(x + 5 * dpr, y + 5 * dpr); c.lineTo(x - 5 * dpr, y + 5 * dpr); c.closePath(); c.fill(); label(x, y, 'Tower · home', '#e5c063'); }
     // camps: known ones named, seen ones as marks
@@ -213,6 +219,6 @@ export class WorldMap {
     const recoveryLegend = recoveryMarks.map(m => `<div>Storm recovery · ${m.label}</div>`).join('');
     const navigationLegend = navigationMarks.map(m => `<div>Aid report · ${m.label}</div>`).join('');
     const fieldFound = fieldMarks.filter(mark => mark.found).length, liveField = fieldMarks.find(mark => mark.live);
-    this.legend.innerHTML = `<div class="h">Chart</div><div>${region.name} &nbsp;·&nbsp; ${(WORLD_HALF * 2 / MILE).toFixed(0)} miles square</div><div>${known.length} camps found &nbsp;·&nbsp; ${(this.G.save.regions || []).length} / ${REGIONS.length} regions seen &nbsp;·&nbsp; ${(this.G.save.traps || []).length} traps recovered &nbsp;·&nbsp; ${fieldFound} field notes</div>${nc ? `<div>Nearest camp ${nc.camp.name ? (known.includes(nc.camp.key) ? nc.camp.name : 'unknown') : ''} · ${fmtDist(nc.d)}</div>` : ''}${liveCall ? `<div>Live dispatch · ${liveCall.label}</div>` : ''}${liveField ? `<div>Live field sign · ${liveField.label}</div>` : ''}${navigationLegend}${recoveryLegend}${storyLegend}<div class="keys">scroll zoom · drag pan · Tab close</div>`;
+    this.legend.innerHTML = `<div class="h">Chart</div><div>${region.name} &nbsp;·&nbsp; ${(WORLD_HALF * 2 / MILE).toFixed(0)} miles square</div><div>${known.length} camps found &nbsp;·&nbsp; ${(this.G.save.regions || []).length} / ${REGIONS.length} regions seen &nbsp;·&nbsp; ${(this.G.save.traps || []).length} traps recovered &nbsp;·&nbsp; ${fieldFound} field notes</div>${nc ? `<div>Nearest camp ${nc.camp.name ? (known.includes(nc.camp.key) ? nc.camp.name : 'unknown') : ''} · ${fmtDist(nc.d)}</div>` : ''}${pursuitSearch ? `<div>FWC search · ${Math.round(pursuitSearch.r)} m around last fix</div>` : ''}${liveCall ? `<div>Live dispatch · ${liveCall.label}</div>` : ''}${liveField ? `<div>Live field sign · ${liveField.label}</div>` : ''}${navigationLegend}${recoveryLegend}${storyLegend}<div class="keys">scroll zoom · drag pan · Tab close</div>`;
   }
 }

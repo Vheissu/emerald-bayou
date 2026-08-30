@@ -33,6 +33,7 @@ test('marker emission preserves the array interface used by lightweight director
 });
 
 test('minimap draw priorities keep objectives and hazards above quiet world marks', () => {
+  assert.equal(markerDrawPriority('search'), -1);
   assert.equal(markerDrawPriority('trap'), 0);
   assert.equal(markerDrawPriority('house'), 1);
   assert.equal(markerDrawPriority('boat'), 4);
