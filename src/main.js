@@ -91,7 +91,7 @@ async function init() {
     disabled: startup.disabledModels,
   });
   // ---- sky & lighting ----
-  const sky = new Sky(SUN_DIR);
+  const sky = new Sky(SUN_DIR, renderProfile);
   scene.add(sky.mesh);
   const sun = new THREE.DirectionalLight(0xfff2dc, 3.0);
   sun.castShadow = true;
@@ -331,6 +331,7 @@ async function init() {
     effects: {
       eyeAdaptation: environment.eyeAdaptationSnapshot(),
       lightning: environment.lightningSnapshot(),
+      stormSky: environment.stormSkySnapshot(),
       spray: { active: spray.count, capacity: spray.max },
       plume: { active: plume.count, capacity: plume.max },
       rain: { active: environment.precip.rain.geo.drawRange.count / 2, capacity: environment.precip.rain.count },
@@ -438,7 +439,7 @@ async function init() {
   let renderFrameNo = 0;
   const applyRenderQuality = profile => {
     const oldEnvironmentSize = environmentReflections.targetSize;
-    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile); environmentReflections.setProfile(profile);
+    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); sky.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile); environmentReflections.setProfile(profile);
     if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
       sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
       if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }

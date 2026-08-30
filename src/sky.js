@@ -15,7 +15,7 @@ float fbm6(vec2 p) {
 `;
 
 export class Sky {
-  constructor(sunDir) {
+  constructor(sunDir, profile = {}) {
     this.sunDir = sunDir.clone().normalize();
     this.uniforms = {
       sunDir: { value: this.sunDir },
@@ -28,7 +28,10 @@ export class Sky {
       daylight: { value: 1 },
       storm: { value: 0 },
       flash: { value: 0 },
+      flashDir: { value: this.sunDir.clone() },
+      rain: { value: 0 },
       rainbow: { value: 0 },
+      weatherDetail: { value: Math.max(0, Math.min(1, Number(profile.skyWeatherDetail) || 0)) },
     };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -43,7 +46,7 @@ export class Sky {
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: `
-        varying vec3 vDir; uniform vec3 sunDir, moonDir, lightDir; uniform vec2 windDir; uniform float windSpeed, uTime, cover, daylight, storm, flash, rainbow;
+        varying vec3 vDir; uniform vec3 sunDir, moonDir, lightDir, flashDir; uniform vec2 windDir; uniform float windSpeed, uTime, cover, daylight, storm, flash, rain, rainbow, weatherDetail;
         ${SKY_FRAG_NOISE}
         vec3 rainbowSpectrum(float h) {
           vec3 p = abs(fract(h + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0);
@@ -53,6 +56,11 @@ export class Sky {
           vec3 d = normalize(vDir);
           float y = d.y;
           float mu = dot(d, sunDir);
+          float flashField = flash;
+          if (flash > 0.001 && weatherDetail > 0.001) {
+            float flashLobe = pow(max(dot(d, flashDir), 0.0), 5.0);
+            flashField = flash * (0.18 + flashLobe * 1.35);
+          }
           vec3 dayZenith = vec3(0.025, 0.13, 0.43);
           vec3 dayHorizon = vec3(0.43, 0.55, 0.68);
           vec3 nightZenith = vec3(0.0025, 0.008, 0.025);
@@ -105,8 +113,20 @@ export class Sky {
             // A severe cell hangs a ragged shelf below the main deck. Reusing the cloud field keeps
             // this free of another noise octave stack and removes the clean horizontal storm ceiling.
             float shelfBand = smoothstep(0.015, 0.12, yy) * (1.0 - smoothstep(0.24, 0.48, yy));
-            vec3 scud = mix(vec3(0.018, 0.027, 0.032), vec3(0.12, 0.15, 0.16), lit * 0.45 + flash * 0.8);
+            vec3 scud = mix(vec3(0.018, 0.027, 0.032), vec3(0.12, 0.15, 0.16), lit * 0.45 + flashField * 0.8);
             sky = mix(sky, scud, dens * shelfBand * storm * 0.74);
+            // Patchy precipitation shafts make an approaching squall readable before drops reach the boat. They
+            // reuse this cell's existing mass/detail fields, add no textures or objects, and disappear on fallback.
+            if (weatherDetail > 0.001 && rain > 0.001) {
+              float rainBand = smoothstep(0.012, 0.055, yy) * (1.0 - smoothstep(0.27, 0.43, yy));
+              float rainCell = smoothstep(cover - 0.08, cover + 0.13, big * 0.78 + det * 0.22);
+              float azimuth = atan(d.z, d.x);
+              float strands = 0.78 + 0.22 * sin(azimuth * 83.0 + yy * 330.0 - uTime * (0.19 + windSpeed * 0.012));
+              float rainVeil = rain * weatherDetail * rainBand * rainCell * strands;
+              vec3 rainColour = mix(vec3(0.012, 0.022, 0.033), vec3(0.20, 0.27, 0.31), daylight);
+              rainColour += vec3(0.34, 0.43, 0.53) * flashField * 0.65;
+              sky = mix(sky, rainColour, clamp(rainVeil * (0.30 + storm * 0.34), 0.0, 0.58));
+            }
             // thin high cirrus
             vec2 p2 = d.xz / (yy + 0.12) * 0.7 + drift * 0.55;
             float ci = smoothstep(0.62, 0.9, fbm6(p2 * 1.7 + 30.0)) * 0.18;
@@ -162,7 +182,7 @@ export class Sky {
           // A severe cell removes skylight instead of washing the whole dome toward pale grey.
           // This keeps the horizon legible while giving lightning enough darkness to own the frame.
           sky = mix(sky, vec3(0.055, 0.075, 0.082), storm * 0.58);
-          sky += vec3(0.72, 0.83, 0.92) * flash;
+          sky += vec3(0.72, 0.83, 0.92) * flashField;
           gl_FragColor = vec4(sky, 1.0);
         }`,
     });
@@ -172,8 +192,15 @@ export class Sky {
     this.mesh.frustumCulled = false;
     this.mesh.name = 'sky';
   }
+  setQuality(profile = {}) {
+    this.uniforms.weatherDetail.value = Math.max(0, Math.min(1, Number(profile.skyWeatherDetail) || 0));
+    return this.uniforms.weatherDetail.value;
+  }
   resourceStats() {
-    return { objects: 1, geometries: 1, materials: 1, textures: 0, rainbow: this.uniforms.rainbow.value };
+    return {
+      objects: 1, geometries: 1, materials: 1, textures: 0,
+      rain: this.uniforms.rain.value, rainbow: this.uniforms.rainbow.value, weatherDetail: this.uniforms.weatherDetail.value,
+    };
   }
   update(t, camPos) { this.uniforms.uTime.value = t; this.mesh.position.copy(camPos); }
 }

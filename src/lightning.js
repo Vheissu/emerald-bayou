@@ -21,6 +21,19 @@ export function lightningStrokeEnvelope(elapsed = 0) {
   );
 }
 
+// Retain the bearing to the cloud end of the most recent strike so the sky can illuminate the responsible cell.
+// The caller owns `out`; keeping the normalization here allocation-free matters when return strokes update it.
+export function lightningSkyDirection(out, camera, x = 0, y = 220, z = 0) {
+  if (!out) return out;
+  const cx = Number(camera?.x) || 0, cy = Number(camera?.y) || 0, cz = Number(camera?.z) || 0;
+  let dx = (Number(x) || 0) - cx, dy = (Number(y) || 0) - cy, dz = (Number(z) || 0) - cz;
+  const length = Math.hypot(dx, dy, dz);
+  if (length > 1e-6) { dx /= length; dy /= length; dz /= length; } else { dx = 0; dy = 1; dz = 0; }
+  if (typeof out.set === 'function') out.set(dx, dy, dz);
+  else { out.x = dx; out.y = dy; out.z = dz; }
+  return out;
+}
+
 // Fill one retained LineSegments buffer. The trunk is written first, followed by a bounded set of upward/outward
 // branches. A caller-owned trunk scratch keeps even the rare strike path free of temporary geometry allocations.
 export function writeLightningStroke(positions, colors, trunk, {

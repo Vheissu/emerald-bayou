@@ -12,7 +12,7 @@ test('reflection signatures follow broad solar, cloud and storm lighting instead
 
 test('old-hardware tiers keep static PMREMs while higher tiers refresh on meaningful state changes', () => {
   assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).environmentMapRefreshSeconds), [0, 0, 75, 45]);
-  const targets = [], scene = { environment: null }, uniforms = { flash: { value: 0.8 }, rainbow: { value: 0.6 } };
+  const targets = [], scene = { environment: null }, uniforms = { flash: { value: 0.8 }, rain: { value: 0.5 }, rainbow: { value: 0.6 } };
   let now = 1000;
   const maps = new SkyEnvironmentMap({
     renderer: {}, scene, skyScene: {}, skyUniforms: uniforms, profile: qualityProfile(1), now: () => now,
@@ -30,18 +30,19 @@ test('old-hardware tiers keep static PMREMs while higher tiers refresh on meanin
   assert.equal(targets[0].disposed, true);
   assert.equal(scene.environment, targets[1].texture);
   assert.equal(uniforms.flash.value, 0.8);
+  assert.equal(uniforms.rain.value, 0.5);
   assert.equal(uniforms.rainbow.value, 0.6);
 });
 
 test('replacement releases the prior target before allocating the next and restores transient sky uniforms', () => {
-  const scene = { environment: null }, flash = { value: 0.7 }, rainbow = { value: 0.4 }, order = [];
+  const scene = { environment: null }, flash = { value: 0.7 }, rain = { value: 0.9 }, rainbow = { value: 0.4 }, order = [];
   let now = 0, previous = null;
   const maps = new SkyEnvironmentMap({
-    renderer: {}, scene, skyScene: {}, skyUniforms: { flash, rainbow }, profile: qualityProfile(3), now: () => now,
+    renderer: {}, scene, skyScene: {}, skyUniforms: { flash, rain, rainbow }, profile: qualityProfile(3), now: () => now,
     targetFactory(renderer, skyScene, size) {
       assert.equal(scene.environment, null);
       if (previous) assert.equal(previous.disposed, true);
-      assert.equal(flash.value, 0); assert.equal(rainbow.value, 0);
+      assert.equal(flash.value, 0); assert.equal(rain.value, 0); assert.equal(rainbow.value, 0);
       const target = { texture: { size }, disposed: false, dispose() { this.disposed = true; order.push('dispose'); } };
       previous = target; order.push(`allocate:${size}`); return target;
     },
@@ -52,7 +53,7 @@ test('replacement releases the prior target before allocating the next and resto
   assert.equal(maps.needsRefresh({ ...afternoon, storm: 0.8, cover: 0.2 }, now), true);
   assert.equal(maps.capture({ ...afternoon, storm: 0.8, cover: 0.2 }, 'atmosphere', now), true);
   assert.deepEqual(order, ['allocate:256', 'dispose', 'allocate:256']);
-  assert.deepEqual({ flash: flash.value, rainbow: rainbow.value }, { flash: 0.7, rainbow: 0.4 });
+  assert.deepEqual({ flash: flash.value, rain: rain.value, rainbow: rainbow.value }, { flash: 0.7, rain: 0.9, rainbow: 0.4 });
   const stats = maps.resourceStats();
   assert.equal(stats.captures, 2); assert.equal(stats.replacements, 1); assert.equal(stats.disposals, 1);
   assert.equal(stats.retainedBytes, 9_437_184);

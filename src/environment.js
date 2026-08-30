@@ -3,7 +3,7 @@ import { lunarAgeAt, lunarIllumination, lunarNightLight, lunarPhaseAt, lunarPhas
 import { updateAttributePrefix } from './cache.js';
 import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
 import { applyAirboatWind } from './vesselwind.js';
-import { LIGHTNING_LIFETIME, LIGHTNING_MAX_SEGMENTS, LIGHTNING_TRUNK_SEGMENTS, lightningStrokeEnvelope, writeLightningStroke } from './lightning.js';
+import { LIGHTNING_LIFETIME, LIGHTNING_MAX_SEGMENTS, LIGHTNING_TRUNK_SEGMENTS, lightningSkyDirection, lightningStrokeEnvelope, writeLightningStroke } from './lightning.js';
 import {
   insertNearestSettlement, MAX_SETTLEMENT_LIGHTS, MAX_SETTLEMENT_OUTAGES, normalizeSettlementOutages,
   resetSettlementCandidates, serializeSettlementOutages, settlementGridStress, settlementLightLevel,
@@ -451,7 +451,8 @@ export class Environment {
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
-    this.flash = 0; this.boltT = 0; this.boltAge = 0; this.boltSegments = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
+    this.flash = 0; this.flashDirection = new THREE.Vector3(0, 1, 0); this.lightningCloudY = 220;
+    this.boltT = 0; this.boltAge = 0; this.boltSegments = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
     const initialSunY = Math.sin((this.hour - 6) / 24 * Math.PI * 2), initialDaylight = smooth(-0.08, 0.16, initialSunY), initialNight = 1 - smooth(-0.04, 0.18, initialSunY);
     this.sunGaze = -1; this.eyeExposure = eyeExposureTarget({ baseExposure: this.values.exposure, daylight: initialDaylight, night: initialNight, cloud: this.values.cloud, rain: this.values.rain, fog: this.values.fog, storm: this.values.storm }); this.eyeExposureTarget = this.eyeExposure;
     this.settlementOutages = normalizeSettlementOutages(saved.powerOutages, this.minutes);
@@ -481,6 +482,15 @@ export class Environment {
       active: this.bolt.visible, segments: this.boltSegments, capacity: LIGHTNING_MAX_SEGMENTS, returnStrokes: 3,
       drawCalls: this.bolt.visible ? 1 : 0, geometries: 1, materials: 1, textures: 0,
       geometryBytes: this.bolt.geometry.userData.byteLength, scratchBytes: this.boltTrunk.byteLength,
+    };
+  }
+
+  stormSkySnapshot() {
+    return {
+      rain: this.values.rain, storm: this.values.storm, flash: this.flash,
+      flashDirection: { x: this.flashDirection.x, y: this.flashDirection.y, z: this.flashDirection.z },
+      weatherDetail: this.sky.uniforms.weatherDetail.value,
+      extraObjects: 0, extraDrawCalls: 0, extraTextures: 0, extraRenderTargets: 0,
     };
   }
 
@@ -700,6 +710,7 @@ export class Environment {
     this.bolt.geometry.setDrawRange(0, this.boltSegments * 2);
     updateAttributePrefix(position, this.boltSegments * 6); updateAttributePrefix(color, this.boltSegments * 6);
     this.bolt.material.opacity = 1; this.bolt.visible = true; this.boltAge = 0; this.boltT = LIGHTNING_LIFETIME;
+    this.lightningCloudY = y0 + top; lightningSkyDirection(this.flashDirection, camera, x, this.lightningCloudY, z);
     this.flash = 1; this.thunderT = dist / 343; this.thunderX = x; this.thunderZ = z; this.lightningT = lerp(7, 28, Math.random()) / Math.max(0.35, this.values.lightning);
     this.registerSettlementPowerStrike(x, z);
     if (this.onLightning) this.onLightning({ x, z, y: y0, distance: dist, water: ground < this.waterLevel + 0.12 });
@@ -855,6 +866,7 @@ export class Environment {
     this.flash *= Math.exp(-dt * 12);
     if (V.lightning > 0.05 && !paused) { this.lightningT -= step; if (this.lightningT <= 0) this.triggerLightning(camera); }
     if (this.boltT > 0) {
+      lightningSkyDirection(this.flashDirection, camera, this.thunderX, this.lightningCloudY, this.thunderZ);
       const stroke = lightningStrokeEnvelope(this.boltAge);
       this.bolt.material.opacity = stroke; this.bolt.visible = stroke > 0.012;
       this.flash = Math.max(this.flash, stroke * 0.72);
@@ -878,7 +890,8 @@ export class Environment {
     this.sun.position.copy(this.lightDir).multiplyScalar(420).add(this.sun.target.position); this.sun.target.updateMatrixWorld();
     this.sky.uniforms.sunDir.value.copy(this.sunDir); this.sky.uniforms.moonDir.value.copy(this.moonDir);
     this.sky.uniforms.lightDir.value.copy(this.lightDir); this.sky.uniforms.windDir.value.set(this.windDir.x, this.windDir.z); this.sky.uniforms.windSpeed.value = V.wind;
-    this.sky.uniforms.daylight.value = daylight; this.sky.uniforms.storm.value = V.storm; this.sky.uniforms.flash.value = this.flash; this.sky.uniforms.cover.value = V.cloud; this.sky.uniforms.rainbow.value = this.rainbow;
+    this.sky.uniforms.daylight.value = daylight; this.sky.uniforms.storm.value = V.storm; this.sky.uniforms.flash.value = this.flash; this.sky.uniforms.flashDir.value.copy(this.flashDirection);
+    this.sky.uniforms.rain.value = V.rain; this.sky.uniforms.cover.value = V.cloud; this.sky.uniforms.rainbow.value = this.rainbow;
 
     this.water.setConditions({ level: this.waterLevel, seaState: V.sea, windAngle: this.localWindAngle, rain: V.rain, hail: V.hail, wind: V.wind });
     this.water.uniforms.sunDir.value.copy(this.lightDir);

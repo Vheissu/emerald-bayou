@@ -99,9 +99,16 @@ test('rain moisture clears slowly while the visible bow fades without popping', 
   assert.ok(fading > 0.8 && fading < 0.9);
 });
 
-test('the rainbow reuses the existing textureless sky object', () => {
-  const sky = new Sky(new THREE.Vector3(-0.42, 0.72, -0.55));
+test('rain curtains, lightning glow and rainbows reuse one quality-scaled textureless sky object', () => {
+  const sky = new Sky(new THREE.Vector3(-0.42, 0.72, -0.55), { skyWeatherDetail: 0.75 });
+  sky.uniforms.rain.value = 0.8;
   sky.uniforms.rainbow.value = 0.75;
-  assert.deepEqual(sky.resourceStats(), { objects: 1, geometries: 1, materials: 1, textures: 0, rainbow: 0.75 });
+  assert.match(sky.mesh.material.fragmentShader, /rainVeil/);
+  assert.match(sky.mesh.material.fragmentShader, /flashField/);
+  assert.deepEqual(sky.resourceStats(), {
+    objects: 1, geometries: 1, materials: 1, textures: 0, rain: 0.8, rainbow: 0.75, weatherDetail: 0.75,
+  });
+  assert.equal(sky.setQuality({ skyWeatherDetail: 0 }), 0);
+  assert.equal(sky.uniforms.weatherDetail.value, 0);
   sky.mesh.geometry.dispose(); sky.mesh.material.dispose();
 });

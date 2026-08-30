@@ -55,10 +55,10 @@ export class SkyEnvironmentMap {
     this.scene.environment = null; this.target = null; this.targetSize = 0;
     if (oldTarget) { oldTarget.dispose(); this.disposals++; }
 
-    // Lightning and rainbows last seconds. Baking either into a map would leave a false flash or coloured arc on
-    // glossy surfaces until the next refresh, so suppress only those two uniforms during the synchronous capture.
+    // Lightning, rain shafts and rainbows are short-lived/view-dependent. Baking any of them into a map would leave
+    // a false flash, dark curtain or coloured arc on glossy surfaces until the next refresh.
     const transient = [];
-    for (const key of ['flash', 'rainbow']) {
+    for (const key of ['flash', 'rain', 'rainbow']) {
       const uniform = this.skyUniforms?.[key];
       if (uniform) { transient.push([uniform, uniform.value]); uniform.value = 0; }
     }
