@@ -6,6 +6,7 @@ import { loadModel } from './models.js';
 import { HullDamageMaterial } from './hulldamage.js';
 import { person } from './folk.js';
 import { mulberry32 } from './noise.js';
+import { registerWetMaterial } from './surfacewetness.js';
 
 // Boat local frame: +X starboard, +Y up, -Z forward (bow at -Z).
 // The player boat and scheduled traffic use the same detailed hull. Keep one immutable render template so its
@@ -88,6 +89,24 @@ export function setAirboatWetness(boat, value = 0) {
 
 export function updateAirboatWetness(boat, conditions) {
   return setAirboatWetness(boat, airboatWetnessStep(boat?.surfaceWetness, conditions));
+}
+
+// Persistent world airboats share the immutable template's PBR materials, so one global storm-film registration
+// makes every copy react to rain, hail and dew without per-boat clones. The player keeps its independent spray film.
+export function registerAirboatEnvironmentWetness(group) {
+  if (!group?.traverse || group.userData?.airboatDynamicWetness) return 0;
+  const materials = new Set();
+  group.traverse(object => {
+    if (!object.isMesh || !object.material) return;
+    const source = Array.isArray(object.material) ? object.material : [object.material];
+    for (let i = 0; i < source.length; i++) {
+      const material = source[i];
+      if (!material?.isMeshStandardMaterial || materials.has(material)) continue;
+      materials.add(material); registerWetMaterial(material);
+    }
+  });
+  group.userData.airboatEnvironmentWetSurfaces = materials.size;
+  return materials.size;
 }
 
 function createAirboatTemplate() {
@@ -278,6 +297,7 @@ export function buildAirboat({ dynamicWetness = false, initialWetness = 0.06, pr
   // Opacity is driven independently by each engine's RPM. Ambient boats keep every PBR material shared; only the
   // player requests the small unique set whose roughness and colour respond to rain and spray.
   blur.material = blur.material.clone();
+  group.userData.airboatDynamicWetness = dynamicWetness;
   const boat = { group, prop, blur, rudders, cage, wetSurfaceMaterials: EMPTY_WET_SURFACES, surfaceWetness: 0, hullDamage: null };
   if (dynamicWetness) {
     boat.wetSurfaceMaterials = prepareAirboatWetSurfaces(group);
