@@ -3,6 +3,7 @@ import { lunarAgeAt, lunarIllumination, lunarNightLight, lunarPhaseAt, lunarPhas
 import { updateAttributePrefix } from './cache.js';
 import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
 import { applyAirboatWind } from './vesselwind.js';
+import { LIGHTNING_LIFETIME, LIGHTNING_MAX_SEGMENTS, LIGHTNING_TRUNK_SEGMENTS, lightningStrokeEnvelope, writeLightningStroke } from './lightning.js';
 import {
   insertNearestSettlement, MAX_SETTLEMENT_LIGHTS, MAX_SETTLEMENT_OUTAGES, normalizeSettlementOutages,
   resetSettlementCandidates, serializeSettlementOutages, settlementGridStress, settlementLightLevel,
@@ -450,7 +451,7 @@ export class Environment {
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
-    this.flash = 0; this.boltT = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
+    this.flash = 0; this.boltT = 0; this.boltAge = 0; this.boltSegments = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
     const initialSunY = Math.sin((this.hour - 6) / 24 * Math.PI * 2), initialDaylight = smooth(-0.08, 0.16, initialSunY), initialNight = 1 - smooth(-0.04, 0.18, initialSunY);
     this.sunGaze = -1; this.eyeExposure = eyeExposureTarget({ baseExposure: this.values.exposure, daylight: initialDaylight, night: initialNight, cloud: this.values.cloud, rain: this.values.rain, fog: this.values.fog, storm: this.values.storm }); this.eyeExposureTarget = this.eyeExposure;
     this.settlementOutages = normalizeSettlementOutages(saved.powerOutages, this.minutes);
@@ -465,9 +466,22 @@ export class Environment {
   }
 
   makeLightning() {
-    const p = new Float32Array(22 * 3); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3));
-    const m = new THREE.LineBasicMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0, depthWrite: false });
-    this.bolt = new THREE.Line(g, m); this.bolt.visible = false; this.bolt.frustumCulled = false; this.scene.add(this.bolt);
+    const p = new Float32Array(LIGHTNING_MAX_SEGMENTS * 6), c = new Float32Array(LIGHTNING_MAX_SEGMENTS * 6);
+    const position = new THREE.BufferAttribute(p, 3), color = new THREE.BufferAttribute(c, 3);
+    position.setUsage(THREE.DynamicDrawUsage); color.setUsage(THREE.DynamicDrawUsage);
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', position); g.setAttribute('color', color); g.setDrawRange(0, 0);
+    g.userData.byteLength = p.byteLength + c.byteLength;
+    const m = new THREE.LineBasicMaterial({ color: 0xeaf6ff, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.boltTrunk = new Float32Array((LIGHTNING_TRUNK_SEGMENTS + 1) * 3);
+    this.bolt = new THREE.LineSegments(g, m); this.bolt.name = 'branched lightning'; this.bolt.visible = false; this.bolt.frustumCulled = false; this.scene.add(this.bolt);
+  }
+
+  lightningSnapshot() {
+    return {
+      active: this.bolt.visible, segments: this.boltSegments, capacity: LIGHTNING_MAX_SEGMENTS, returnStrokes: 3,
+      drawCalls: this.bolt.visible ? 1 : 0, geometries: 1, materials: 1, textures: 0,
+      geometryBytes: this.bolt.geometry.userData.byteLength, scratchBytes: this.boltTrunk.byteLength,
+    };
   }
 
   makeBoatLights() {
@@ -681,14 +695,11 @@ export class Environment {
     const x = target ? target.x : camera.x + Math.cos(a) * dist, z = target ? target.z : camera.z + Math.sin(a) * dist;
     if (target) dist = Math.hypot(x - camera.x, z - camera.z);
     const ground = this.terrain.heightAt(x, z), y0 = Math.max(this.waterLevel, ground) + 0.5, top = 190 + Math.random() * 100;
-    const p = this.bolt.geometry.attributes.position.array;
-    let px = x, pz = z;
-    for (let i = 0; i < 22; i++) {
-      const k = i / 21, wander = (1 - k) * 8 + 0.8;
-      if (i) { px += (Math.random() - 0.5) * wander; pz += (Math.random() - 0.5) * wander; }
-      p[i * 3] = px; p[i * 3 + 1] = y0 + k * top; p[i * 3 + 2] = pz;
-    }
-    this.bolt.geometry.attributes.position.needsUpdate = true; this.bolt.material.opacity = 1; this.bolt.visible = true; this.boltT = 0.14;
+    const position = this.bolt.geometry.attributes.position, color = this.bolt.geometry.attributes.color;
+    this.boltSegments = writeLightningStroke(position.array, color.array, this.boltTrunk, { x, y: y0, z, height: top });
+    this.bolt.geometry.setDrawRange(0, this.boltSegments * 2);
+    updateAttributePrefix(position, this.boltSegments * 6); updateAttributePrefix(color, this.boltSegments * 6);
+    this.bolt.material.opacity = 1; this.bolt.visible = true; this.boltAge = 0; this.boltT = LIGHTNING_LIFETIME;
     this.flash = 1; this.thunderT = dist / 343; this.thunderX = x; this.thunderZ = z; this.lightningT = lerp(7, 28, Math.random()) / Math.max(0.35, this.values.lightning);
     this.registerSettlementPowerStrike(x, z);
     if (this.onLightning) this.onLightning({ x, z, y: y0, distance: dist, water: ground < this.waterLevel + 0.12 });
@@ -843,7 +854,13 @@ export class Environment {
 
     this.flash *= Math.exp(-dt * 12);
     if (V.lightning > 0.05 && !paused) { this.lightningT -= step; if (this.lightningT <= 0) this.triggerLightning(camera); }
-    if (this.boltT > 0) { this.boltT -= dt; this.bolt.material.opacity = clamp(this.boltT / 0.14); if (this.boltT <= 0) this.bolt.visible = false; }
+    if (this.boltT > 0) {
+      const stroke = lightningStrokeEnvelope(this.boltAge);
+      this.bolt.material.opacity = stroke; this.bolt.visible = stroke > 0.012;
+      this.flash = Math.max(this.flash, stroke * 0.72);
+      this.boltAge += dt; this.boltT = Math.max(0, this.boltT - dt);
+      if (this.boltT <= 0) this.bolt.visible = false;
+    }
     if (this.thunderT >= 0) { this.thunderT -= dt; if (this.thunderT < 0) this.thunder(0.65 + V.storm * 0.35); }
 
     this.sun.intensity = Math.max(moonLight, sunBase) + this.flash * 4.5;

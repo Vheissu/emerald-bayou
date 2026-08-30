@@ -328,6 +328,7 @@ async function init() {
     lifecycle: { ...pageLifecycle },
     effects: {
       eyeAdaptation: environment.eyeAdaptationSnapshot(),
+      lightning: environment.lightningSnapshot(),
       spray: { active: spray.count, capacity: spray.max },
       plume: { active: plume.count, capacity: plume.max },
       rain: { active: environment.precip.rain.geo.drawRange.count / 2, capacity: environment.precip.rain.count },

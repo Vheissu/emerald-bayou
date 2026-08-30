@@ -86,6 +86,10 @@ Rain stays on the world after the curtain passes. Banks and tidal mud keep a dar
 
 Severe tropical bands can now lift loose planks and sheet metal over the channel. They move with the gusts, tumble, become solid only as they drop to cage height, then splash down and remain as floating prop hazards. Logs stay in the water. The behavior follows National Weather Service and National Hurricane Center guidance that tropical-storm and hurricane winds can turn loose outdoor material into [windborne debris](https://www.weather.gov/mhx/hurricaneprep) and [flying missiles](https://www.nhc.noaa.gov/prepare/hazards.php); the debris left obstructing shallow channels follows [NOAA's account of storm-driven marine debris](https://oceanservice.noaa.gov/facts/disaster-debris.html).
 
+Lightning no longer fades as one unbranched line. Each strike fills a fixed 72-segment buffer with a 24-step main channel, two major forks and a bounded set of smaller branches. Three return strokes run through the same channel with dark gaps between them, relighting the sky and water each time. Thunder still arrives by distance, and a nearby strike can still damage the boat or knock out settlement power. The line geometry and its scratch buffer total 3,756 bytes. There is one draw call and no texture.
+
+The camera now takes time to recover after looking into the sun or catching a close flash. Direct fair-weather sun, lightning and the night spotlight contract the existing grade exposure quickly; darkness returns more slowly. Cloud, rain and fog stop a hidden sun from dimming the picture. This changes the exposure uniform already in the post pass and adds no GPU resource.
+
 The storm system still owns twelve debris bodies and 44 meshes. Sharing their immutable parts cut the pool from 44 geometries and 16 materials to six geometries and seven materials. Its seventeen wake records are reused every frame, and thunder loops the existing engine-noise sample instead of generating a new 2.8 second buffer for every strike.
 
 World sounds follow their sources across the water. Gator bellows, bird calls, fish splashes, duck-blind shots, lightning, fires, patrol sirens and helicopters pan left or right as the camera turns. The siren and rotor beds each keep one stereo panner for their lifetime, while every compound one-shot shares a single short-lived panner. Browsers without stereo panning still get the same sounds in the centre.
@@ -191,6 +195,8 @@ __dbg.gators.resourceStats()               // 18 animals and the fixed 36-eye in
 __dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
 __dbg.environment.settlementPowerSnapshot() // five-light pool, live grid stress and saved strike outages
 __dbg.environment.spotlightVolumeSnapshot() // one weather-scaled beam mesh and its fixed geometry budget
+__dbg.environment.lightningSnapshot()       // fixed branched channel, return strokes and live draw budget
+__dbg.environment.eyeAdaptationSnapshot()   // current exposure target and zero-extra-GPU-resource budget
 __dbg.environment.cloudShadowSnapshot()   // live mask, drift and zero-extra-resource budget
 __dbg.environment.surfaceWetnessSnapshot()  // live film target, shared material writes and terrain uniforms
 __dbg.encounters.pursuitSnapshot()        // surface units, shared visual and pooled aviation state
