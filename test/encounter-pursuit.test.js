@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EncounterDirector } from '../src/encounters.js';
+import { downburstCraftUrgency } from '../src/downburst.js';
 
 test('coordinated pursuit schedules each pooled backup once and keeps the fleet bounded', () => {
   const director = Object.create(EncounterDirector.prototype), deployed = [];
@@ -199,6 +200,47 @@ test('backup rams use one shared contact window and damage the player craft', ()
   assert.equal(director.attemptPatrolRam(e, R, 2, 5, 4, 4), false); assert.equal(damage.length, 1);
 });
 
+test('a downburst sample stays retained while outflow drifts and heels a pursuit hull', () => {
+  const cell = { active: true, x: 0, z: 0, age: 12, duration: 48, startRadius: 12, maxRadius: 126, peakWind: 27, biasX: 1, biasZ: 0 };
+  const radius = downburstCraftUrgency(cell, 0, 0, 'john', {}).radius, transforms = {};
+  const agent = {
+    enforcement: true, active: true, x: radius, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: radius, targetZ: -100, choice: 0, decisionT: 1,
+    downburstResponse: 0, downburstDistance: Infinity, downburstNoticeT: 0, downburstReactionDelay: 0.3, downburstReacted: false,
+    downburstField: {}, localOutflow: { x: 0, z: 0 }, surfaceWind: { x: 0, z: 0, speed: 0 }, windDrift: { x: 0, z: 0, speed: 0 },
+    windage: 0.023, windDivergence: 0, windHeelScale: 0.9, windHeel: 0,
+    weatherTactic: { load: 0, speedScale: 1, avoidance: 0, canRam: true, canBlock: true, constrained: false },
+    mesh: { userData: {}, position: { set: (...values) => { transforms.position = values; } }, rotation: { set: (...values) => { transforms.rotation = values; } } },
+  };
+  const field = agent.downburstField, wind = agent.surfaceWind, drift = agent.windDrift, tactic = agent.weatherTactic;
+  const director = Object.create(EncounterDirector.prototype);
+  Object.assign(director, {
+    hazards: { downburst: cell }, environment: { values: { wind: 0 }, gust: 1, windDir: { x: 0, z: 1 }, waterLevel: 0 },
+    terrain: { heightAt: () => -2 }, water: { waveHeight: () => 0 }, currents: null, _downburstProbe: {},
+  });
+
+  for (let i = 0; i < 12; i++) director.updatePatrolDownburst(agent, 0.1);
+  assert.equal(agent.downburstField, field); assert.equal(agent.surfaceWind, wind); assert.equal(agent.windDrift, drift); assert.equal(agent.weatherTactic, tactic);
+  assert.equal(agent.downburstReacted, true); assert.ok(agent.downburstResponse > 0.5); assert.ok(agent.downburstField.speed > 24);
+  assert.ok(agent.windDrift.speed > 0); assert.notEqual(agent.windHeel, 0); assert.equal(agent.weatherTactic.canRam, false);
+
+  const beforeX = agent.x; director.updateAgent(agent, 0.1, 1, agent.x, agent.z - 100, 0);
+  assert.ok(agent.x > beforeX); assert.equal(transforms.position[0], agent.x); assert.equal(transforms.rotation[2], agent.windHeel);
+});
+
+test('unsafe local outflow suppresses deliberate patrol rams without clearing the wanted pursuit', () => {
+  const director = Object.create(EncounterDirector.prototype), damage = [];
+  director.phys = {
+    pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, hit: 0, hitNormal: { set() {} }, hitTag: '', angVel: 0, rollVel: 0,
+  };
+  director.condition = { damage: (...values) => damage.push(values) };
+  director.law = { stats: {} }; director.audio = { thud() {} }; director.game = { shake: 0, toast() {} };
+  const e = { contactCd: 0, ramCd: 0, state: 'pursuit', wanted: true };
+  const R = { agent: { x: 0, z: 5, heading: 0, speed: 10, weatherTactic: { canRam: false } } };
+
+  assert.equal(director.attemptPatrolRam(e, R, 1, 5, 4, 4), false);
+  assert.equal(e.state, 'pursuit'); assert.equal(e.wanted, true); assert.equal(e.contactCd, 0); assert.equal(damage.length, 0); assert.deepEqual(director.phys.vel, { x: 0, y: 0 });
+});
+
 test('a high-wanted shallow-water unit places its closure ahead and broadside in clear water', () => {
   const director = Object.create(EncounterDirector.prototype);
   director.phys = { pos: { x: 10, y: 20 }, vel: { x: 0, y: -12 }, heading: 0, speed: 12 };
@@ -212,6 +254,17 @@ test('a high-wanted shallow-water unit places its closure ahead and broadside in
   const patrolForwardX = -Math.sin(closure.heading), patrolForwardZ = -Math.cos(closure.heading);
   assert.ok(Math.abs(patrolForwardX * closure.courseX + patrolForwardZ * closure.courseZ) < 1e-9);
   assert.equal(director.law.stats.channelClosures, 1);
+});
+
+test('a downburst-constrained shallow-water unit defers its broadside block', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 10, y: 20 }, vel: { x: 0, y: -12 }, heading: 0, speed: 12 };
+  director.environment = { waterLevel: 0 }; director.terrain = { heightAt: () => -2 }; director.world = { blockedAt: () => false }; director.law = { stats: {} };
+  const closure = { active: false, holding: false, cooldown: 0, plan: {} };
+  const R = { role: 2, agent: { active: true, x: 130, z: 60, heading: 0, weatherTactic: { canBlock: false } }, closure };
+
+  assert.equal(director.beginPatrolChannelClosure({ tacticSide: 1 }, R, 5, true), false);
+  assert.equal(closure.active, false); assert.equal(closure.cooldown, 1.5); assert.equal(director.law.stats.channelClosures, undefined);
 });
 
 test('the channel-closing backup deploys farther ahead and closer to the working cut', () => {

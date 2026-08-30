@@ -93,6 +93,17 @@ export function pursuitUnitCanRam(role, attention) {
   return role === 0 ? wantedLevel(attention) >= 2 : wantedLevel(attention) >= 3;
 }
 
+// A local downburst changes how a surface unit can safely use its hull without ending the pursuit. Strong divergent
+// flow forces a slower containment track, abandons a broadside channel block first, then rules out deliberate
+// contact. `out` belongs to the unit so this policy can be refreshed every frame without generating garbage.
+export function pursuitDownburstTactic(response = 0, intensity = 0, out = {}) {
+  const awareness = clamp(Number(response) || 0, 0, 1), gust = clamp(Number(intensity) || 0, 0, 1);
+  const load = clamp(Math.max(awareness, gust * 0.92), 0, 1);
+  out.load = load; out.speedScale = clamp(1 - load * 0.42, 0.58, 1); out.avoidance = awareness;
+  out.canRam = load < 0.44; out.canBlock = load < 0.34; out.constrained = load >= 0.34;
+  return out;
+}
+
 export function pursuitSightSampleCount(distance) {
   return clamp(Math.ceil(Math.max(0, Number(distance) || 0) / 14), 3, 20);
 }

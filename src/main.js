@@ -257,7 +257,7 @@ async function init() {
   const anchor = new BoatAnchor({ scene, terrain, water, phys, game, audio, environment, currents }); condition.anchor = anchor; game.anchor = anchor;
   loadingProgress('Waking the backcountry', 0.68);
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
-  life.traffic.hazards = hazards;
+  life.traffic.hazards = hazards; encounters.hazards = hazards;
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio, currents, phys, terrain });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
   environment.radio = radio; encounters.radio = radio;

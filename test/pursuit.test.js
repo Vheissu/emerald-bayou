@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitAviationVisualRange,
-  pursuitBackupDelay, pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance,
+  pursuitBackupDelay, pursuitChannelClosurePlan, pursuitDownburstTactic, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance,
   pursuitLostProgress, pursuitLostTime, pursuitSearchPlan, pursuitSearchlightPlan, pursuitSearchlightVisualHeld, pursuitSearchRadius, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
   pursuitSirenLevel, pursuitSurfaceLineOfSight, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
@@ -53,6 +53,18 @@ test('backup patrols intercept from opposing sides without all ramming at low he
   const right = pursuitTactic(1, 4, 80, 1), left = pursuitTactic(2, 4, 80, 1);
   assert.ok(right.fore > 20 && right.side > 0); assert.ok(left.fore > 10 && left.side < 0);
   assert.equal(pursuitUnitCanRam(0, 2), true); assert.equal(pursuitUnitCanRam(1, 2), false); assert.equal(pursuitUnitCanRam(1, 3), true);
+});
+
+test('downburst load steps pursuit boats from containment into no-contact tactics', () => {
+  const retained = {};
+  assert.equal(pursuitDownburstTactic(0, 0, retained), retained);
+  assert.deepEqual(retained, { load: 0, speedScale: 1, avoidance: 0, canRam: true, canBlock: true, constrained: false });
+
+  pursuitDownburstTactic(0.38, 0.1, retained);
+  assert.equal(retained.canRam, true); assert.equal(retained.canBlock, false); assert.equal(retained.constrained, true); assert.ok(retained.speedScale < 1);
+
+  pursuitDownburstTactic(0.1, 0.6, retained);
+  assert.equal(retained.canRam, false); assert.equal(retained.canBlock, false); assert.ok(retained.load > 0.5); assert.ok(retained.speedScale >= 0.58);
 });
 
 test('the third patrol boat forms a bounded high-wanted channel closure with counterplay', () => {
