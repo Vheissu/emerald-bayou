@@ -94,7 +94,7 @@ export class StormLine {
     this.convoyObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.08, tag: 'storm convoy', onHit: (into, nx, nz) => this.convoyHit(into, nx, nz) };
     this.chaserObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.08, tag: 'pursuing skiff', onHit: (into, nx, nz) => this.chaserHit(into, nx, nz) };
     this.resultObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.08, tag: 'storm power skiff' };
-    this.obLevel = 0; this.obPitch = 0.9;
+    this.obLevel = 0; this.obPitch = 0.9; this.obX = 0; this.obZ = 0;
     if (this.eligible() && !this.state.offerAt && this.state.stage === 'dormant') this.arm(90000);
     this.restore(); this.persist();
   }
@@ -504,11 +504,11 @@ export class StormLine {
   }
 
   updateAudio() {
-    this.obLevel = 0; this.obPitch = this.state.branch === 'runner' ? 0.84 : 0.94;
+    this.obLevel = 0; this.obPitch = this.state.branch === 'runner' ? 0.84 : 0.94; this.obX = 0; this.obZ = 0;
     for (const A of [this.convoy, this.chaser]) {
       if (!A.active) continue;
       const d = Math.hypot(A.x - this.P.phys.pos.x, A.z - this.P.phys.pos.y);
-      if (d < 155) this.obLevel = Math.max(this.obLevel, (0.22 + 0.72 * Math.min(1, A.speed / 12)) * (1 - d / 155));
+      if (d < 155) { const level = (0.22 + 0.72 * Math.min(1, A.speed / 12)) * (1 - d / 155); if (level > this.obLevel) { this.obLevel = level; this.obX = A.x; this.obZ = A.z; } }
     }
   }
 

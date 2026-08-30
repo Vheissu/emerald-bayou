@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cameraRelativePan, EngineAudio } from '../src/audio.js';
+import { readFileSync } from 'node:fs';
+import { cameraRelativePan, EngineAudio, selectOutboardSource } from '../src/audio.js';
 
 const audioParam = (value = 0) => ({
   value,
@@ -36,6 +37,26 @@ test('camera-relative pan follows listener heading without allocating scene obje
   assert.equal(cameraRelativePan(0, 0, 1, 0, 0, 10), 1);
   assert.equal(cameraRelativePan(4, 8, 0, -1, 4, 8), 0);
   assert.equal(cameraRelativePan(0, 0, 0, 0, 10, 0), 0);
+});
+
+test('the pooled outboard selector keeps a nearly equal source before accepting a clearly louder handoff', () => {
+  const traffic = { obLevel: 0.6, obPitch: 1.2, obX: 20, obZ: 0 }, story = { obLevel: 0.68, obPitch: 0.85, obX: -30, obZ: 4 };
+  const candidates = [{ id: 'traffic', source: traffic }, { id: 'story', source: story }], out = { id: 'traffic' };
+  assert.equal(selectOutboardSource(candidates, out), out);
+  assert.deepEqual(out, { id: 'traffic', level: 0.6, pitch: 1.2, x: 20, z: 0 });
+  story.obLevel = 0.75; selectOutboardSource(candidates, out);
+  assert.deepEqual(out, { id: 'story', level: 0.75, pitch: 0.85, x: -30, z: 4 });
+  story.obX = Number.NaN; traffic.obLevel = 0; selectOutboardSource(candidates, out);
+  assert.deepEqual(out, { id: '', level: 0, pitch: 1, x: 0, z: 0 });
+});
+
+test('the render loop retains one cross-system motor candidate list outside frame cadence', () => {
+  const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  const candidatesAt = source.indexOf('const outboardSources = ['), frameAt = source.indexOf('function frame()');
+  assert.ok(candidatesAt >= 0 && frameAt > candidatesAt);
+  for (const id of ['resident traffic', 'boat ramp', 'encounter craft', 'world incident', 'story craft', 'storm recovery']) assert.ok(source.includes(`id: '${id}'`));
+  assert.ok(source.includes('encounters.updateOutboardAudio(started && !game.paused)'));
+  assert.ok(source.includes('selectOutboardSource(outboardSources, outboardMix)'));
 });
 
 test('page hibernation suspends and resumes the existing audio context idempotently', async () => {
@@ -110,6 +131,19 @@ test('helicopter audio reuses one spatial rotor graph while the aircraft moves',
   audio.helicopter(0.8, 1.1, -30, 0); audio.helicopter(0);
   assert.equal(audio.heli, graph); assert.equal(audio.heli.panner, panner); assert.equal(panner.pan.value, -0.9);
   assert.equal(ctx.allocations.panners.length, 1); assert.deepEqual(ctx.counts, { oscillators: 2, gains: 2, filters: 2 });
+});
+
+test('nearby motors reuse one spatial graph with bounded Doppler and a clean source handoff', () => {
+  const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx; audio.sfx = {};
+  audio.outboard(0); assert.deepEqual(ctx.counts, { oscillators: 0, gains: 0, filters: 0 });
+  audio.setListener(0, 0, 0, -1); ctx.currentTime = 1; audio.outboard(0.6, 1, 24, 0, 'traffic');
+  assert.deepEqual(ctx.counts, { oscillators: 2, gains: 1, filters: 1 }); assert.equal(ctx.allocations.panners.length, 1);
+  const graph = audio.ob, panner = graph.panner; assert.equal(panner.pan.value, 0.9); assert.equal(graph.doppler, 1);
+  ctx.currentTime = 1.1; audio.outboard(0.7, 1, 18, 0, 'traffic');
+  assert.ok(graph.doppler > 1 && graph.doppler <= 1.11); assert.equal(graph, audio.ob); assert.equal(ctx.allocations.panners.length, 1);
+  ctx.currentTime = 1.2; audio.outboard(0.8, 0.9, -30, 0, 'story');
+  assert.equal(graph.doppler, 1); assert.equal(graph.sourceId, 'story'); assert.equal(panner.pan.value, -0.9);
+  audio.outboard(0, 1, 0, 0, ''); assert.equal(audio.ob, graph); assert.deepEqual(ctx.counts, { oscillators: 2, gains: 1, filters: 1 });
 });
 
 test('fishing reel audio is lazy and reuses one graph while tension changes', () => {

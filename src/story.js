@@ -74,7 +74,7 @@ export class StoryDirector {
     if (!Number.isFinite(S.caseX)) S.caseX = C.search.x + Math.cos(C.search.heading + 1.2) * 6;
     if (!Number.isFinite(S.caseZ)) S.caseZ = C.search.z + Math.sin(C.search.heading + 1.2) * 6;
     this.clock = 0; this.offerT = 34; this.choiceT = 0; this.persistT = 6; this.departT = 0; this.departSpeed = 0; this.enabled = false;
-    this.departPoint = { x: 0, z: 0, heading: 0, mesh: null, navigationLights: false }; this.departMesh = null; this.departCargo = []; this.departPitch = 0.86; this.obLevel = 0; this.obPitch = 0.86;
+    this.departPoint = { x: 0, z: 0, heading: 0, mesh: null, navigationLights: false }; this.departMesh = null; this.departCargo = []; this.departPitch = 0.86; this.obLevel = 0; this.obPitch = 0.86; this.obX = 0; this.obZ = 0;
     this.interact = false; this.alternate = false; this.prompting = false; this.wantInput = false; this.approachHold = 0; this.routeStart = 0; this.routeBand = this.state.routeBand;
     this.obs = [];
     this.wreckObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'maintenance skiff' };
@@ -419,17 +419,17 @@ export class StoryDirector {
   }
 
   updateAudio() {
-    this.obLevel = 0; this.obPitch = this.state.branch === 'runner' ? 0.82 : 0.9;
+    this.obLevel = 0; this.obPitch = this.state.branch === 'runner' ? 0.82 : 0.9; this.obX = 0; this.obZ = 0;
     let x = 0, z = 0, speed = 0;
     if (this.state.stage === 'delivery') { const d = this.destination(); x = d.x; z = d.z; speed = 1.25; }
     else if (this.departT > 0) { x = this.departPoint.x; z = this.departPoint.z; speed = this.departSpeed; this.obPitch = this.departPitch; }
-    if (speed > 0) { const d = Math.hypot(x - this.phys.pos.x, z - this.phys.pos.y); if (d < 145) this.obLevel = (0.16 + 0.56 * Math.min(1, speed / 6.6)) * (1 - d / 145); }
+    if (speed > 0) { const d = Math.hypot(x - this.phys.pos.x, z - this.phys.pos.y); if (d < 145) { this.obLevel = (0.16 + 0.56 * Math.min(1, speed / 6.6)) * (1 - d / 145); this.obX = x; this.obZ = z; } }
     this.passage?.updateAudio();
-    if (this.passage && this.passage.obLevel > this.obLevel) { this.obLevel = this.passage.obLevel; this.obPitch = this.passage.obPitch; }
+    if (this.passage && this.passage.obLevel > this.obLevel) { this.obLevel = this.passage.obLevel; this.obPitch = this.passage.obPitch; this.obX = this.passage.obX; this.obZ = this.passage.obZ; }
     this.stormLine?.updateAudio();
-    if (this.stormLine && this.stormLine.obLevel > this.obLevel) { this.obLevel = this.stormLine.obLevel; this.obPitch = this.stormLine.obPitch; }
+    if (this.stormLine && this.stormLine.obLevel > this.obLevel) { this.obLevel = this.stormLine.obLevel; this.obPitch = this.stormLine.obPitch; this.obX = this.stormLine.obX; this.obZ = this.stormLine.obZ; }
     this.contracts?.updateAudio();
-    if (this.contracts && this.contracts.obLevel > this.obLevel) { this.obLevel = this.contracts.obLevel; this.obPitch = this.contracts.obPitch; }
+    if (this.contracts && this.contracts.obLevel > this.obLevel) { this.obLevel = this.contracts.obLevel; this.obPitch = this.contracts.obPitch; this.obX = this.contracts.obX; this.obZ = this.contracts.obZ; }
   }
 
   wakeHeightAt(x, z, t) {

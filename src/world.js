@@ -46,9 +46,9 @@ export class World {
     this.cellCacheEvictions = { camps: 0, sites: 0, traps: 0 };
     this.checkT = 0; this.collected = new Set(); this.phys = null; this.wind = null;
     this.fx = null; // { plume, spray, audio, fish, playerWakeAt } from main
-    this.stampPool = new WakeStampPool(24); this.obLevel = 0; this.truckLevel = 0; this.onShot = null;
+    this.stampPool = new WakeStampPool(24); this.obLevel = 0; this.obPitch = 1; this.obX = 0; this.obZ = 0; this.truckLevel = 0; this.onShot = null;
     this.emitStamp = (x, z, radius, height, foam, foamRadius) => this.stampPool.emit(x, z, radius, height, foam, foamRadius);
-    this.context = { bx: 0, bz: 0, speed: 0, dt: 0, emitStamp: this.emitStamp, plume: null, spray: null, audio: null, fish: null, playerWakeAt: null, ob: 0, truck: 0, onShot: null, humanActivity: 1, heightAt: (x, z) => this.T.heightAt(x, z) };
+    this.context = { bx: 0, bz: 0, speed: 0, dt: 0, emitStamp: this.emitStamp, plume: null, spray: null, audio: null, fish: null, playerWakeAt: null, ob: 0, obPitch: 1, obX: 0, obZ: 0, truck: 0, onShot: null, humanActivity: 1, heightAt: (x, z) => this.T.heightAt(x, z) };
     this.disposedGeometries = 0;
   }
   releaseGeometry(root) { const n = disposeDetachedGeometries(root, this.scene); this.disposedGeometries += n; return n; }
@@ -232,9 +232,9 @@ export class World {
     for (const [key, m] of this.liveTraps) { const tr = this.trapCells.get(key); m.position.y = this.waveFn(tr.x, tr.z, t) - 0.12; m.rotation.z = Math.sin(t * 1.3 + tr.ph) * 0.12; m.rotation.x = Math.cos(t * 0.9 + tr.ph) * 0.1; }
     this.stampPool.reset();
     const P = this.phys; const fx = this.fx || {};
-    const ctx = this.context; ctx.bx = bx; ctx.bz = bz; ctx.speed = P ? P.speed : 0; ctx.dt = dt; ctx.plume = fx.plume; ctx.spray = fx.spray; ctx.audio = fx.audio; ctx.fish = fx.fish; ctx.playerWakeAt = fx.playerWakeAt; ctx.ob = 0; ctx.truck = 0; ctx.onShot = this.onShot; ctx.humanActivity = this.humanActivity ?? 1;
+    const ctx = this.context; ctx.bx = bx; ctx.bz = bz; ctx.speed = P ? P.speed : 0; ctx.dt = dt; ctx.plume = fx.plume; ctx.spray = fx.spray; ctx.audio = fx.audio; ctx.fish = fx.fish; ctx.playerWakeAt = fx.playerWakeAt; ctx.ob = 0; ctx.obPitch = 1; ctx.obX = 0; ctx.obZ = 0; ctx.truck = 0; ctx.onShot = this.onShot; ctx.humanActivity = this.humanActivity ?? 1;
     for (const g of this.liveCamps.values()) animateSite(g, t, this.waveFn, this.wind, ctx);
     for (const l of this.liveSites.values()) animateSite(l.g, t, this.waveFn, this.wind, ctx);
-    this.obLevel = ctx.ob; this.truckLevel = ctx.truck;
+    this.obLevel = ctx.ob; this.obPitch = ctx.obPitch; this.obX = ctx.obX; this.obZ = ctx.obZ; this.truckLevel = ctx.truck;
   }
 }

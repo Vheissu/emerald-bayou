@@ -141,7 +141,7 @@ export class ResidentContracts {
     this.rigs = this.makeRigs(); this.obs = []; this.phys.addObs('resident-contracts', this.obs);
     this.agents = [this.rigs.patrolAgent, this.rigs.receiverAgent]; this.agentPitches = [1.12, 0.84];
     this._flow = new THREE.Vector2(); this.enabled = false; this.prompting = false; this.nearOffer = null;
-    this.persistT = 5; this.announceT = 7; this.hitCd = 0; this.obLevel = 0; this.obPitch = 1;
+    this.persistT = 5; this.announceT = 7; this.hitCd = 0; this.obLevel = 0; this.obPitch = 1; this.obX = 0; this.obZ = 0;
     this.aidObs = { x: 0, z: 0, r: 0.7, tag: 'channel marker' };
     this.cargoObs = { x: 0, z: 0, r: 0.68, tag: 'cold-chain cooler' };
     this.receiverObs = this.boatObstacle(this.rigs.receiverAgent, 'runner work skiff');
@@ -689,11 +689,11 @@ export class ResidentContracts {
   }
 
   updateAudio() {
-    this.obLevel = 0; this.obPitch = 1;
+    this.obLevel = 0; this.obPitch = 1; this.obX = 0; this.obZ = 0;
     for (let i = 0; i < this.agents.length; i++) {
       const A = this.agents[i], pitch = this.agentPitches[i];
       if (!A.active) continue; const d = Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y);
-      if (d < 155) { const level = (0.22 + 0.74 * Math.min(1, A.speed / 11)) * (1 - d / 155); if (level > this.obLevel) { this.obLevel = level; this.obPitch = pitch; } }
+      if (d < 155) { const level = (0.22 + 0.74 * Math.min(1, A.speed / 11)) * (1 - d / 155); if (level > this.obLevel) { this.obLevel = level; this.obPitch = pitch; this.obX = A.x; this.obZ = A.z; } }
     }
   }
 

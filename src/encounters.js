@@ -307,6 +307,7 @@ export class EncounterDirector {
     this.wranglerGatorObs = { x: 0, z: 0, r: 1.42, tag: 'nuisance alligator', onHit: into => this.hitWranglerGator(into) };
     this.phys.addObs('encounters', this.obs);
     this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, ...this.rigs.patrolBackups.map(unit => unit.agent), this.rigs.smuggler.agent, this.rigs.distress.echoAgent, this.rigs.grounding.agent];
+    this.obLevel = 0; this.obPitch = 1; this.obX = 0; this.obZ = 0;
     this.salvagePieces = this.rigs.salvage.drums.map((mesh, index) => ({ mesh, index, x: 0, z: 0, vx: 0, vz: 0, found: false, ruptured: false, resolved: false, hitCd: 0, sinkT: 0, ph: index * 2.3 }));
     this.drumObs = this.salvagePieces.map((q, index) => ({ x: 0, z: 0, r: 0.52, tag: 'fuel drum', onHit: (into, nx, nz) => this.hitDrum(index, into, nx, nz) }));
     this.spills = this.makeSpills();
@@ -3117,6 +3118,18 @@ export class EncounterDirector {
     const activePursuit = e.type === 'patrol' && e.state === 'pursuit';
     if (this.active && !activePursuit && ((!carryingDistress && !carryingFire && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) || ((carryingDistress || carryingFire) && e.t > 600))) this.finish(false);
     this.interact = false; this.alternate = false;
+  }
+
+  updateOutboardAudio(audible = true) {
+    this.obLevel = 0; this.obPitch = 1; this.obX = 0; this.obZ = 0;
+    if (!audible) return;
+    for (const A of this.agents) {
+      if (!A.active || A.speed <= 0.05) continue;
+      const d = Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y); if (d >= 165) continue;
+      const level = (0.22 + 0.74 * Math.min(1, A.speed / 11)) * (1 - d / 165);
+      if (level <= this.obLevel) continue;
+      this.obLevel = level; this.obPitch = A === this.rigs.smuggler.agent ? 1.16 : A.enforcement ? 1.06 : 1; this.obX = A.x; this.obZ = A.z;
+    }
   }
 
   wakeHeightAt(x, z, t) { return sampleVesselWake(this.agents, x, z, t, 12.4, 0.11); }

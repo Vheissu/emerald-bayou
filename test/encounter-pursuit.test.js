@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import { EncounterDirector } from '../src/encounters.js';
 import { downburstCraftUrgency } from '../src/downburst.js';
 
+test('encounter engines publish the loudest moving craft without growing the audio pool', () => {
+  const director = Object.create(EncounterDirector.prototype), patrol = { active: true, enforcement: true, x: 60, z: 0, speed: 11 };
+  const smuggler = { active: true, x: -20, z: 0, speed: 8 }, idle = { active: true, x: 4, z: 0, speed: 0 };
+  director.phys = { pos: { x: 0, y: 0 } }; director.agents = [patrol, smuggler, idle]; director.rigs = { smuggler: { agent: smuggler } };
+
+  director.updateOutboardAudio(true);
+
+  assert.equal(director.obX, -20); assert.equal(director.obZ, 0); assert.equal(director.obPitch, 1.16); assert.ok(director.obLevel > 0.6);
+  director.updateOutboardAudio(false);
+  assert.deepEqual([director.obLevel, director.obPitch, director.obX, director.obZ], [0, 1, 0, 0]);
+});
+
 test('coordinated pursuit schedules each pooled backup once and keeps the fleet bounded', () => {
   const director = Object.create(EncounterDirector.prototype), deployed = [];
   director.rigs = { patrolBackups: [{ agent: { active: false } }, { agent: { active: false } }] };

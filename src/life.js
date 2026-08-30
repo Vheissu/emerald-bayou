@@ -406,6 +406,7 @@ export function updateTrafficDriverPose(boat, dt, time, distance) {
 export class Traffic {
   constructor(terrain, scene, phys, fx) {
     this.T = terrain; this.scene = scene; this.phys = phys; this.fx = fx; // { plume, spray, audio, waveFn, emitStamp, game }
+    this.obLevel = 0; this.obPitch = 1; this.obX = 0; this.obZ = 0;
     this.rand = mulberry32(4242);
     this.boats = [];
     const saved = fx.game.save.traffic;
@@ -1082,7 +1083,7 @@ export class Traffic {
     this.wildlifeCallT = Math.max(0, this.wildlifeCallT - dt);
     if (this.law?.pursuit) this.pursuitClearT = 0;
     else { this.pursuitClearT += dt; if (this.pursuitClearT > 4) this.pursuitCallMade = false; }
-    this.obs.length = 0; let ob = 0, obp = 1;
+    this.obs.length = 0; let ob = 0, obp = 1, obx = 0, obz = 0;
     for (const b of this.boats) {
       b.yellT = Math.max(0, b.yellT - dt); b.hornT = Math.max(0, b.hornT - dt); b.greetT = Math.max(0, b.greetT - dt); b.wakeT = Math.max(0, b.wakeT - dt);
       if (b.signalT > 0) b.signalT = Math.max(0, b.signalT - dt); else b.signalYield *= Math.exp(-dt * 2.2);
@@ -1247,7 +1248,7 @@ export class Traffic {
       this.updateCrew(b, t, dt, d, playerWake);
       this.updateWorkingDetails(b, t); this.identify(b, d, P.speed);
       // the closest running motor is what you hear
-      if (!b.collision.active && b.kind !== 'air' && b.kind !== 'canoe' && d < 130) { const l = (0.3 + 0.7 * b.speed / b.max) * (1 - d / 130); if (l > ob) { ob = l; obp = b.kind === 'cruiser' ? 0.8 : b.kind === 'skiff' ? 1.25 : 1; } }
+      if (!b.collision.active && b.kind !== 'air' && b.kind !== 'canoe' && d < 130) { const l = (0.3 + 0.7 * b.speed / b.max) * (1 - d / 130); if (l > ob) { ob = l; obp = b.kind === 'cruiser' ? 0.8 : b.kind === 'skiff' ? 1.25 : 1; obx = b.x; obz = b.z; } }
       // Rule 35(a): a power-driven vessel making way in restricted visibility sounds one prolonged blast.
       const fogFishing = fogRisk > 0.45 && !b.collision.active && !assisting && b.profile.id === 'net-nine' && b.state === 'work';
       const fogMakingWay = fogRisk > 0.45 && !b.collision.active && !assisting && b.kind !== 'canoe' && !fogFishing && b.state !== 'sheltered' && b.state !== 'tow-alongside' && b.speed > 0.75;
@@ -1269,7 +1270,7 @@ export class Traffic {
         for (let i = 0; i < n * 5; i++) spray.emit(b.x - fx * 2.4 + jitter() * 1.2, 0.05, b.z - fz * 2.4 + jitter() * 1.2, -fx * (1 + Math.random() * 3) + jitter() * 1.5, 0.5 + Math.random() * 2, -fz * (1 + Math.random() * 3) + jitter() * 1.5, 0.012 + Math.random() * 0.03, 0.4 + Math.random() * 0.5, 0.5);
       }
     }
-    this.obLevel = ob; this.obPitch = obp;
+    this.obLevel = ob; this.obPitch = obp; this.obX = obx; this.obZ = obz;
     // anglers come and go with distance
     this.checkT -= dt;
     if (this.checkT <= 0) {
@@ -1372,7 +1373,7 @@ export class Life {
     this.folk = new Folk(o.terrain, o.scene, fx);
     this.audio = o.audio; this.waveFn = o.waveFn; this.phys = o.phys; this.fx = fx;
     this.context = { bx: 0, bz: 0, speed: 0, dt: 0, emitStamp: this.emitStamp, plume: o.plume, spray: o.spray, audio: o.audio, fish: this.fish, ob: 0, truck: 0, heightAt: (x, z) => o.terrain.heightAt(x, z) };
-    this.obLevel = 0; this.obPitch = 1;
+    this.obLevel = 0; this.obPitch = 1; this.obX = 0; this.obZ = 0;
   }
   update(dt, t) {
     this.stampPool.reset();
@@ -1381,7 +1382,7 @@ export class Life {
     this.traffic.update(dt, t, this.fish);
     const ctx = this.context; ctx.bx = this.phys.pos.x; ctx.bz = this.phys.pos.y; ctx.speed = this.phys.speed; ctx.dt = dt; ctx.ob = 0; ctx.truck = 0;
     this.folk.update(dt, t, ctx);
-    this.obLevel = this.traffic.obLevel; this.obPitch = this.traffic.obPitch;
+    this.obLevel = this.traffic.obLevel; this.obPitch = this.traffic.obPitch; this.obX = this.traffic.obX; this.obZ = this.traffic.obZ;
   }
   stamps(out) { this.stampPool.appendTo(out); }
 }

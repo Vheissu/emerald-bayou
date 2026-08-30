@@ -20,6 +20,24 @@ export function cameraRelativePan(listenerX, listenerZ, forwardX, forwardZ, sour
   return Math.max(-1, Math.min(1, ((dx / distance) * rightX + (dz / distance) * rightZ) * Math.max(0, Number(width) || 0)));
 }
 
+// Every boat director publishes one already-distance-scaled motor candidate. Keep a single retained voice on the
+// loudest source, with a little hysteresis so two crossing boats do not make the stereo image chatter between them.
+export function selectOutboardSource(candidates, out = {}, hysteresis = 0.82) {
+  const previousId = String(out.id || ''); let best = null, held = null, bestLevel = 0, heldLevel = 0;
+  for (const candidate of candidates || []) {
+    const source = candidate?.source, level = clampAudio(source?.obLevel), x = Number(source?.obX), z = Number(source?.obZ);
+    if (level <= 0.001 || !Number.isFinite(x) || !Number.isFinite(z)) continue;
+    if (level > bestLevel) { best = candidate; bestLevel = level; }
+    if (String(candidate.id) === previousId) { held = candidate; heldLevel = level; }
+  }
+  const keep = held && heldLevel >= bestLevel * Math.max(0, Math.min(1, Number(hysteresis) || 0));
+  const selected = keep ? held : best, source = selected?.source;
+  if (!selected || !source) { out.id = ''; out.level = 0; out.pitch = 1; out.x = 0; out.z = 0; return out; }
+  out.id = String(selected.id); out.level = clampAudio(source.obLevel);
+  out.pitch = Number.isFinite(Number(source.obPitch)) ? Math.max(0.5, Math.min(1.8, Number(source.obPitch))) : 1;
+  out.x = Number(source.obX); out.z = Number(source.obZ); return out;
+}
+
 export class EngineAudio {
   constructor() {
     this.ctx = null; this.windLevel = 0; this.rainLevel = 0; this.nightLevel = 0; this.stormLevel = 0; this.nightLifeLevel = 0;
@@ -340,11 +358,35 @@ export class EngineAudio {
     const g = ctx.createGain(); g.gain.setValueAtTime(vol, now); g.gain.exponentialRampToValueAtTime(vol * 0.25, now + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
     src.connect(lp); lp.connect(g); g.connect(destination); this.releaseSpatialDestination(destination, src); src.start(now); src.stop(now + 1.5);
   }
-  // an outboard somewhere near: a shared buzz whose level and pitch follow the closest other boat each frame
-  outboard(level, pitch = 1) {
-    if (!this.ctx) return; const ctx = this.ctx, now = ctx.currentTime;
-    if (!this.ob) { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 95; const o2 = ctx.createOscillator(); o2.type = 'square'; o2.frequency.value = 190; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 1.5; const g = ctx.createGain(); g.gain.value = 0; o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(this.sfx); o.start(); o2.start(); this.ob = { o, o2, g, lp }; }
-    const b = this.ob; b.g.gain.setTargetAtTime(Math.min(0.12, level * 0.12), now, 0.15); b.o.frequency.setTargetAtTime(95 * pitch, now, 0.2); b.o2.frequency.setTargetAtTime(191 * pitch, now, 0.2);
+  // One nearby-motor graph follows the selected source instead of layering a node tree for every streamed boat.
+  // Distance is already folded into level; position supplies the stereo bearing and relative range supplies a mild,
+  // physically bounded Doppler shift. A source handoff resets Doppler so a far-away replacement cannot pitch-snap.
+  outboard(level, pitch = 1, x, z, sourceId = '') {
+    if (!this.ctx) return; const ctx = this.ctx, now = ctx.currentTime, audible = clampAudio(level);
+    if (!this.ob && audible <= 0.001) return;
+    if (!this.ob) {
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 95;
+      const o2 = ctx.createOscillator(); o2.type = 'square'; o2.frequency.value = 190;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 1.5;
+      const g = ctx.createGain(); g.gain.value = 0;
+      const panner = this.persistentSpatialOutput(), destination = panner || this.sfx;
+      o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(destination); o.start(); o2.start();
+      this.ob = { o, o2, g, lp, panner, sourceId: '', lastDistance: NaN, lastTime: now, doppler: 1, x: 0, z: 0 };
+    }
+    const b = this.ob, sx = Number(x), sz = Number(z), id = String(sourceId || ''); let doppler = 1;
+    if (Number.isFinite(sx) && Number.isFinite(sz)) {
+      const distance = Math.hypot(sx - this.listenerX, sz - this.listenerZ), sampleDt = now - b.lastTime;
+      if (id && id === b.sourceId && Number.isFinite(b.lastDistance) && sampleDt >= 0.008 && sampleDt <= 0.25) {
+        const closing = Math.max(-32, Math.min(32, (b.lastDistance - distance) / sampleDt));
+        doppler = Math.max(0.91, Math.min(1.11, 343 / (343 - closing)));
+      }
+      b.lastDistance = distance; b.lastTime = now; b.x = sx; b.z = sz; this.setPersistentPan(b.panner, sx, sz, 0.9);
+    } else { b.lastDistance = NaN; b.lastTime = now; }
+    b.sourceId = id; b.doppler = doppler;
+    const basePitch = Number.isFinite(Number(pitch)) ? Math.max(0.5, Math.min(1.8, Number(pitch))) : 1;
+    b.g.gain.setTargetAtTime(Math.min(0.12, audible * 0.12), now, 0.15);
+    b.lp.frequency.setTargetAtTime(380 + audible * 820, now, 0.22);
+    b.o.frequency.setTargetAtTime(95 * basePitch * doppler, now, 0.2); b.o2.frequency.setTargetAtTime(191 * basePitch * doppler, now, 0.2);
   }
   // One pooled rotor bed is created only when an aircraft is actually heard. Distance drives its gain;
   // blade loading nudges the pulse rate during an approach or hover without allocating per-frame audio nodes.

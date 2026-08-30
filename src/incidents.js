@@ -51,7 +51,7 @@ export class WorldIncidents {
       if (this.hitCd <= 0 && into > 2.2) { this.hitCd = 4; this.game.toast('Easy!', 'The injured paddler is still in that kayak.', 2.3); }
     } };
     this._f = new THREE.Vector2(); this._flow = new THREE.Vector2();
-    this.obLevel = 0; this.obPitch = 1.12;
+    this.obLevel = 0; this.obPitch = 1.12; this.obX = 0; this.obZ = 0;
     this.stats = this.game.save.incidents || { heard: 0, resolved: 0, fwc: 0, runners: 0, searches: 0, missed: 0 };
     this.game.save.incidents = this.stats;
     this.keyHandler = e => {
@@ -598,10 +598,10 @@ export class WorldIncidents {
   }
 
   updateAudio() {
-    this.obLevel = 0; this.obPitch = 1.12;
+    this.obLevel = 0; this.obPitch = 1.12; this.obX = 0; this.obZ = 0;
     for (const A of this.agents) {
       if (!A.active) continue; const d = Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y);
-      if (d < 150) this.obLevel = Math.max(this.obLevel, (0.25 + 0.75 * Math.min(1, A.speed / 12)) * (1 - d / 150));
+      if (d < 150) { const level = (0.25 + 0.75 * Math.min(1, A.speed / 12)) * (1 - d / 150); if (level > this.obLevel) { this.obLevel = level; this.obX = A.x; this.obZ = A.z; } }
     }
   }
 

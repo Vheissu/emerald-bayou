@@ -10,7 +10,7 @@ import { SkiffAI } from './npc.js';
 import { Spray, Plume } from './particles.js';
 import { Pipeline } from './post.js';
 import { Minimap } from './hud.js';
-import { EngineAudio } from './audio.js';
+import { EngineAudio, selectOutboardSource } from './audio.js';
 import * as TEX from './textures.js';
 import { mulberry32 } from './noise.js';
 import { Game } from './game.js';
@@ -289,6 +289,11 @@ async function init() {
   game.incidents = incidents; game.story = story; radio.incidents = incidents; radio.story = story;
   const aftermath = new StormRecovery({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, incidents, encounters, story, radio, reputation, condition });
   game.aftermath = aftermath; radio.aftermath = aftermath;
+  const outboardSources = [
+    { id: 'resident traffic', source: life }, { id: 'boat ramp', source: world }, { id: 'encounter craft', source: encounters },
+    { id: 'world incident', source: incidents }, { id: 'story craft', source: story }, { id: 'storm recovery', source: aftermath },
+  ];
+  const outboardMix = { id: '', level: 0, pitch: 1, x: 0, z: 0 };
   const directedVesselSources = [skiff, encounters, incidents, story, aftermath];
   physicalWakeFields.push(...directedVesselSources);
   ecology.setDirectedVesselSources(directedVesselSources);
@@ -398,7 +403,7 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
@@ -846,13 +851,9 @@ async function init() {
     world.update(dt, time, phys.pos.x, phys.pos.y);
     // Do not start resident shifts or write their first-seen state while the title card is still open.
     if (started && !game.paused) life.update(dt, time);
-    {
-      const ambientBoat = Math.max(life.obLevel, world.obLevel); let outboardLevel = ambientBoat, outboardPitch = life.obPitch;
-      if (incidents.obLevel > outboardLevel) { outboardLevel = incidents.obLevel; outboardPitch = incidents.obPitch; }
-      if (story.obLevel > outboardLevel) { outboardLevel = story.obLevel; outboardPitch = story.obPitch; }
-      if (aftermath.obLevel > outboardLevel) { outboardLevel = aftermath.obLevel; outboardPitch = aftermath.obPitch; }
-      audio.outboard(outboardLevel, outboardPitch);
-    }
+    encounters.updateOutboardAudio(started && !game.paused);
+    selectOutboardSource(outboardSources, outboardMix);
+    audio.outboard(outboardMix.level, outboardMix.pitch, outboardMix.x, outboardMix.z, outboardMix.id);
     audio.truck(world.truckLevel);
     water.updateMurk(terrain, camera.position);
     if (worldMap.open && (frameNo++ & 3) === 0) worldMap.render();

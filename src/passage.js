@@ -90,7 +90,7 @@ export class FalsePassage {
     this.rigs = this.makeRigs();
     this.P.scene.add(this.rigs.wreck, this.rigs.aid, this.rigs.cache, this.rigs.runner, this.rigs.patrol, this.rigs.cooler);
     this.agent = { mesh: this.rigs.runner, active: false };
-    this.obLevel = 0; this.obPitch = 0.92;
+    this.obLevel = 0; this.obPitch = 0.92; this.obX = 0; this.obZ = 0;
     if (this.eligible() && !this.state.offerAt && this.state.stage === 'dormant') this.arm(60000);
     this.restore(); this.persist();
   }
@@ -402,14 +402,14 @@ export class FalsePassage {
   }
 
   updateAudio() {
-    this.obLevel = 0; this.obPitch = this.state.branch === 'runner' ? 0.84 : 0.94;
+    this.obLevel = 0; this.obPitch = this.state.branch === 'runner' ? 0.84 : 0.94; this.obX = 0; this.obZ = 0;
     if (this.state.stage === 'delivery') {
       const dpt = this.destination(), d = Math.hypot(dpt.x - this.P.phys.pos.x, dpt.z - this.P.phys.pos.y);
-      if (d < 140) this.obLevel = 0.15 * (1 - d / 140);
+      if (d < 140) { this.obLevel = 0.15 * (1 - d / 140); this.obX = dpt.x; this.obZ = dpt.z; }
     }
     if (this.chaseActive) {
       const d = Math.hypot(this.agent.x - this.P.phys.pos.x, this.agent.z - this.P.phys.pos.y);
-      if (d < 150) this.obLevel = Math.max(this.obLevel, (0.25 + 0.7 * Math.min(1, this.agent.speed / 13)) * (1 - d / 150));
+      if (d < 150) { const level = (0.25 + 0.7 * Math.min(1, this.agent.speed / 13)) * (1 - d / 150); if (level > this.obLevel) { this.obLevel = level; this.obX = this.agent.x; this.obZ = this.agent.z; } }
     }
   }
 
