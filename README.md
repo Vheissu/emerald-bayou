@@ -83,7 +83,7 @@ The horn is live on `H`. It gives a short warning in clear water and a 4.5-secon
 
 The marked channels now match the radio traffic. Red aids carry even numbers, green aids carry odd numbers, and each light keeps its own flash characteristic while the float moves with chop and current. Hail, tropical weather, hurricanes and vessel strikes can leave a marker dim, dark, off station or down. Idle alongside a bad aid to report the exact fix; it stays on the working chart until FWC maintenance clears it.
 
-The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around.
+The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around. Run skinny water and the hull pressure wave lifts a brown sediment plume from the bed; it spreads with speed, thickens in soft tannin backwaters and drifts with the same current as the wake. The plume uses the wake target's previously unused alpha channel and one existing trailing stamp, so it adds no texture, render target, material, geometry, scene object or draw call.
 
 At idle, `G` drops the bow anchor. Water depth sets the amount of rode, and the hull drifts within that scope before the line comes tight. Firm mud holds best; soft muck, shell and sawgrass give sooner. Current, storm load or too much throttle can make the anchor drag while the bow swings into the load. The rode is one fixed 12-point line, reused for every drop.
 
@@ -161,7 +161,8 @@ src/
   terrain.js       quadtree streaming and LOD
   surfacewetness.js retained rain film and shared outdoor material response
   vegetation.js    per-chunk instancing, wind shader
-  water.js         reflection, refraction, murk, tide
+  water.js         reflection, refraction, murk, tide, wake sediment
+  sediment.js      shallow-bed churn model
   airboat.js       hull physics, air control, landing quality
   game.js          jobs, bounties, records, save
   discoveries.js   tide, time and region-driven field observations

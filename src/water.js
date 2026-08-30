@@ -41,11 +41,12 @@ export class Water {
     this.simMat = new THREE.ShaderMaterial({
       uniforms: {
         tPrev: { value: null }, shift: { value: new THREE.Vector2() }, advection: { value: new THREE.Vector2() }, damp: { value: 0.985 }, foamDecay: { value: 0.962 },
+        sedimentDecay: { value: 0.997 }, sedimentSpread: { value: 0.045 },
         stamps: { value: this.stamps }, foamStamps: { value: this.foamStamps }, stampCount: { value: this.wakeMaxStamps }, texel: { value: 1 / this.wakeResolution },
       },
       vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
       fragmentShader: `
-        varying vec2 vUv; uniform sampler2D tPrev; uniform vec2 shift, advection; uniform float damp, foamDecay, texel;
+        varying vec2 vUv; uniform sampler2D tPrev; uniform vec2 shift, advection; uniform float damp, foamDecay, sedimentDecay, sedimentSpread, texel;
         uniform vec4 stamps[${MAX_WAKE_STAMPS}]; uniform vec4 foamStamps[${MAX_WAKE_STAMPS}]; uniform int stampCount;
         vec4 fetch(vec2 uv) { if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec4(0.0); return texture2D(tPrev, uv); }
         void main() {
@@ -58,14 +59,18 @@ export class Water {
           // slight smoothing to kill grid noise
           nh = mix(nh, (l.r + r.r + d.r + u.r) * 0.25, 0.02);
           float foam = (c.b * 12.0 + l.b + r.b + d.b + u.b) / 16.0 * foamDecay;
+          float sediment = mix(c.a, (l.a + r.a + d.a + u.a) * 0.25, sedimentSpread) * sedimentDecay;
           for (int i = 0; i < ${MAX_WAKE_STAMPS}; i++) {
             if (i >= stampCount) break;
             vec4 s = stamps[i];
             if (s.z > 0.0) { float dd = length(vUv - s.xy) / s.z; nh += s.w * exp(-dd * dd * 2.5); }
             vec4 f = foamStamps[i];
-            if (f.z > 0.0) { float dd = length(vUv - f.xy) / f.z; foam += f.w * exp(-dd * dd * 2.0); }
+            if (abs(f.z) > 0.0) {
+              float dd = length(vUv - f.xy) / abs(f.z), pulse = f.w * exp(-dd * dd * 2.0);
+              float isSediment = step(f.z, 0.0); foam += pulse * (1.0 - isSediment); sediment += pulse * isSediment;
+            }
           }
-          gl_FragColor = vec4(nh, h, clamp(foam, 0.0, 2.0), 1.0);
+          gl_FragColor = vec4(nh, h, clamp(foam, 0.0, 2.0), clamp(sediment, 0.0, 1.0));
         }`,
       depthTest: false, depthWrite: false,
     });
@@ -200,17 +205,18 @@ export class Water {
           }
           // wake
           vec2 wuv = (w - wakeOrigin) / wakeSize + 0.5;
-          float foam = 0.0; vec2 wg = vec2(0.0); float wh = 0.0;
+          float foam = 0.0, sediment = 0.0; vec2 wg = vec2(0.0); float wh = 0.0;
           if (all(greaterThan(wuv, vec2(0.0))) && all(lessThan(wuv, vec2(1.0)))) {
             float e = wakeTexel;
-            wh = texture2D(tWake, wuv).r;
+            vec4 wakeSample = texture2D(tWake, wuv); wh = wakeSample.r;
             float hL = texture2D(tWake, wuv - vec2(e, 0.0)).r, hR = texture2D(tWake, wuv + vec2(e, 0.0)).r;
             float hD = texture2D(tWake, wuv - vec2(0.0, e)).r, hU = texture2D(tWake, wuv + vec2(0.0, e)).r;
             wg = vec2(hR - hL, hU - hD) * wakeStrength;
-            foam = texture2D(tWake, wuv).b;
+            foam = wakeSample.b; sediment = wakeSample.a;
             vec2 ef = smoothstep(0.0, 0.08, wuv) * smoothstep(1.0, 0.92, wuv);
-            float f = ef.x * ef.y; wg *= f; foam *= f;
+            float f = ef.x * ef.y; wg *= f; foam *= f; sediment *= f;
           }
+          float silt = smoothstep(0.015, 0.68, sediment);
           vec3 N = normalize(vec3(nt.x - wg.x, 1.0, nt.y - wg.y));
           // depth / thickness
           float fragZ = linZ(gl_FragCoord.z);
@@ -227,6 +233,10 @@ export class Water {
           float pathLen = th * (1.0 + (1.0 - abs(V.y)) * 0.6);
           vec3 ab = mix(absorb, vec3(1.5, 2.1, 2.7), murk);
           vec3 scCol = mix(scatterColor, vec3(0.045, 0.030, 0.012), murk); float scK = mix(scatterK, 1.4, murk);
+          // Suspended bottom material changes the actual water column: red/brown wavelengths survive, visibility drops,
+          // and the plume stays underneath the physically separate Fresnel reflection.
+          ab = mix(ab, vec3(0.68, 1.34, 2.15), silt * 0.90);
+          scCol = mix(scCol, vec3(0.205, 0.112, 0.034), silt * 0.92); scK = mix(scK, 1.78, silt * 0.84);
           vec3 under = refr * exp(-ab * pathLen);
           vec3 scat = scCol * (1.0 - exp(-scK * pathLen));
           vec3 waterCol = under + scat;
@@ -241,7 +251,7 @@ export class Water {
           // duckweed: a matte green skin on the shaded still water, in patches, pushed aside by the wake
           float dn = texture2D(tFoam, w * 0.045 + vec2(0.003, -0.002) * t).r * 0.65 + texture2D(tFoam, w * 0.23 - vec2(0.004, 0.003) * t).r * 0.45;
           float dw = smoothstep(0.50, 0.70, dn * (0.45 + duck * 0.8)) * smoothstep(0.2, 0.6, duck);
-          dw *= 1.0 - smoothstep(0.02, 0.25, abs(wh) * 6.0 + foam * 1.5);
+          dw *= 1.0 - smoothstep(0.02, 0.25, abs(wh) * 6.0 + foam * 1.5 + sediment * 1.8);
           // fresnel
           float NdV = max(dot(N, V), 0.0);
           float F = 0.025 + 0.975 * pow(max(1.0 - NdV, 0.0), 5.0);
@@ -279,11 +289,11 @@ export class Water {
           fm = clamp(fm, 0.0, 1.0);
           vec3 foamCol = vec3(0.92, 0.95, 0.93) * (0.75 + 0.25 * max(dot(vec3(0.0, 1.0, 0.0), sunDir), 0.0)) * (0.5 + 0.5 * shadow);
           float bioWake = smoothstep(0.012, 0.42, fmRaw * (0.7 + fn + fn2 * 0.45) + abs(wh) * 2.4);
-          float bio = bioluminescence * clamp(bioWake + shore * 0.62, 0.0, 1.0);
+          float bio = bioluminescence * clamp(bioWake + shore * 0.62, 0.0, 1.0) * (1.0 - silt * 0.62);
           foamCol = mix(foamCol, vec3(0.11, 0.62, 0.86), bioluminescence * 0.68);
           col = mix(col, foamCol, fm);
           col += bioColor * bio * (0.42 + fn * 0.38 + fn2 * 0.56);
-          if (dbg == 1) col = refl; else if (dbg == 2) col = vec3(F); else if (dbg == 3) col = vec3(th / 10.0); else if (dbg == 4) col = vec3(rUv, 0.0); else if (dbg == 5) col = N * 0.5 + 0.5; else if (dbg == 6) col = vec3(shadow); else if (dbg == 7) col = spec;
+          if (dbg == 1) col = refl; else if (dbg == 2) col = vec3(F); else if (dbg == 3) col = vec3(th / 10.0); else if (dbg == 4) col = vec3(rUv, 0.0); else if (dbg == 5) col = N * 0.5 + 0.5; else if (dbg == 6) col = vec3(shadow); else if (dbg == 7) col = spec; else if (dbg == 8) col = vec3(sediment);
           gl_FragColor = vec4(col, 1.0);
         }`,
     });
@@ -307,6 +317,7 @@ export class Water {
     this._rot = new THREE.Matrix4();
     this._reflectionPoint = new THREE.Vector3();
     this._clipVector = new THREE.Vector4();
+    this._clearColor = new THREE.Color();
   }
 
   setQuality(quality = {}) {
@@ -379,13 +390,14 @@ export class Water {
     this.uniforms.rainAmount.value = rain; this.uniforms.hailAmount.value = hail;
   }
 
-  // stamp list: [{x,z,radius,height,foam}]
+  // stamp list: [{x,z,radius,height,foam,foamRadius,sediment,sedimentRadius}]
   simulate(center, stampsIn, dt = 1 / 60, flow = null) {
     if (this.wakeNeedsClear) {
       const previousTarget = this.renderer.getRenderTarget();
+      const previousAlpha = this.renderer.getClearAlpha(); this.renderer.getClearColor(this._clearColor); this.renderer.setClearColor(0x000000, 0);
       this.renderer.setRenderTarget(this.wakeA); this.renderer.clear(true, false, false);
       this.renderer.setRenderTarget(this.wakeB); this.renderer.clear(true, false, false);
-      this.renderer.setRenderTarget(previousTarget);
+      this.renderer.setRenderTarget(previousTarget); this.renderer.setClearColor(this._clearColor, previousAlpha);
       this.wakeNeedsClear = false;
     }
     const cell = this.wakeCell;
@@ -393,6 +405,8 @@ export class Water {
     const shift = this.simMat.uniforms.shift.value;
     shift.set((nx - this.wakeOrigin.x) / WAKE_SIZE, (nz - this.wakeOrigin.y) / WAKE_SIZE);
     this.simMat.uniforms.advection.value.set(flow ? flow.x * dt / WAKE_SIZE : 0, flow ? flow.y * dt / WAKE_SIZE : 0);
+    this.simMat.uniforms.sedimentDecay.value = Math.exp(-Math.max(0, dt) * 0.18);
+    this.simMat.uniforms.sedimentSpread.value = 1 - Math.exp(-Math.max(0, dt) * 2.8);
     this.wakeOrigin.set(nx, nz);
     const stampItems = stampsIn?.items || stampsIn;
     const availableStamps = Number.isFinite(stampsIn?.count) ? stampsIn.count : stampItems.length;
@@ -402,7 +416,8 @@ export class Water {
       const s = stampItems[i];
       const u = (s.x - nx) / WAKE_SIZE + 0.5, v = (s.z - nz) / WAKE_SIZE + 0.5;
       this.stamps[i].set(u, v, s.radius / WAKE_SIZE, s.height * dt);
-      this.foamStamps[i].set(u, v, (s.foamRadius || s.radius) / WAKE_SIZE, (s.foam || 0) * dt);
+      const sediment = Math.max(0, s.sediment || 0), sedimentRadius = s.sedimentRadius || s.radius;
+      this.foamStamps[i].set(u, v, (sediment > 0 ? -sedimentRadius : (s.foamRadius || s.radius)) / WAKE_SIZE, (sediment || s.foam || 0) * dt);
     }
     this.simMat.uniforms.tPrev.value = this.wakeA.texture;
     this.renderer.setRenderTarget(this.wakeB);

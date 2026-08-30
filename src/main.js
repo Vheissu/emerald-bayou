@@ -46,6 +46,7 @@ import { DolphinPod } from './dolphins.js';
 import { Fishing } from './fishing.js';
 import { NocturnalWetland } from './nocturnal.js';
 import { WakeStampPool } from './wakestamps.js';
+import { shallowWaterSediment, sedimentPlumeRadius } from './sediment.js';
 import { bindPageLifecycle } from './pagelifecycle.js';
 import { CHASE_CAMERA_SAMPLES, chaseCameraBoomLimit, chaseCameraBoomStep } from './chasecamera.js';
 import { SkyEnvironmentMap } from './environmentmap.js';
@@ -544,6 +545,7 @@ async function init() {
   const fwd2 = new THREE.Vector2(), rgt2 = new THREE.Vector2(), currentFlow = new THREE.Vector2(), skiffForward = new THREE.Vector2();
   const input = { throttle: 0, steer: 0, pitch: 0 };
   const boatWetnessConditions = { dt: 0, rain: 0, spray: 0, splash: 0, wind: 0, speed: 0, daylight: 0, windScreen: 0 };
+  const sedimentConditions = { depth: 0, speed: 0, rpm: 0, throttle: 0, wet: 0, murk: 0 };
   const clock = new THREE.Timer(); clock.connect(document);
   let time = 0, splashStamp = 0, slowT = 0, slowK = 1, fovKick = 0, airCam = 0, cameraBoom = 1, frameNo = 0;
   const stamps = new WakeStampPool(MAX_WAKE_STAMPS);
@@ -555,7 +557,7 @@ async function init() {
     return out;
   };
   const addPlayerStamp = (p, radius, height, foam = 0, foamRadius = 0) => {
-    stamps.emit(p.x, p.z, radius, height, foam, foamRadius);
+    return stamps.emit(p.x, p.z, radius, height, foam, foamRadius);
   };
   // landing splash: the hull slaps a hull-shaped hole in the water; two sheets peel off the chines, a crown lifts at the bow,
   // and a stuffed bow throws a wall of water forward over the deck
@@ -778,7 +780,15 @@ async function init() {
       pt = hullPt(-1.0, 0.8); addPlayerStamp(pt, 0.9, 0.35 * spF, 0.35 * spF, 0.8);
       pt = hullPt(0, 2.6); addPlayerStamp(pt, 1.5, 0.9 * spF + 0.3 * thr, 0.9 * spF + 2.2 * thr * (0.3 + spF), 1.25);
       pt = hullPt(0, 4.3); addPlayerStamp(pt, 2, 0, 1.3 * thr * (0.3 + spF), 1.7);
-      pt = hullPt(0, 6.5); addPlayerStamp(pt, 2.4, 0, 0.5 * thr * spF, 2.2);
+      // The air propeller never touches the water; in skinny water it is the pressure wave beneath the hull and stern
+      // wash that lifts peat and limestone silt. Reuse the trailing wake slot so the plume adds no objects or stamps.
+      pt = hullPt(0, 6.5);
+      sedimentConditions.depth = water.level - terrain.heightAt(pt.x, pt.z);
+      sedimentConditions.speed = phys.speed; sedimentConditions.rpm = rpm; sedimentConditions.throttle = Math.max(0, phys.throttle);
+      sedimentConditions.wet = wet; sedimentConditions.murk = water.murkAt(pt.x, pt.z);
+      const sediment = shallowWaterSediment(sedimentConditions);
+      const sedimentStamp = addPlayerStamp(pt, 2.4, 0, 0, 2.2);
+      if (sedimentStamp) { sedimentStamp.sediment = sediment * 2.2; sedimentStamp.sedimentRadius = sedimentPlumeRadius(sedimentConditions.depth, phys.speed); }
       skiff.stamps(stamps); life.stamps(stamps); world.stamps(stamps); dolphins.stamps(stamps); encounters.stamps(stamps); gators.stamps(stamps); incidents.stamps(stamps); story.stamps(stamps); aftermath.stamps(stamps); hazards.stamps(stamps);
       wakeCenter.set(phys.pos.x + fwd2.x * -25, phys.pos.y + fwd2.y * -25);
       water.simulate(wakeCenter, stamps, dt, currentFlow);

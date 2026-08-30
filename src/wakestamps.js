@@ -1,8 +1,8 @@
-const stamp = () => ({ x: 0, z: 0, radius: 0, height: 0, foam: 0, foamRadius: 0 });
+const stamp = () => ({ x: 0, z: 0, radius: 0, height: 0, foam: 0, foamRadius: 0, sediment: 0, sedimentRadius: 0 });
 
-export function emitWakeStamp(out, x, z, radius, height, foam = 0, foamRadius = radius) {
-  if (typeof out?.emit === 'function') return out.emit(x, z, radius, height, foam, foamRadius);
-  const item = { x, z, radius, height, foam, foamRadius };
+export function emitWakeStamp(out, x, z, radius, height, foam = 0, foamRadius = radius, sediment = 0, sedimentRadius = radius) {
+  if (typeof out?.emit === 'function') return out.emit(x, z, radius, height, foam, foamRadius, sediment, sedimentRadius);
+  const item = { x, z, radius, height, foam, foamRadius, sediment, sedimentRadius };
   out.push(item);
   return item;
 }
@@ -21,7 +21,7 @@ export class WakeStampPool {
     this.droppedFrame = 0;
   }
 
-  emit(x, z, radius, height, foam = 0, foamRadius = radius) {
+  emit(x, z, radius, height, foam = 0, foamRadius = radius, sediment = 0, sedimentRadius = radius) {
     if (this.count >= this.capacity) {
       this.droppedFrame++;
       this.droppedTotal++;
@@ -34,6 +34,8 @@ export class WakeStampPool {
     item.height = height;
     item.foam = foam;
     item.foamRadius = foamRadius;
+    item.sediment = sediment;
+    item.sedimentRadius = sedimentRadius;
     return item;
   }
 
@@ -41,7 +43,7 @@ export class WakeStampPool {
     if (typeof out?.emit === 'function') {
       for (let i = 0; i < this.count; i++) {
         const item = this.items[i];
-        out.emit(item.x, item.z, item.radius, item.height, item.foam, item.foamRadius);
+        out.emit(item.x, item.z, item.radius, item.height, item.foam, item.foamRadius, item.sediment, item.sedimentRadius);
       }
       return;
     }

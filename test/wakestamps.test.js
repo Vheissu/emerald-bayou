@@ -10,11 +10,11 @@ test('wake stamps reuse fixed objects across simulation frames', () => {
   pool.emit(7, 8, 9, 10, 11, 12);
   const out = []; pool.appendTo(out);
   assert.equal(out.length, 2);
-  assert.deepEqual(out[0], { x: 1, z: 2, radius: 3, height: 4, foam: 5, foamRadius: 6 });
+  assert.deepEqual(out[0], { x: 1, z: 2, radius: 3, height: 4, foam: 5, foamRadius: 6, sediment: 0, sedimentRadius: 3 });
   pool.reset();
   const reused = pool.emit(13, 14, 15, 16);
   assert.equal(reused, first);
-  assert.deepEqual(reused, { x: 13, z: 14, radius: 15, height: 16, foam: 0, foamRadius: 15 });
+  assert.deepEqual(reused, { x: 13, z: 14, radius: 15, height: 16, foam: 0, foamRadius: 15, sediment: 0, sedimentRadius: 15 });
 });
 
 test('wake pool stays bounded and reports overflow without growing', () => {
@@ -37,7 +37,7 @@ test('pooled systems copy into the bounded frame pool without sharing mutable sl
   const frame = new WakeStampPool(1), retained = frame.items[0];
   system.appendTo(frame);
   assert.equal(frame.items[0], retained);
-  assert.deepEqual(frame.items[0], { x: 1, z: 2, radius: 3, height: 4, foam: 5, foamRadius: 6 });
+  assert.deepEqual(frame.items[0], { x: 1, z: 2, radius: 3, height: 4, foam: 5, foamRadius: 6, sediment: 0, sedimentRadius: 3 });
   assert.equal(frame.count, 1);
   assert.equal(frame.droppedFrame, 1);
   assert.equal(frame.items.length, 1);
@@ -46,7 +46,7 @@ test('pooled systems copy into the bounded frame pool without sharing mutable sl
 test('wake emission preserves the previous array interface outside the live frame pool', () => {
   const out = [];
   emitWakeStamp(out, 3, 4, 5, 6, 7, 8);
-  assert.deepEqual(out, [{ x: 3, z: 4, radius: 5, height: 6, foam: 7, foamRadius: 8 }]);
+  assert.deepEqual(out, [{ x: 3, z: 4, radius: 5, height: 6, foam: 7, foamRadius: 8, sediment: 0, sedimentRadius: 5 }]);
 });
 
 test('water simulation reads the retained frame pool directly', () => {
@@ -54,7 +54,7 @@ test('water simulation reads the retained frame pool directly', () => {
   pool.emit(12, 22, 5, 0.7, 1.2, 6);
   const water = {
     wakeNeedsClear: false, wakeCell: 1, wakeOrigin: new THREE.Vector2(), wakeMaxStamps: 20,
-    simMat: { uniforms: { shift: { value: new THREE.Vector2() }, advection: { value: new THREE.Vector2() }, stampCount: { value: 0 }, tPrev: { value: null } } },
+    simMat: { uniforms: { shift: { value: new THREE.Vector2() }, advection: { value: new THREE.Vector2() }, sedimentDecay: { value: 0 }, sedimentSpread: { value: 0 }, stampCount: { value: 0 }, tPrev: { value: null } } },
     stamps: Array.from({ length: 20 }, () => new THREE.Vector4()), foamStamps: Array.from({ length: 20 }, () => new THREE.Vector4()),
     renderer: { setRenderTarget() {}, render() {} }, wakeA: { texture: { id: 'a' } }, wakeB: { texture: { id: 'b' } }, uniforms: { tWake: { value: null } }, simScene: {}, simCam: {},
   };
@@ -63,4 +63,19 @@ test('water simulation reads the retained frame pool directly', () => {
   assert.deepEqual(water.stamps[0].toArray(), [0.5 + 2 / 150, 0.5 + 2 / 150, 5 / 150, 0.35]);
   assert.deepEqual(water.foamStamps[0].toArray(), [0.5 + 2 / 150, 0.5 + 2 / 150, 6 / 150, 0.6]);
   assert.equal(water.uniforms.tWake.value.id, 'b');
+});
+
+test('sediment reuses the foam stamp channel with a negative-radius discriminator', () => {
+  const pool = new WakeStampPool(1);
+  pool.emit(12, 22, 5, 0, 0, 6, 1.4, 7);
+  const water = {
+    wakeNeedsClear: false, wakeCell: 1, wakeOrigin: new THREE.Vector2(), wakeMaxStamps: 20,
+    simMat: { uniforms: { shift: { value: new THREE.Vector2() }, advection: { value: new THREE.Vector2() }, sedimentDecay: { value: 0 }, sedimentSpread: { value: 0 }, stampCount: { value: 0 }, tPrev: { value: null } } },
+    stamps: Array.from({ length: 20 }, () => new THREE.Vector4()), foamStamps: Array.from({ length: 20 }, () => new THREE.Vector4()),
+    renderer: { setRenderTarget() {}, render() {} }, wakeA: { texture: { id: 'a' } }, wakeB: { texture: { id: 'b' } }, uniforms: { tWake: { value: null } }, simScene: {}, simCam: {},
+  };
+  Water.prototype.simulate.call(water, new THREE.Vector2(10, 20), pool, 0.5, new THREE.Vector2());
+  assert.deepEqual(water.foamStamps[0].toArray(), [0.5 + 2 / 150, 0.5 + 2 / 150, -7 / 150, 0.7]);
+  assert.ok(water.simMat.uniforms.sedimentDecay.value > 0 && water.simMat.uniforms.sedimentDecay.value < 1);
+  assert.ok(water.simMat.uniforms.sedimentSpread.value > 0 && water.simMat.uniforms.sedimentSpread.value < 1);
 });
