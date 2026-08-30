@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { startupPlan, startupTerrainReady } from '../src/startup.js';
 import { compareTerrainBuildPriority, shouldPreemptTerrainBuild, Terrain } from '../src/terrain.js';
@@ -64,6 +65,19 @@ test('startup readiness distinguishes a usable local tile from a completely sett
   assert.equal(startupTerrainReady('local', state), true);
   assert.equal(startupTerrainReady('settled', state), false);
   assert.equal(startupPlan('unknown').id, 'performance');
+});
+
+test('terrain workers are primed before the synchronous environment convolution', () => {
+  const terrain = {
+    camPos: new THREE.Vector2(), streamT: 0, queue: [1, 2], pool: { inFlight: 0 },
+    stream(now) { this.streamedAt = now; }, pump() { this.pool.inFlight = 2; },
+  };
+  const result = Terrain.prototype.prime.call(terrain, 14, -9, 500);
+  assert.deepEqual([terrain.camPos.x, terrain.camPos.y, terrain.streamT, terrain.streamedAt], [14, -9, 500, 500]);
+  assert.deepEqual(result, { queued: 2, inFlight: 2 });
+
+  const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.ok(source.indexOf('terrain.prime(startX, startZ)') < source.indexOf('pmrem.fromScene('));
 });
 
 test('local startup only opens on terrain that is actually visible under the dock', () => {

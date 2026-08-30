@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AdaptiveQualityController, gpuQualityCeiling, initialQualityLevel, msaaSamplesFor, pixelRatioFor, qualityProfile, webglRendererName } from '../src/renderquality.js';
+import { AdaptiveQualityController, environmentMapBudget, gpuQualityCeiling, initialQualityLevel, msaaSamplesFor, pixelRatioFor, qualityProfile, webglRendererName } from '../src/renderquality.js';
 import { WAKE_SIZE, Water } from '../src/water.js';
 
 test('caps dense displays by drawing-pixel budget', () => {
@@ -38,6 +38,19 @@ test('removes multisample attachments on performance profiles', () => {
   assert.equal(msaaSamplesFor(1200, 800, 0), 0);
   assert.equal(msaaSamplesFor(1200, 800, 2), 2);
   assert.equal(msaaSamplesFor(2000, 1000, 4), 2);
+});
+
+test('scales startup environment convolution while preserving the cinematic map', () => {
+  const sizes = [0, 1, 2, 3].map(level => qualityProfile(level).environmentMapSize);
+  assert.deepEqual(sizes, [32, 64, 128, 256]);
+  const fallback = environmentMapBudget(sizes[0]), performance = environmentMapBudget(sizes[1]), cinematic = environmentMapBudget(sizes[3]);
+  assert.deepEqual(cinematic, {
+    cubeSize: 256, width: 768, height: 1024, pixels: 786432, colorBytes: 6291456, depthBytes: 3145728,
+    retainedBytes: 9437184, peakTargetBytes: 15728640,
+  });
+  assert.equal(performance.retainedBytes, 1032192);
+  assert.ok(performance.retainedBytes < cinematic.retainedBytes * 0.11);
+  assert.ok(fallback.peakTargetBytes < cinematic.peakTargetBytes * 0.055);
 });
 
 test('scales wake simulation cost without shrinking its world-space footprint', () => {

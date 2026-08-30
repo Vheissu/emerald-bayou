@@ -313,6 +313,12 @@ export class Terrain {
     }
     this.queue.sort((a, b) => a.prio - b.prio);
   }
+  // Begin the worker-side height grids while the main thread is still preparing lighting, boats and shaders. Results
+  // remain in the normal finalization queue, so ground and foliage ownership is unchanged when the frame loop starts.
+  prime(x, z, now = performance.now()) {
+    this.camPos.set(x, z); this.streamT = now; this.stream(now); this.pump();
+    return { queued: this.queue.length, inFlight: this.pool.inFlight };
+  }
   dispose(c) {
     this.chunks.delete(c.key);
     const qi = this.queue.indexOf(c); if (qi >= 0) this.queue.splice(qi, 1);

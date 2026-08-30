@@ -35,7 +35,7 @@ import { RadioDirector } from './radio.js';
 import { WorldIncidents } from './incidents.js';
 import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
-import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor, webglRendererName } from './renderquality.js';
+import { AdaptiveQualityController, MAX_DRAW_PIXELS, environmentMapBudget, initialQualityLevel, pixelRatioFor, webglRendererName } from './renderquality.js';
 import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel, readQualityPreference, writeQualityPreference } from './displaysettings.js';
 import { startupPlan, startupTerrainReady } from './startup.js';
 import { FieldDiscoveryDirector } from './discoveries.js';
@@ -78,6 +78,8 @@ const fxScene = new THREE.Scene();
 const SUN_DIR = new THREE.Vector3(-0.42, 0.72, -0.55).normalize();
 
 async function init() {
+  const startupStartedAt = performance.now();
+  const startupTiming = { terrainPrimedMs: 0, environmentMapMs: 0, localTerrainReadyMs: 0, titleReadyMs: 0 };
   const startup = startupPlan(renderProfile.id);
   configureModelLoading({
     deferOptional: startup.deferOptionalModels,
@@ -100,19 +102,28 @@ async function init() {
   const hemi = new THREE.HemisphereLight(0x9fc3e8, 0x3f4a2a, 0.4);
   scene.add(hemi);
 
-  // environment map from the sky (for PBR reflections on the boat / wet mud)
+  // Start the local height grids before the synchronous PBR convolution. On old hardware this lets its one terrain
+  // worker make progress while the GPU prepares the much smaller profile-scaled environment map.
+  const terrain = new Terrain(7);
+  const groundTex = { grass: TEX.grassGround(), mud: TEX.mudGround(), sand: TEX.sandGround(), noise: TEX.noiseTex() };
+  scene.add(terrain.buildMesh(groundTex));
+  const startZ = 70, startX = terrain.riverCenterX(startZ);
+  const terrainPrime = terrain.prime(startX, startZ);
+  startupTiming.terrainPrimedMs = performance.now() - startupStartedAt;
+
+  // Environment map from the sky for PBR reflections on the boat and wet mud. Cinematic keeps the original 256 px
+  // convolution; lower profiles reduce both its synchronous startup work and its retained half-float/depth target.
   const pmrem = new THREE.PMREMGenerator(renderer);
   const skyScene = new THREE.Scene(); const skyClone = sky.mesh.clone(); skyScene.add(skyClone);
-  scene.environment = pmrem.fromScene(skyScene, 0, 0.1, 4000).texture;
+  const environmentMapStartedAt = performance.now();
+  const environmentTarget = pmrem.fromScene(skyScene, 0, 0.1, 4000, { size: renderProfile.environmentMapSize });
+  startupTiming.environmentMapMs = performance.now() - environmentMapStartedAt;
+  const environmentMapMemory = environmentMapBudget(renderProfile.environmentMapSize);
+  scene.environment = environmentTarget.texture;
   scene.environmentIntensity = 0.4;
   pmrem.dispose();
 
   await new Promise(r => setTimeout(r, 30));
-
-  // ---- terrain ----
-  const terrain = new Terrain(7);
-  const groundTex = { grass: TEX.grassGround(), mud: TEX.mudGround(), sand: TEX.sandGround(), noise: TEX.noiseTex() };
-  scene.add(terrain.buildMesh(groundTex));
 
   await new Promise(r => setTimeout(r, 10));
 
@@ -133,7 +144,6 @@ async function init() {
   dock.position.y = 0.0;
   scene.add(dock);
 
-  const startZ = 70, startX = terrain.riverCenterX(startZ);
   const exclusions = [{ x: tower.position.x, z: tower.position.z, r: 7 }, { x: startX, z: startZ, r: 14 }, { x: dock.position.x, z: dock.position.z, r: 4 }, { x: (island.x + dock.position.x) / 2, z: (island.y + dock.position.z) / 2, r: 4 }];
   for (const b of terrain.bars) exclusions.push({ x: b.x, z: b.z, r: b.r });
 
@@ -284,6 +294,7 @@ async function init() {
   } : null;
   const debugResourceSnapshot = import.meta.env.DEV ? () => ({
     renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length },
+    startup: { ...startupTiming, terrainPrime, environmentMap: environmentMapMemory },
     audio: audio.spatialStats(),
     proceduralSurfaces: TEX.sharedSurfaceTextureStats(),
     sky: sky.resourceStats(),
@@ -329,7 +340,7 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, environmentMap: { ...environmentMapMemory } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
@@ -832,7 +843,7 @@ async function init() {
   const terrainReady = new Promise(r => { const poll = () => {
     const elapsed = performance.now() - t0;
     const ready = startupTerrainReady(startup.terrainReadiness, { settled: terrain.settled(), localVisible: terrain.visibleAt(startX, startZ) });
-    if ((ready && elapsed >= startup.minWaitMs) || elapsed >= startup.maxWaitMs) r(); else setTimeout(poll, 100);
+    if ((ready && elapsed >= startup.minWaitMs) || elapsed >= startup.maxWaitMs) { startupTiming.localTerrainReadyMs = performance.now() - startupStartedAt; r(); } else setTimeout(poll, 100);
   }; poll(); });
   await Promise.all([startup.blockingModels.length ? preload(startup.blockingModels) : Promise.resolve(), terrainReady]);
   if (startup.compileDelayMs) await new Promise(r => setTimeout(r, startup.compileDelayMs));
@@ -842,6 +853,7 @@ async function init() {
   }
   if (import.meta.env.DEV) document.documentElement.dataset.emeraldResource = JSON.stringify(debugResourceSnapshot());
   document.getElementById('loading').remove();
+  startupTiming.titleReadyMs = performance.now() - startupStartedAt;
   showTitle(false);
   activatePageLifecycle();
 }
