@@ -207,7 +207,7 @@ async function init() {
   // wind: slowly veering direction, gusty strength
   const wind = new THREE.Vector3(0.8, 1.0, 0.6);
 
-  const minimap = new Minimap(terrain);
+  const minimap = new Minimap(terrain, renderProfile);
   const audio = new EngineAudio();
   const tricks = new Tricks(phys);
   const skiff = new SkiffAI((x, z, t) => water.waveHeight(x, z, t)); skiff.mesh.visible = false; scene.add(skiff.mesh);
@@ -260,7 +260,7 @@ async function init() {
   game.fishing = fishing;
   const nocturnal = new NocturnalWetland({ scene, terrain, world, phys, environment, regions, audio, profile: renderProfile });
   let pageHibernated = false;
-  const pageLifecycle = { hibernated: false, hiddenAt: 0, resumedAt: 0, releasedAttachmentBytes: 0, activations: 0 };
+  const pageLifecycle = { hibernated: false, hiddenAt: 0, resumedAt: 0, releasedAttachmentBytes: 0, releasedCanvasBytes: 0, activations: 0 };
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
     const geometries = new Set(), materials = new Set(), textures = new Set(), roots = [scene, water.scene, fxScene]; let objects = 0;
     const addMaterial = material => {
@@ -389,7 +389,7 @@ async function init() {
   };
   let renderFrameNo = 0;
   const applyRenderQuality = profile => {
-    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile);
+    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile);
     if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
       sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
       if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
@@ -779,16 +779,18 @@ async function init() {
   const attachmentBytes = () => pipeline.memoryStats().estimatedAttachmentBytes + water.memoryStats().estimatedAttachmentBytes + (sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0);
   const hibernatePage = () => {
     if (pageHibernated) return false;
-    const before = attachmentBytes(); pageHibernated = true; renderer.setAnimationLoop(null);
+    const before = attachmentBytes(), canvasBefore = minimap.memoryStats().estimatedBackingBytes + worldMap.memoryStats().estimatedBackingBytes; pageHibernated = true; renderer.setAnimationLoop(null);
     pipeline.hibernate(); water.hibernate();
+    minimap.releaseTiles(); worldMap.hibernate();
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; water.uniforms.shadowOn.value = 0; }
     renderer.setPixelRatio(1); renderer.setSize(1, 1, false); qualityController.reset(); void audio.suspend();
-    pageLifecycle.hibernated = true; pageLifecycle.hiddenAt = Date.now(); pageLifecycle.releasedAttachmentBytes = Math.max(0, before - attachmentBytes()); pageLifecycle.activations++;
+    pageLifecycle.hibernated = true; pageLifecycle.hiddenAt = Date.now(); pageLifecycle.releasedAttachmentBytes = Math.max(0, before - attachmentBytes());
+    pageLifecycle.releasedCanvasBytes = Math.max(0, canvasBefore - minimap.memoryStats().estimatedBackingBytes - worldMap.memoryStats().estimatedBackingBytes); pageLifecycle.activations++;
     return true;
   };
   const resumePage = () => {
     if (!pageHibernated || document.hidden) return false;
-    pageHibernated = false; pipeline.resume(); water.resume(); resize(); clock.reset(); renderFrameNo = 0; void audio.resume(); renderer.setAnimationLoop(frame);
+    pageHibernated = false; pipeline.resume(); water.resume(); resize(); worldMap.resume(); clock.reset(); renderFrameNo = 0; void audio.resume(); renderer.setAnimationLoop(frame);
     pageLifecycle.hibernated = false; pageLifecycle.resumedAt = Date.now();
     return true;
   };

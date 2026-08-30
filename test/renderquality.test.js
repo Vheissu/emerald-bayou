@@ -54,6 +54,10 @@ test('scales wake simulation cost without shrinking its world-space footprint', 
   assert.ok(fallback.wakeResolution ** 2 < cinematic.wakeResolution ** 2 * 0.15);
 });
 
+test('bounds rebuildable radar history by graphics tier without changing map scale', () => {
+  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).minimapTileLimit), [160, 192, 224, 256]);
+});
+
 test('keeps the atmospheric mist shader off the two old-hardware profiles', () => {
   assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).surfaceMist), [0, 0, 0.65, 1]);
 });

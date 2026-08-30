@@ -2,11 +2,23 @@
 // with speed, with everything alive and worth knowing about drawn over it as blips: the objective pinned to the rim
 // when it is off the radar, job posts with their glyphs, camps and homesteads, ramps, other boats (pointed the way
 // they are going), anglers, the bull, traps within reach, home.
-const TILE = 200, TILE_PX = 100; // 0.5 px per metre
-const TILE_LIMIT = 256, TILE_TRIM = 64;
+export const MINIMAP_TILE_SIZE = 200, MINIMAP_TILE_PX = 100; // 0.5 px per metre
+const MINIMAP_MIN_SCALE = 0.35, DEFAULT_TILE_LIMIT = 256;
 const FONT = '"Avenir Next Condensed", "Avenir Next", "Arial Narrow", sans-serif';
 const INK = 'rgba(8,20,15,0.85)';
-const tileKey = (i, j) => ((i & 0xffff) << 16) | (j & 0xffff);
+export const minimapTileKey = (i, j) => ((i & 0xffff) << 16) | (j & 0xffff);
+export const minimapTileColumn = key => Number(key) >> 16;
+export const minimapTileRow = key => (Number(key) << 16) >> 16;
+export const minimapTileBackingBytes = (limit = DEFAULT_TILE_LIMIT) => Math.max(0, Math.floor(Number(limit) || 0)) * MINIMAP_TILE_PX * MINIMAP_TILE_PX * 4;
+export function minimapVisibleTileCeiling(width = 480, height = 304, scale = MINIMAP_MIN_SCALE) {
+  const radius = Math.hypot(Math.max(1, Number(width) || 1) / 2, Math.max(1, Number(height) || 1) * 0.62) / Math.max(0.05, Number(scale) || MINIMAP_MIN_SCALE) + MINIMAP_TILE_SIZE;
+  const span = Math.floor(radius * 2 / MINIMAP_TILE_SIZE) + 2;
+  return span * span;
+}
+export function minimapTileLimit(profile = {}) {
+  const value = typeof profile === 'number' ? profile : profile.minimapTileLimit;
+  return Math.max(1, Math.round(Number(value) || DEFAULT_TILE_LIMIT));
+}
 const MARKER_ORDER = { trap: 0, blind: 0, boathouse: 1, house: 1, ramp: 1, camp: 2, angler: 3, gator: 3, boat: 4, home: 5, dot: 5, job: 6, hazard: 7, objective: 8 };
 export const markerDrawPriority = kind => MARKER_ORDER[kind] || 0;
 
@@ -19,41 +31,71 @@ const drawStar = (c, x, y, r, color) => { c.beginPath(); for (let i = 0; i < 10;
 const drawLock = (c, x, y, r) => { c.fillStyle = '#0b1512'; c.fillRect(x - r * 0.45, y - r * 0.1, r * 0.9, r * 0.7); c.beginPath(); c.arc(x, y - r * 0.1, r * 0.3, Math.PI, 0); c.lineWidth = r * 0.16; c.strokeStyle = '#0b1512'; c.stroke(); };
 
 export class Minimap {
-  constructor(terrain) {
+  constructor(terrain, profile = {}) {
     this.T = terrain;
     this.canvas = document.getElementById('minimapCanvas');
     this.ctx = this.canvas.getContext('2d');
     this.tiles = new Map(); this.inFlight = 0;
-    this.tileEvictions = 0;
+    this.completedTiles = 0; this.peakCompletedTiles = 0; this.tileGeneration = 0;
+    this.tileEvictions = 0; this.tileReleases = 0; this.releasedBackingBytes = 0;
     this.speedEl = document.getElementById('speedVal');
     this.scale = 0.62; // canvas px per metre (drifts down with speed)
     this.pulse = 0;
     this.edgeGradient = null; this.edgeGradientWidth = 0; this.edgeGradientHeight = 0;
+    this.cacheLimit = DEFAULT_TILE_LIMIT; this.trimTarget = minimapVisibleTileCeiling(this.canvas.width, this.canvas.height);
+    this.setQuality(profile);
+  }
+  releaseTile(tile) {
+    const canvas = tile?.canvas; if (!canvas) return 0;
+    const bytes = canvas.width * canvas.height * 4; canvas.width = 0; canvas.height = 0; tile.canvas = null;
+    this.completedTiles = Math.max(0, this.completedTiles - 1); this.releasedBackingBytes += bytes; return bytes;
+  }
+  trimTiles(target = this.cacheLimit) {
+    const keep = Math.max(0, Math.floor(Number(target) || 0));
+    if (this.completedTiles <= keep) return 0;
+    const list = [...this.tiles.entries()].filter(([, tile]) => tile.canvas).sort((a, b) => a[1].used - b[1].used);
+    const remove = Math.min(this.completedTiles - keep, list.length); let released = 0;
+    for (let index = 0; index < remove; index++) {
+      const [key, tile] = list[index]; released += this.releaseTile(tile); this.tiles.delete(key); this.tileEvictions++;
+    }
+    return released;
+  }
+  setQuality(profile = {}) {
+    const visible = minimapVisibleTileCeiling(this.canvas.width, this.canvas.height);
+    this.cacheLimit = Math.max(visible, minimapTileLimit(profile)); this.trimTarget = Math.max(visible, Math.floor(this.cacheLimit * 0.75));
+    return { limit: this.cacheLimit, trimTarget: this.trimTarget, releasedBackingBytes: this.trimTiles(this.cacheLimit) };
+  }
+  releaseTiles() {
+    let released = 0, count = 0;
+    for (const tile of this.tiles.values()) if (tile.canvas) { released += this.releaseTile(tile); count++; }
+    this.tiles.clear(); this.tileGeneration++; this.tileReleases += count; return released;
   }
   tile(i, j) {
-    const key = tileKey(i, j);
+    const key = minimapTileKey(i, j);
     let t = this.tiles.get(key);
     if (t) { t.used = performance.now(); return t.canvas; }
     if (this.inFlight >= 3) return null;
-    t = { canvas: null, used: performance.now() }; this.tiles.set(key, t); this.inFlight++;
-    this.T.tile(i * TILE, j * TILE, TILE, TILE_PX).then(rgba => {
+    const generation = this.tileGeneration;
+    t = { canvas: null, used: performance.now(), generation }; this.tiles.set(key, t); this.inFlight++;
+    this.T.tile(i * MINIMAP_TILE_SIZE, j * MINIMAP_TILE_SIZE, MINIMAP_TILE_SIZE, MINIMAP_TILE_PX).then(rgba => {
       this.inFlight--;
-      const c = document.createElement('canvas'); c.width = TILE_PX; c.height = TILE_PX;
-      c.getContext('2d').putImageData(new ImageData(rgba, TILE_PX, TILE_PX), 0, 0);
-      t.canvas = c;
-      if (this.tiles.size > TILE_LIMIT) { // drop the stalest completed tiles and release their canvas backing stores
-        const list = [...this.tiles.entries()].filter(([, v]) => v.canvas).sort((a, b) => a[1].used - b[1].used);
-        for (let k = 0; k < Math.min(TILE_TRIM, list.length); k++) {
-          const [oldKey, old] = list[k]; old.canvas.width = 0; old.canvas.height = 0; this.tiles.delete(oldKey); this.tileEvictions++;
-        }
-      }
-    });
+      if (generation !== this.tileGeneration || this.tiles.get(key) !== t) return;
+      const c = document.createElement('canvas'); c.width = MINIMAP_TILE_PX; c.height = MINIMAP_TILE_PX;
+      c.getContext('2d').putImageData(new ImageData(rgba, MINIMAP_TILE_PX, MINIMAP_TILE_PX), 0, 0);
+      t.canvas = c; this.completedTiles++; this.peakCompletedTiles = Math.max(this.peakCompletedTiles, this.completedTiles);
+      if (this.completedTiles > this.cacheLimit) this.trimTiles(this.trimTarget);
+    }, () => { this.inFlight--; if (generation === this.tileGeneration && this.tiles.get(key) === t) this.tiles.delete(key); });
     return null;
   }
   memoryStats() {
     let completed = 0, pixels = 0;
     for (const tile of this.tiles.values()) if (tile.canvas) { completed++; pixels += tile.canvas.width * tile.canvas.height; }
-    return { tiles: this.tiles.size, completed, pending: this.tiles.size - completed, inFlight: this.inFlight, evictions: this.tileEvictions, pixels, estimatedBackingBytes: pixels * 4 };
+    return {
+      tiles: this.tiles.size, completed, pending: this.tiles.size - completed, inFlight: this.inFlight,
+      limit: this.cacheLimit, trimTarget: this.trimTarget, peakCompleted: this.peakCompletedTiles,
+      evictions: this.tileEvictions, releases: this.tileReleases, releasedBackingBytes: this.releasedBackingBytes,
+      pixels, estimatedBackingBytes: pixels * 4, estimatedLimitBytes: minimapTileBackingBytes(this.cacheLimit),
+    };
   }
   update(boat, camYaw, markers = []) {
     const c = this.ctx, W = this.canvas.width, H = this.canvas.height;
@@ -67,10 +109,10 @@ export class Minimap {
     c.fillStyle = 'rgba(30,60,50,0.55)'; c.fillRect(0, 0, W, H);
     c.translate(CX, CY); c.rotate(rot); c.scale(k, k); c.translate(-boat.pos.x, -boat.pos.y);
     c.globalAlpha = 0.9;
-    const R = Math.hypot(CX, CY) / k + TILE;
-    const i0 = Math.floor((boat.pos.x - R) / TILE), i1 = Math.floor((boat.pos.x + R) / TILE), j0 = Math.floor((boat.pos.y - R) / TILE), j1 = Math.floor((boat.pos.y + R) / TILE);
+    const R = Math.hypot(CX, CY) / k + MINIMAP_TILE_SIZE;
+    const i0 = Math.floor((boat.pos.x - R) / MINIMAP_TILE_SIZE), i1 = Math.floor((boat.pos.x + R) / MINIMAP_TILE_SIZE), j0 = Math.floor((boat.pos.y - R) / MINIMAP_TILE_SIZE), j1 = Math.floor((boat.pos.y + R) / MINIMAP_TILE_SIZE);
     c.imageSmoothingEnabled = true;
-    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const img = this.tile(i, j); if (img) c.drawImage(img, i * TILE, j * TILE, TILE, TILE); }
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const img = this.tile(i, j); if (img) c.drawImage(img, i * MINIMAP_TILE_SIZE, j * MINIMAP_TILE_SIZE, MINIMAP_TILE_SIZE, MINIMAP_TILE_SIZE); }
     c.restore();
     // world -> radar
     const cr = Math.cos(rot), sr = Math.sin(rot);

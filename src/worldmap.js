@@ -2,6 +2,7 @@ import { WORLD_HALF, HOME_X, HOME_Z } from './heightfield.js';
 import { fmtDist } from './game.js';
 import { REGIONS, regionAt } from './regions.js';
 import { MAX_DRAW_PIXELS, pixelRatioFor } from './renderquality.js';
+import { minimapTileColumn, minimapTileRow } from './hud.js';
 
 const MILE = 1609.344;
 const REGION_LABEL_OFFSET = {
@@ -20,7 +21,7 @@ export class WorldMap {
     this.T = terrain; this.mini = minimap; this.G = game; this.W = world;
     this.el = document.getElementById('bigmap'); this.canvas = document.getElementById('bigmapCanvas'); this.ctx = this.canvas.getContext('2d');
     this.legend = document.getElementById('bigmapLegend');
-    this.tiles = new Map(); this.inFlight = 0;
+    this.tiles = new Map(); this.inFlight = 0; this.tileGeneration = 0; this.tileReleases = 0; this.releasedBackingBytes = 0;
     this.open = false; this.scale = 0.04; this.cx = 0; this.cz = 0; this.follow = true;
     this.dpr = 1;
     this.drag = null;
@@ -46,13 +47,26 @@ export class WorldMap {
     // The chart can otherwise keep an 8K RGBA canvas alive for the rest of the session after being opened once.
     this.canvas.width = 1; this.canvas.height = 1; this.dpr = 1;
   }
+  releaseTiles() {
+    let released = 0, count = 0;
+    for (const tile of this.tiles.values()) if (tile.canvas) {
+      released += tile.canvas.width * tile.canvas.height * 4; tile.canvas.width = 0; tile.canvas.height = 0; tile.canvas = null; count++;
+    }
+    this.tiles.clear(); this.tileGeneration++; this.tileReleases += count; this.releasedBackingBytes += released; return released;
+  }
+  hibernate() {
+    const before = this.canvas.width * this.canvas.height * 4, released = this.releaseTiles();
+    if (this.open) { this.canvas.width = 1; this.canvas.height = 1; this.dpr = 1; }
+    return released + Math.max(0, before - this.canvas.width * this.canvas.height * 4);
+  }
+  resume() { if (!this.open) return false; this.fit(); return true; }
   memoryStats() {
     const width = this.canvas.width, height = this.canvas.height, pixels = width * height;
     let cachedTiles = 0, tilePixels = 0;
     for (const tile of this.tiles.values()) if (tile.canvas) { cachedTiles++; tilePixels += tile.canvas.width * tile.canvas.height; }
     return {
       open: this.open, width, height, pixels, pixelRatio: this.dpr, maxPixels: MAX_DRAW_PIXELS,
-      cachedTiles, pendingTiles: this.tiles.size - cachedTiles, tilePixels,
+      cachedTiles, pendingTiles: this.tiles.size - cachedTiles, tilePixels, tileReleases: this.tileReleases, releasedBackingBytes: this.releasedBackingBytes,
       canvasBackingBytes: pixels * 4, tileBackingBytes: tilePixels * 4, estimatedBackingBytes: (pixels + tilePixels) * 4,
     };
   }
@@ -60,11 +74,13 @@ export class WorldMap {
     const key = `${i},${j}`;
     let t = this.tiles.get(key); if (t) return t.canvas;
     if (this.inFlight >= 4) return null;
-    t = { canvas: null }; this.tiles.set(key, t); this.inFlight++;
+    const generation = this.tileGeneration;
+    t = { canvas: null, generation }; this.tiles.set(key, t); this.inFlight++;
     this.T.tile(i * COARSE, j * COARSE, COARSE, COARSE_PX, 'chart').then(rgba => {
-      this.inFlight--; const c = document.createElement('canvas'); c.width = COARSE_PX; c.height = COARSE_PX;
+      this.inFlight--; if (generation !== this.tileGeneration || this.tiles.get(key) !== t) return;
+      const c = document.createElement('canvas'); c.width = COARSE_PX; c.height = COARSE_PX;
       c.getContext('2d').putImageData(new ImageData(rgba, COARSE_PX, COARSE_PX), 0, 0); t.canvas = c; if (this.open) this.render();
-    });
+    }, () => { this.inFlight--; if (generation === this.tileGeneration && this.tiles.get(key) === t) this.tiles.delete(key); });
     return null;
   }
   render() {
@@ -86,7 +102,7 @@ export class WorldMap {
       else { c.fillStyle = '#14251d'; c.fillRect(x0, z0, COARSE, COARSE); }
     }
     // fine tiles where the minimap has them, once zoomed in enough to matter
-    if (this.scale > 0.12) for (const [key, t] of this.mini.tiles) { if (!t.canvas) continue; const [i, j] = key.split(',').map(Number); const x0 = i * 200, z0 = j * 200; if (x0 + 200 < this.cx - R || x0 > this.cx + R || z0 + 200 < this.cz - R || z0 > this.cz + R) continue; c.drawImage(t.canvas, x0, z0, 200, 200); }
+    if (this.scale > 0.12) for (const [key, t] of this.mini.tiles) { if (!t.canvas) continue; const i = minimapTileColumn(key), j = minimapTileRow(key), x0 = i * 200, z0 = j * 200; if (x0 + 200 < this.cx - R || x0 > this.cx + R || z0 + 200 < this.cz - R || z0 > this.cz + R) continue; c.drawImage(t.canvas, x0, z0, 200, 200); }
     // world rim
     c.lineWidth = 2 / k; c.strokeStyle = 'rgba(243,237,224,0.35)'; c.strokeRect(-WORLD_HALF, -WORLD_HALF, WORLD_HALF * 2, WORLD_HALF * 2);
     // mile grid
