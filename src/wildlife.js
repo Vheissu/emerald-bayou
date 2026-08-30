@@ -10,6 +10,11 @@ const fract = v => v - Math.floor(v);
 const GATOR_WAKE_RANGE_SQ = 70 * 70;
 const feedingDive = (phase, osprey, scatter) => smooth(osprey ? 0.48 : 0.52, osprey ? 0.64 : 0.67, phase) * (1 - smooth(osprey ? 0.74 : 0.76, osprey ? 0.9 : 0.91, phase)) * (1 - scatter);
 
+export function alligatorHookedFishRange(power = 0.5, splash = 0.5, scale = 1) {
+  const fish = clamp(Number(power) || 0, 0.12, 1.2), disturbance = clamp(Number(splash) || 0), body = clamp(Number(scale) || 1, 0.6, 1.8);
+  return 20 + fish * 15 + disturbance * 14 + Math.max(0, body - 1) * 5;
+}
+
 function birdGeo() {
   const body = new THREE.SphereGeometry(0.11, 10, 8); body.scale(1, 0.75, 2.3);
   const neck = new THREE.CylinderGeometry(0.035, 0.05, 0.42, 6); neck.rotateX(-Math.PI / 2 + 0.25); neck.translate(0, 0.06, -0.38);
@@ -435,7 +440,7 @@ export class Gators {
     while (this.list.length < count && tries++ < 40000) {
       const big = this.list.length === 0; // one old bull
       const m = gatorMesh(big ? 1.55 : 0.8 + r() * 0.35);
-      const g = { mesh: m, float: -(0.68 * m.scale.x - 0.08), pos: new THREE.Vector3(0, 0, 0), heading: r() * Math.PI * 2, speed: 0.35 + r() * 0.3, ph: r() * 6, dive: 0, big, hitT: 0, bask: false, slide: 0, charge: 0, chargeCd: 8, bellowT: 5 + r() * 20, wakeKick: 0, wakeSpeed: 0 };
+      const g = { mesh: m, float: -(0.68 * m.scale.x - 0.08), pos: new THREE.Vector3(0, 0, 0), heading: r() * Math.PI * 2, speed: 0.35 + r() * 0.3, ph: r() * 6, dive: 0, big, hitT: 0, bask: false, slide: 0, charge: 0, chargeCd: 8, bellowT: 5 + r() * 20, wakeKick: 0, wakeSpeed: 0, preySource: null, preyT: 0, preyCooldown: 0, preyDistance: Infinity };
       if (!big && this.list.length % 5 === 2) {
         const z = 120 - r() * 780; const sp = baskSpot(terrain, r, terrain.riverCenterX(z), z, 10, 120);
         if (sp) { g.pos.set(sp.x, sp.h + 0.02, sp.z); g.bask = true; g.toWater = sp.ang; g.heading = sp.ang + Math.PI + (r() - 0.5) * 1.2; this.list.push(g); continue; }
@@ -455,12 +460,43 @@ export class Gators {
       g.wakeKick = Math.max(Number(g.wakeKick) || 0, 0.85);
     }
   }
+  releaseHookedFish(source = null) {
+    for (const g of this.list) {
+      if (!g.preySource || (source && g.preySource !== source)) continue;
+      const previous = g.preySource; g.preySource = null; g.preyT = 0; g.preyDistance = Infinity; g.preyCooldown = Math.max(Number(g.preyCooldown) || 0, 10);
+      previous?.clearAlligatorThreat?.(g);
+    }
+  }
+  attractToHookedFish(source, x, z, splash = 0.5, waterLevel = 0) {
+    if (!source || source.state !== 'fight' || !Number.isFinite(x) || !Number.isFinite(z)) return null;
+    for (const g of this.list) if (g.preySource === source && g.preyT > 0) { g.preyT = Math.max(g.preyT, 12); return g; }
+    let nearest = null, nearestDistanceSq = Infinity;
+    for (const g of this.list) {
+      if (g.preySource || g.bask || g.towed || g.parked || g.dive > 0.05 || g.charge > 0 || g.hitT > 0 || g.preyCooldown > 0) continue;
+      const dx = x - g.pos.x, dz = z - g.pos.z, distanceSq = dx * dx + dz * dz;
+      const range = alligatorHookedFishRange(source.session?.species?.power, splash, g.mesh?.scale?.x);
+      if (distanceSq > range * range || distanceSq >= nearestDistanceSq) continue;
+      let clear = true;
+      for (let amount = 0.2; amount < 1; amount += 0.2) {
+        const sx = g.pos.x + dx * amount, sz = g.pos.z + dz * amount;
+        if (waterLevel - this.T.heightAt(sx, sz) < 0.38) { clear = false; break; }
+      }
+      if (clear) { nearest = g; nearestDistanceSq = distanceSq; }
+    }
+    if (!nearest) return null;
+    nearest.preySource = source; nearest.preyT = 14; nearest.preyDistance = Math.sqrt(nearestDistanceSq); nearest.charge = 0;
+    return nearest;
+  }
   update(dt, t, boatX, boatZ, boatSpeed, boatHeading = 0, spotlight = false, night = 0, fog = 0, storm = 0, waterLevel = 0) {
     if (!this.rand) this.rand = mulberry32(91);
     this.wakeBoatX = boatX; this.wakeBoatZ = boatZ;
     for (const g of this.list) {
       g.wakeKick = Math.max(0, (Number(g.wakeKick) || 0) - dt * 1.35);
       g.wakeSpeed = 0;
+      g.preyT = Math.max(0, (Number(g.preyT) || 0) - dt); g.preyCooldown = Math.max(0, (Number(g.preyCooldown) || 0) - dt);
+      if (g.preySource && (g.preySource.state !== 'fight' || g.preyT <= 0 || g.towed || g.parked || g.bask)) {
+        const previous = g.preySource; g.preySource = null; g.preyDistance = Infinity; g.preyCooldown = Math.max(g.preyCooldown, 8); previous?.clearAlligatorThreat?.(g);
+      }
       if (!g.towed && !g.parked && Math.hypot(g.pos.x - boatX, g.pos.z - boatZ) > 700) {
         const sp = (!g.big && this.rand() < 0.4) ? baskSpot(this.T, this.rand, boatX, boatZ, 160, 450) : null;
         if (sp) { g.pos.set(sp.x, sp.h + 0.02, sp.z); g.bask = true; g.slide = 0; g.toWater = sp.ang; g.heading = sp.ang + Math.PI + (this.rand() - 0.5) * 1.2; g.dive = 0; g.wakeKick = 0; }
@@ -487,6 +523,31 @@ export class Gators {
       }
       // the bull: idle near him for long and he comes at the hull
       g.chargeCd = Math.max(0, g.chargeCd - dt);
+      if (g.preySource) {
+        const source = g.preySource, tx = source.session.x, tz = source.session.z;
+        const dx = tx - g.pos.x, dz = tz - g.pos.z, distance = Math.hypot(dx, dz) || 0.001;
+        const desired = Math.atan2(-dx, -dz), delta = Math.atan2(Math.sin(desired - g.heading), Math.cos(desired - g.heading));
+        g.heading += clamp(delta, -dt * 1.55, dt * 1.55);
+        let fx = -Math.sin(g.heading), fz = -Math.cos(g.heading);
+        const ahead = 5.5, depthAhead = waterLevel - this.T.heightAt(g.pos.x + fx * ahead, g.pos.z + fz * ahead);
+        if (depthAhead < 0.42) {
+          const leftDepth = waterLevel - this.T.heightAt(g.pos.x + (fx - fz) * ahead * 0.72, g.pos.z + (fz + fx) * ahead * 0.72);
+          const rightDepth = waterLevel - this.T.heightAt(g.pos.x + (fx + fz) * ahead * 0.72, g.pos.z + (fz - fx) * ahead * 0.72);
+          g.heading += (leftDepth > rightDepth ? 1 : -1) * dt * 1.2; fx = -Math.sin(g.heading); fz = -Math.cos(g.heading);
+        }
+        const chaseSpeed = (g.big ? 4.9 : 4.15) * (0.88 + this.activity * 0.12);
+        g.pos.x += fx * chaseSpeed * dt; g.pos.z += fz * chaseSpeed * dt;
+        g.pos.y += (alligatorFloatHeight(g.float, waterLevel) + 0.1 - g.pos.y) * (1 - Math.exp(-dt * 4.5));
+        g.mesh.position.copy(g.pos); g.mesh.rotation.set(-0.07, g.heading, Math.sin(t * 10 + g.ph) * 0.09); g.surfaced = true; g.wakeSpeed = chaseSpeed;
+        g.preyDistance = distance; source.trackAlligatorThreat?.(g, distance);
+        const captureRange = 1.35 + clamp(g.mesh?.scale?.x || 1, 0.6, 1.8) * 0.35;
+        if (distance < captureRange) {
+          source.alligatorTake?.(g); g.preySource = null; g.preyT = 0; g.preyDistance = Infinity; g.preyCooldown = 38;
+          g.dive = 7 + this.rand() * 3; g.wakeKick = Math.max(g.wakeKick, 1.3); g.chargeCd = Math.max(g.chargeCd, 18);
+          if (this.onSplash) this.onSplash(g.pos.x, g.pos.z, g.mesh.scale.x);
+        }
+        continue;
+      }
       if (g.big && !this.calm && !g.parked && g.charge <= 0 && g.chargeCd <= 0 && g.dive <= 0 && g.hitT <= 0 && dB < 16 && dB > 3 && boatSpeed < 3) {
         g.charge = 3.5; g.chargeCd = 30; g.heading = Math.atan2(-(boatX - g.pos.x), -(boatZ - g.pos.z)); if (this.audio) this.audio.bellow(0.6, g.pos.x, g.pos.z);
       }

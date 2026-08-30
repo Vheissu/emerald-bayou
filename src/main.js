@@ -274,7 +274,7 @@ async function init() {
   const navigationAids = new NavigationAids({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition });
   const dolphins = new DolphinPod({ scene, terrain, world, water, phys, game, audio, environment, regions, plume, spray, law, reputation, radio, encounters, incidents, story, aftermath });
   game.dolphins = dolphins;
-  const fishing = new Fishing({ scene, boat: boat.group, terrain, world, water, phys, game, audio, environment, currents, regions, life });
+  const fishing = new Fishing({ scene, boat: boat.group, terrain, world, water, phys, game, audio, environment, currents, regions, life, gators });
   game.fishing = fishing;
   const nocturnal = new NocturnalWetland({ scene, terrain, world, phys, environment, regions, audio, profile: renderProfile });
   const marshFire = new MarshFireDirector({
@@ -435,6 +435,16 @@ async function init() {
       e.preventDefault(); const memory = renderer.info.memory, quality = window.__dbg.renderQuality(); const snapshot = debugResourceSnapshot();
       document.documentElement.dataset.emeraldResource = JSON.stringify(snapshot);
       console.info('[emerald-resource]', JSON.stringify({ geometries: memory.geometries, textures: memory.textures, programs: renderer.info.programs.length, sceneChildren: scene.children.length, graph: snapshot.graph, terrain: snapshot.terrain, minimap: snapshot.minimap, wildlife: snapshot.wildlife, chart: snapshot.chart, fireOuterInstances: encounters.rigs.fire.fire.userData.fire.outer.count, fireCoreInstances: encounters.rigs.fire.fire.userData.fire.core.count, ...quality }));
+    }
+    if (import.meta.env.DEV && e.code === 'KeyY' && e.altKey && e.shiftKey && !e.repeat && fishing.state === 'fight') {
+      e.preventDefault();
+      const session = fishing.session, dx = phys.pos.x - session.x, dz = phys.pos.y - session.z, length = Math.hypot(dx, dz) || 1;
+      const gator = gators.list.find(g => !g.towed && !g.parked && !g.big) || gators.list[0];
+      if (gator) {
+        gators.releaseHookedFish(); gator.pos.set(session.x + dx / length * 11, environment.waterLevel + gator.float, session.z + dz / length * 11);
+        gator.bask = false; gator.dive = 0; gator.charge = 0; gator.hitT = 0; gator.preyCooldown = 0; gator.mesh.visible = true;
+        fishing.attractAlligator(1);
+      }
     }
     if (started && e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
   });

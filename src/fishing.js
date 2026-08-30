@@ -149,7 +149,7 @@ export function ensureFishingSave(save) {
   }
   const journal = {
     total: Math.max(speciesTotal, whole(raw.total, FISHING_LIMITS.maxCount)), released: whole(raw.released, FISHING_LIMITS.maxCount),
-    missed: whole(raw.missed, FISHING_LIMITS.maxCount), snapped: whole(raw.snapped, FISHING_LIMITS.maxCount), species, recent,
+    missed: whole(raw.missed, FISHING_LIMITS.maxCount), snapped: whole(raw.snapped, FISHING_LIMITS.maxCount), gatorLosses: whole(raw.gatorLosses, FISHING_LIMITS.maxCount), species, recent,
   };
   if (save && typeof save === 'object') save.fishing = journal;
   return journal;
@@ -182,13 +182,14 @@ function geometryBytes(geometry) {
 
 export class Fishing {
   constructor(options) {
-    Object.assign(this, options); // scene, boat, terrain, world, water, phys, game, audio, environment, currents, regions, life
+    Object.assign(this, options); // scene, boat, terrain, world, water, phys, game, audio, environment, currents, regions, life, gators
     this.regionAtFn = options.regionAtFn || regionAt; this.random = options.random || Math.random;
     this.store = ensureFishingSave(this.game.save); this.state = 'idle'; this.dirty = false; this.reeling = false; this.releaseSplash = false; this.quietWaterT = 0;
     this.session = {
       t: 0, x: 0, z: 0, startX: 0, startZ: 0, waitT: 0, biteT: 0, potential: 0, species: null, lengthIn: 0,
       distance: 0, lineLimit: 42, stamina: 1, tension: 0.35, strain: 0, slack: 0, runT: 0, restT: 1, runStrength: 1,
       startedRun: false, runAngle: 0, turnDirection: 1, jumpT: 0, jumpDuration: 0.82, jumpStartY: 0, regionId: '', regionName: '', isBest: false,
+      alligator: null, alligatorDistance: Infinity,
     };
     this.snapshot = {}; this.fightInput = { dt: 0, reeling: false, power: 0.5 };
     this.tip = new THREE.Vector3(); this.lurePos = new THREE.Vector3(); this.sidePos = new THREE.Vector3(); this.forward = new THREE.Vector2(); this.right = new THREE.Vector2(); this.flow = new THREE.Vector2();
@@ -223,7 +224,7 @@ export class Fishing {
     const code = typeof event === 'string' ? event : event?.code;
     if (code !== 'KeyC' && code !== 'KeyX') return false;
     event?.preventDefault?.();
-    if (code === 'KeyX') { if (this.blocking()) this.cancel('Line reeled in', true); return true; }
+    if (code === 'KeyX') { if (this.state === 'fight') this.cutLine(); else if (this.blocking()) this.cancel('Line reeled in', true); return true; }
     if (this.state === 'idle') this.start();
     else if (this.state === 'bite' && !event?.repeat) this.setHook();
     else if (this.state === 'fight') this.reeling = true;
@@ -278,7 +279,7 @@ export class Fishing {
       biteT: 0, potential: snapshot.potential, species: null, lengthIn: 0, distance: Math.hypot(target.x - this.phys.pos.x, target.z - this.phys.pos.y),
       lineLimit: 42, stamina: 1, tension: 0.34, strain: 0, slack: 0, runT: 0, restT: 0.85 + this.random() * 0.75, runStrength: 1,
       startedRun: false, runAngle: Math.atan2(target.z - this.phys.pos.y, target.x - this.phys.pos.x), turnDirection: this.random() < 0.5 ? -1 : 1,
-      jumpT: 0, regionId: snapshot.regionId, regionName: snapshot.regionName, isBest: false,
+      jumpT: 0, regionId: snapshot.regionId, regionName: snapshot.regionName, isBest: false, alligator: null, alligatorDistance: Infinity,
     });
     this.state = 'casting'; this.reeling = false; this.releaseSplash = false; this.rodRoot.visible = true; this.line.visible = true; this.lure.visible = true; this.catchMesh.visible = false;
     this.rodRoot.rotation.set(-0.76, 0.02, 0.34, 'YXZ'); this.updateVisuals(0, 0); return true;
@@ -289,7 +290,42 @@ export class Fishing {
     if (this.state !== 'bite' || session.biteT <= 0) return false;
     this.state = 'fight'; this.reeling = true; session.t = 0; session.stamina = 1; session.tension = 0.38; session.strain = 0; session.slack = 0;
     session.distance = clamp(Math.hypot(session.x - this.phys.pos.x, session.z - this.phys.pos.y), 7, 30); session.restT = 0.72 + this.random() * 0.58;
-    this.audio?.tone?.(720, 0.055, 0.09, 'square'); this.life?.fish?.splash?.(session.x, session.z, 0.65, this.phys.pos.x, this.phys.pos.y); return true;
+    this.audio?.tone?.(720, 0.055, 0.09, 'square'); this.life?.fish?.splash?.(session.x, session.z, 0.65, this.phys.pos.x, this.phys.pos.y);
+    this.attractAlligator(0.48 + (session.species?.power || 0.5) * 0.25); return true;
+  }
+
+  attractAlligator(splash = 0.5) {
+    if (this.state !== 'fight' || !this.session.species) return null;
+    const session = this.session, first = !session.alligator;
+    const gator = this.gators?.attractToHookedFish?.(this, session.x, session.z, splash, this.environment.waterLevel) || null;
+    if (!gator) return null;
+    session.alligator = gator; session.alligatorDistance = Math.hypot(gator.pos.x - session.x, gator.pos.z - session.z);
+    if (first) { this.audio?.warn?.(); this.game.toast('Alligator on the fish', 'Pull it clear, or press X to cut the line.', 3.2); }
+    return gator;
+  }
+
+  trackAlligatorThreat(gator, distance) {
+    if (this.state !== 'fight') return;
+    this.session.alligator = gator; this.session.alligatorDistance = Math.max(0, Number(distance) || 0);
+  }
+
+  clearAlligatorThreat(gator) {
+    if (this.session.alligator !== gator) return;
+    this.session.alligator = null; this.session.alligatorDistance = Infinity;
+  }
+
+  cutLine() {
+    if (this.state !== 'fight') return false;
+    const threatened = Boolean(this.session.alligator); this.store.missed = whole(this.store.missed + 1); this.dirty = true;
+    this.cancel('', false); this.game.toast('Line cut', threatened ? 'The fish is gone, but the gator is off the boat.' : 'The fish is gone. Cast again when the water settles.', 2.4); return true;
+  }
+
+  alligatorTake(gator) {
+    if (this.state !== 'fight' || (this.session.alligator && this.session.alligator !== gator)) return false;
+    const session = this.session, name = session.species?.name || 'fish', x = session.x, z = session.z;
+    this.store.missed = whole(this.store.missed + 1); this.store.gatorLosses = whole(this.store.gatorLosses + 1); this.dirty = true;
+    this.life?.fish?.splash?.(x, z, 1.15, this.phys.pos.x, this.phys.pos.y); this.cancel('', false);
+    this.game.toast('Alligator took the fish', `${name} gone in one strike.`, 3.1); return true;
   }
 
   missedBite() {
@@ -319,6 +355,7 @@ export class Fishing {
     if (session.startedRun) {
       session.turnDirection = this.random() < 0.5 ? -1 : 1; this.audio?.tone?.(155 + species.power * 70, 0.075, 0.055 + species.power * 0.035, 'square');
       if (this.random() < species.jump) { session.jumpT = session.jumpDuration; session.jumpStartY = this.water.waveHeight(session.x, session.z, session.t); this.life?.fish?.splash?.(session.x, session.z, 0.58 + species.power * 0.2, this.phys.pos.x, this.phys.pos.y); }
+      this.attractAlligator(0.62 + species.power * 0.3);
     }
     session.runAngle += session.turnDirection * dt * (session.runT > 0 ? 0.42 + species.power * 0.32 : 0.08);
     session.x = this.phys.pos.x + Math.cos(session.runAngle) * session.distance; session.z = this.phys.pos.y + Math.sin(session.runAngle) * session.distance;
@@ -334,6 +371,7 @@ export class Fishing {
 
   landCatch() {
     const session = this.session, species = session.species, record = this.store.species[species.id];
+    this.gators?.releaseHookedFish?.(this); session.alligator = null; session.alligatorDistance = Infinity;
     const previous = record.bestIn; record.caught = whole(record.caught + 1); record.bestIn = Math.max(previous, session.lengthIn); this.store.total = whole(this.store.total + 1);
     session.isBest = session.lengthIn > previous; this.store.recent.unshift({ species: species.id, lengthIn: session.lengthIn, region: session.regionName, day: whole(this.environment.day, 99999), hour: Math.round(clamp(this.environment.hour, 0, 24) * 100) / 100 });
     this.store.recent.length = Math.min(this.store.recent.length, FISHING_LIMITS.recent); this.dirty = true; this.game.persist(); this.dirty = false;
@@ -354,6 +392,7 @@ export class Fishing {
   }
 
   cancel(message = '', announce = false) {
+    this.gators?.releaseHookedFish?.(this); this.session.alligator = null; this.session.alligatorDistance = Infinity;
     this.audio?.fishingReel?.(0, 0); this.state = 'idle'; this.reeling = false; this.rodRoot.visible = false; this.line.visible = false; this.lure.visible = false; this.catchMesh.visible = false;
     if (this.dirty) { this.game.persist(); this.dirty = false; }
     if (announce && message) this.game.toast(message, 'C casts again when the hull is back at idle.', 1.8);
@@ -442,8 +481,9 @@ export class Fishing {
     if (this.state === 'waiting') return { title, obj: 'Watch the lure', sub: `${this.waterLabel()} · C sets the hook when it goes under · X reels in`, timer: '', warn: false };
     if (this.state === 'bite') return { title, obj: 'Strike now', sub: 'C · set the hook', timer: `${Math.max(0, session.biteT).toFixed(1)}<small>seconds</small>`, warn: true };
     if (this.state === 'fight') {
-      const danger = session.tension > 0.86, slack = session.tension < 0.14;
-      return { title, obj: session.species?.name || 'Fish on', sub: danger ? 'Let go of C. The line is close to breaking.' : slack ? 'Hold C and take up the slack.' : `${this.reeling ? 'Reeling' : 'Fish running'} · hold C to reel · release it during a hard run · X cuts the line`, timer: `${Math.round(session.tension * 100)}%<small>line tension</small>`, warn: danger || slack };
+      const danger = session.tension > 0.86, slack = session.tension < 0.14, alligator = session.alligator && Number.isFinite(session.alligatorDistance);
+      const sub = alligator ? `Alligator ${Math.max(1, Math.round(session.alligatorDistance))} m off · pull the fish clear or X cuts the line` : danger ? 'Let go of C. The line is close to breaking.' : slack ? 'Hold C and take up the slack.' : `${this.reeling ? 'Reeling' : 'Fish running'} · hold C to reel · release it during a hard run · X cuts the line`;
+      return { title, obj: session.species?.name || 'Fish on', sub, timer: `${Math.round(session.tension * 100)}%<small>line tension</small>`, warn: Boolean(alligator) || danger || slack };
     }
     if (this.state === 'landed') return { title, obj: `${session.species?.name || 'Catch'} · ${session.lengthIn.toFixed(1)} in`, sub: `${session.isBest ? 'New boat record · ' : ''}measured over the gunwale · C release`, timer: `${session.lengthIn.toFixed(1)}<small>in total length</small>`, warn: false };
     return { title, obj: `Releasing ${session.species?.name || 'the catch'}`, sub: 'Head first, back into the current.', timer: '', warn: false };
@@ -460,7 +500,7 @@ export class Fishing {
       if (object.geometry) geometries.add(object.geometry); if (object.material) materials.add(object.material);
     });
     let bytes = 0; for (const geometry of geometries) bytes += geometryBytes(geometry);
-    return { state: this.state, objects, meshes, geometries: geometries.size, materials: materials.size, geometryBytes: bytes, linePoints: FISHING_LIMITS.linePoints, visibleDraws };
+    return { state: this.state, predator: this.session.alligator ? 'alligator' : '', objects, meshes, geometries: geometries.size, materials: materials.size, geometryBytes: bytes, linePoints: FISHING_LIMITS.linePoints, visibleDraws };
   }
 
   dispose() {

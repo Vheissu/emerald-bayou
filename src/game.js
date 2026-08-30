@@ -313,6 +313,7 @@ export class Game {
     records.push(['Aid reports', `${Math.max(0, Number(this.save.navigationAids?.stats?.reports) || 0)}`]);
     records.push(['Fish landed', `${Math.max(0, Number(this.save.fishing?.total) || 0)}`]);
     records.push(['Fish released', `${Math.max(0, Number(this.save.fishing?.released) || 0)}`]);
+    records.push(['Fish taken by gators', `${Math.max(0, Number(this.save.fishing?.gatorLosses) || 0)}`]);
     records.push(['Marsh fires contained', `${Math.max(0, Number(this.save.marshFire?.stats?.contained) || 0)}`]);
     const wanted = Math.max(0, Math.min(5, Math.ceil(Number(this.law?.attention) || 0)));
     const deeds = (this.reputation?.deeds || []).slice(-6).reverse();
