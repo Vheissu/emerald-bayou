@@ -17,8 +17,9 @@ import {
   evaluateNavigationEncounter, navigationEncounterOutranks, navigationLightVisibility,
 } from './navigationrules.js';
 import { waterspoutAvoidanceStrength, waterspoutProbeScore, waterspoutReactionReady } from './waterspout.js';
+import { downburstCraftUrgency, downburstProbeScore, downburstReactionReady } from './downburst.js';
 import { sampleTrafficWake, wakeSampleAt } from './wakefield.js';
-import { vesselLeeway, vesselWindHeel } from './vesselwind.js';
+import { combinedSurfaceWind, vesselLeeway, vesselWindHeel } from './vesselwind.js';
 import { makeSurfaceSearchBeam } from './surface-searchlight.js';
 
 // The bayou's small life: mullet jumping, bait boiling away from the bow, deadhead logs and dead snags in the still
@@ -389,12 +390,13 @@ export class Traffic {
       const shelter = { active: false, arrived: false, kind: '', key: '', name: '', x: 0, z: 0, heading: 0, distance: 0 };
       const collision = { active: false, stage: '', t: 0, elapsed: 0, hold: 0, farT: 0, signalT: 0, impact: 0, distance: Infinity, prevState: 'transit', prevRetiring: false, prevLeg: 0, prevWorkT: 0, prevWorkRig: false, marker: { x: 0, z: 0, label: '', color: '#f06c38', trafficCollision: profile.id } };
       const navigation = createNavigationEncounter();
-      Object.assign(b, { profile, record, shelter, collision, navigation, navTargetBoat: null, navSignalTarget: '', shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, fogHornT: 6 + i * 16, fogSignalIndex: i, signalYield: 0, signalT: 0, signalSide: -1, signalReplyT: 0, signalReplyLong: false, navEvalT: i * 0.014, navSignalT: 0, navSignalState: 0, yellT: 0, ground: 0, shx: 0, shz: 0, pursuitYield: 0, pursuitNoticeT: 0, pursuitReactionDelay: 0.42 + this.rand() * 0.58, pursuitYieldSide: i & 1 ? 1 : -1, pursuitReacted: false, spoutAvoidance: 0, spoutDistance: Infinity, spoutNoticeT: 0, spoutReactionDelay: 0.65 + this.rand() * 1.1, spoutReacted: false });
+      Object.assign(b, { profile, record, shelter, collision, navigation, navTargetBoat: null, navSignalTarget: '', shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, fogHornT: 6 + i * 16, fogSignalIndex: i, signalYield: 0, signalT: 0, signalSide: -1, signalReplyT: 0, signalReplyLong: false, navEvalT: i * 0.014, navSignalT: 0, navSignalState: 0, yellT: 0, ground: 0, shx: 0, shz: 0, pursuitYield: 0, pursuitNoticeT: 0, pursuitReactionDelay: 0.42 + this.rand() * 0.58, pursuitYieldSide: i & 1 ? 1 : -1, pursuitReacted: false, spoutAvoidance: 0, spoutDistance: Infinity, spoutNoticeT: 0, spoutReactionDelay: 0.65 + this.rand() * 1.1, spoutReacted: false, downburstResponse: 0, downburstDistance: Infinity, downburstNoticeT: 0, downburstReactionDelay: 0.45 + this.rand() * 0.9, downburstReacted: false });
       const divergence = b.kind === 'canoe' || b.kind === 'skiff' ? 15 : 20;
       b.windage = b.kind === 'air' ? 0.027 : b.kind === 'canoe' ? 0.018 : b.kind === 'cruiser' ? 0.018 : 0.023;
       b.windDivergence = divergence * Math.PI / 180 * (i & 1 ? 1 : -1);
       b.windHeelScale = b.kind === 'air' ? 1.2 : b.kind === 'canoe' ? 0.55 : b.kind === 'cruiser' ? 0.8 : 0.9;
       b.windDrift = { x: 0, z: 0, speed: 0 }; b.windHeel = 0;
+      b.downburstField = {}; b.localOutflow = { x: 0, z: 0 }; b.surfaceWind = { x: 0, z: 0, speed: 0 };
       this.addWorkingDetails(b, i);
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
       b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
@@ -413,6 +415,7 @@ export class Traffic {
     this.idlePasses = 0; this._flow = new THREE.Vector2(); this._pf = new THREE.Vector2(); this._bob = new THREE.Vector3();
     this._navVisibility = { port: true, starboard: true, stern: true };
     this._navigationCandidate = createNavigationEncounter();
+    this._downburstProbe = {};
   }
   addWorkingDetails(b, profileIndex) {
     const deck = b.kind === 'air' ? 0.55 : b.kind === 'canoe' ? 0.3 : b.kind === 'cruiser' ? 0.85 : 0.42;
@@ -674,6 +677,9 @@ export class Traffic {
     if (b.collision?.active) this.restoreAfterCollision(b);
     this.clearShelter(b); b.assisting = false; b.active = false; b.retiring = false; b.state = 'off'; b.mesh.visible = false; b.x = b.z = 1e9; b.speed = 0; b.spawnT = delay + this.rand() * delay;
     b.signalYield = 0; b.signalT = 0; b.signalReplyT = 0; b.signalReplyLong = false;
+    b.downburstResponse = 0; b.downburstDistance = Infinity; b.downburstNoticeT = 0; b.downburstReacted = false;
+    downburstCraftUrgency(null, b.x, b.z, b.kind, b.downburstField); b.localOutflow.x = 0; b.localOutflow.z = 0;
+    b.surfaceWind.x = 0; b.surfaceWind.z = 0; b.surfaceWind.speed = 0; b.windDrift.x = 0; b.windDrift.z = 0; b.windDrift.speed = 0; b.windHeel = 0;
     clearNavigationEncounter(b.navigation); b.navTargetBoat = null; b.navEvalT = 0; b.navSignalT = 0; b.navSignalState = 0; b.navSignalTarget = '';
     if (b.workRig) b.workRig.visible = false; if (b.navLights) b.navLights.visible = false; if (b.deckLight) b.deckLight.intensity = 0;
     if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; }
@@ -826,6 +832,27 @@ export class Traffic {
     if (!active && b.spoutAvoidance < 0.015) { b.spoutNoticeT = 0; b.spoutReacted = false; }
     return b.spoutAvoidance;
   }
+  updateDownburstResponse(b, dt, blocked) {
+    const cell = this.hazards?.downburst, active = Boolean(cell?.active);
+    const field = downburstCraftUrgency(cell, b.x, b.z, b.kind, b.downburstField);
+    const target = blocked ? 0 : field.urgency * (b.profile?.essential ? 0.88 : 1);
+    b.downburstDistance = field.distance;
+    b.downburstNoticeT = target > 0.025 ? b.downburstNoticeT + dt : Math.max(0, b.downburstNoticeT - dt * 1.7);
+    const aware = !blocked && downburstReactionReady(field, b.downburstNoticeT, b.downburstReactionDelay), desired = aware ? target : 0;
+    const rate = desired > b.downburstResponse ? 2.8 : 1.2;
+    b.downburstResponse += (desired - b.downburstResponse) * (1 - Math.exp(-dt * rate));
+    if (aware && !b.downburstReacted) { b.downburstReacted = true; if (b.state === 'work') this.beginLeg(b); }
+    if (!active && b.downburstResponse < 0.015) { b.downburstNoticeT = 0; b.downburstReacted = false; }
+    return b.downburstResponse;
+  }
+  updateSurfaceWind(b, baseDirection, baseSpeed) {
+    b.localOutflow.x = Number.isFinite(b.downburstField.windX) ? b.downburstField.windX : 0;
+    b.localOutflow.z = Number.isFinite(b.downburstField.windZ) ? b.downburstField.windZ : 0;
+    const wind = combinedSurfaceWind(baseDirection, baseSpeed, b.localOutflow, b.surfaceWind);
+    vesselLeeway(wind, wind.speed, b.windage, b.windDivergence, b.windDrift);
+    b.windHeel = vesselWindHeel(wind, wind.speed, b.heading, b.windHeelScale);
+    return wind;
+  }
   updateNavigationResponse(b, d, dt, blocked) {
     const nav = b.navigation;
     b.navSignalT = Math.max(0, b.navSignalT - dt);
@@ -925,7 +952,7 @@ export class Traffic {
     return this.fx.waveFn(x, z, t) + this.playerWakeAt(x, z, t) + this.wakeHeightAt(x, z, t, excludeBoat);
   }
   snapshot() {
-    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, weatherSpeedScale: b.weatherSpeedScale, wind: { leeway: b.windDrift.speed, x: b.windDrift.x, z: b.windDrift.z, divergence: b.windDivergence, heel: b.windHeel }, pursuitYield: b.pursuitYield, waterspoutAvoidance: b.spoutAvoidance, waterspoutDistance: b.spoutDistance, hornYield: b.signalYield, hornReplyIn: b.signalReplyT, fogSignalIn: b.fogHornT, navigation: b.navigation.role === NAVIGATION_ROLE.CLEAR ? null : { kind: b.navigation.kind, role: b.navigation.role, target: b.navTargetBoat ? b.navTargetBoat.profile.id : 'player', risk: b.navigation.risk, emergency: b.navigation.emergency, closestApproach: b.navigation.closestApproach, timeToClosest: b.navigation.timeToClosest, signalBlasts: b.navigation.signalBlasts }, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled, wakeComplaints: b.record.wakeComplaints, wakeReports: b.record.wakeReports, shiftWakeComplaints: b.record.wakeShiftComplaints }));
+    return this.boats.map(b => ({ id: b.profile.id, callsign: b.profile.callsign, operator: b.profile.operator, job: b.profile.job, onDuty: this.onDuty(b), shouldOperate: this.shouldOperate(b), stormLimit: b.profile.maxStorm, active: b.active, assisting: b.assisting, retiring: b.retiring, state: b.state, x: b.x, z: b.z, speed: b.speed, weatherSpeedScale: b.weatherSpeedScale, wind: { speed: b.surfaceWind.speed, leeway: b.windDrift.speed, x: b.windDrift.x, z: b.windDrift.z, divergence: b.windDivergence, heel: b.windHeel, localOutflow: b.downburstField.speed || 0 }, pursuitYield: b.pursuitYield, waterspoutAvoidance: b.spoutAvoidance, waterspoutDistance: b.spoutDistance, downburstResponse: b.downburstResponse, downburstDistance: b.downburstDistance, hornYield: b.signalYield, hornReplyIn: b.signalReplyT, fogSignalIn: b.fogHornT, navigation: b.navigation.role === NAVIGATION_ROLE.CLEAR ? null : { kind: b.navigation.kind, role: b.navigation.role, target: b.navTargetBoat ? b.navTargetBoat.profile.id : 'player', risk: b.navigation.risk, emergency: b.navigation.emergency, closestApproach: b.navigation.closestApproach, timeToClosest: b.navigation.timeToClosest, signalBlasts: b.navigation.signalBlasts }, shelter: b.shelter.active ? { kind: b.shelter.kind, key: b.shelter.key, name: b.shelter.name, x: b.shelter.x, z: b.shelter.z, heading: b.shelter.heading, distance: b.shelter.distance, arrived: b.shelter.arrived } : null, collision: b.collision.active ? { stage: b.collision.stage, impact: b.collision.impact, hold: b.collision.hold, distance: b.collision.distance } : null, shifts: b.record.shifts, passes: b.record.passes, collisions: b.record.collisions, seriousCollisions: b.record.seriousCollisions, aidedAfterCollision: b.record.aidedAfterCollision, leftDisabled: b.record.leftDisabled, wakeComplaints: b.record.wakeComplaints, wakeReports: b.record.wakeReports, shiftWakeComplaints: b.record.wakeShiftComplaints }));
   }
   // ---- anglers ----
   anglerAt(ci, cj) {
@@ -1013,11 +1040,12 @@ export class Traffic {
       const maneuverBlocked = b.collision.active || assisting || b.shelter.active;
       const pursuitYield = this.updatePursuitResponse(b, d, pf, dt, maneuverBlocked);
       const spout = this.hazards?.spout, spoutAvoidance = this.updateWaterspoutResponse(b, dt, b.collision.active || assisting || b.state === 'sheltered');
+      const downburst = this.hazards?.downburst, downburstResponse = this.updateDownburstResponse(b, dt, b.collision.active || assisting || b.state === 'sheltered');
       const signalYield = maneuverBlocked ? 0 : b.signalYield, maneuverYield = Math.max(pursuitYield, signalYield);
       const maneuverSide = pursuitYield >= signalYield ? b.pursuitYieldSide : b.signalSide;
       // Ordinary skippers apply the Inland meeting/crossing/overtaking hierarchy. Active emergencies and severe fog
       // retain priority; in restricted visibility the existing Rule 19 safe-speed and Rule 35 sound logic takes over.
-      const navigationBlocked = maneuverBlocked || pursuitYield > 0.08 || spoutAvoidance > 0.08 || P.airborne || P.wipeT > 0 || (fogRisk > 0.75 && d > 55);
+      const navigationBlocked = maneuverBlocked || pursuitYield > 0.08 || spoutAvoidance > 0.08 || downburstResponse > 0.08 || P.airborne || P.wipeT > 0 || (fogRisk > 0.75 && d > 55);
       const navigation = this.updateNavigationResponse(b, d, dt, navigationBlocked);
       const navigationActive = navigation.role !== NAVIGATION_ROLE.CLEAR;
       const navigationTargetX = b.navTargetBoat ? b.navTargetBoat.x : bx;
@@ -1052,6 +1080,7 @@ export class Traffic {
         // Prefer probes that increase separation so an off-duty boat visibly runs out of the local channel.
         if (b.retiring) sc += (dp - d) * 0.16;
         if (spoutAvoidance > 0.01 && spout?.active) sc += waterspoutProbeScore(spout.x, spout.z, spout.motionX, spout.motionZ, b.x, b.z, px2, pz2, spoutAvoidance);
+        if (downburstResponse > 0.01 && downburst?.active) sc += downburstProbeScore(downburst, b.downburstField, px2, pz2, -Math.sin(h), -Math.cos(h), b.kind, downburstResponse, this._downburstProbe);
         const trafficClear = 18 + fogRisk * 20;
         for (const o of this.boats) if (o !== b && o.active) { const dd = Math.hypot(px - o.x, pz - o.z); if (dd < trafficClear) sc -= (trafficClear - dd) * (0.4 + fogRisk * 0.22); }
         if (sc > bs) { bs = sc; best = da; }
@@ -1068,6 +1097,11 @@ export class Traffic {
       want *= hornYieldSpeedScale(signalYield, b.kind);
       if (navigationActive) want *= navigation.speedScale;
       if (spoutAvoidance > 0.01) want = Math.max(want, b.max * b.weatherSpeedScale * (b.kind === 'canoe' ? 0.38 + spoutAvoidance * 0.2 : 0.48 + spoutAvoidance * 0.3));
+      if (downburstResponse > 0.01) {
+        const cautious = b.kind === 'canoe' ? 0.45 : b.kind === 'cruiser' ? 0.62 : 0.7;
+        const steerage = b.kind === 'canoe' ? 0.16 : b.kind === 'cruiser' ? 0.28 : 0.34;
+        want = Math.max(want * (1 - downburstResponse * (1 - cautious)), b.max * b.weatherSpeedScale * steerage * downburstResponse);
+      }
       if (b.state === 'shelter-run') { const desired = Math.atan2(-(b.shelter.x - b.x), -(b.shelter.z - b.z)), alignment = 1 - Math.min(1, Math.abs(wrapAngle(desired - b.heading)) / 1.25); want *= 0.04 + alignment * 0.96; }
       const playerWake = d < 100 ? wakeSampleAt(bx, bz, P.heading, P.speed, 18, 0.2, b.x, b.z, t) : 0;
       const wakeLevel = !b.collision.active && !assisting ? wakeSeverity({ kind: b.kind, working: Boolean(b.workRig?.visible), playerSpeed: P.speed, wakeHeight: playerWake }) : 0;
@@ -1082,8 +1116,7 @@ export class Traffic {
       const fx = -Math.sin(b.heading), fz = -Math.cos(b.heading);
       const flow = this.fx.currents ? this.fx.currents.flowAt(b.x, b.z, this._flow) : null;
       const windDir = this.environment?.windDir, windSpeed = (weather?.wind || 0) * (this.environment?.gust || 1);
-      vesselLeeway(windDir, windSpeed, b.windage, b.windDivergence, b.windDrift);
-      b.windHeel = vesselWindHeel(windDir, windSpeed, b.heading, b.windHeelScale);
+      this.updateSurfaceWind(b, windDir, windSpeed);
       b.x += (fx * b.speed + (flow ? flow.x : 0) + b.windDrift.x) * dt + b.shx * dt;
       b.z += (fz * b.speed + (flow ? flow.y : 0) + b.windDrift.z) * dt + b.shz * dt;
       if (b.state === 'tow-alongside') {
