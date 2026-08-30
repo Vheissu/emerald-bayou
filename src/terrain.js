@@ -45,17 +45,20 @@ class WorkerPool {
     w.postMessage({ kind: 'init', seed: this.seed });
     w.onmessage = (e) => { const job = this.pending.get(e.data.id); if (job) { this.pending.delete(e.data.id); this.inFlight--; job.resolve(e.data); } };
     // A worker that dies (OOM, killed tab process) would otherwise strand its in-flight grids and stall
-    // streaming for the rest of the session. Replace it and re-post what it was holding; if replacements
-    // keep failing (the script itself is broken), fail the jobs instead so callers can re-queue or skip.
+    // streaming for the rest of the session - and a dead worker left in the rotation silently swallows every
+    // job later routed to it. Replace it even when it held nothing; if replacements keep failing (the script
+    // itself is broken), retire the slot and fail its jobs so callers can re-queue or skip.
     w.onerror = w.onmessageerror = (err) => {
+      if (this.workers[slot] !== w) return; // stale event from a worker this slot already replaced
       console.error('terrain worker error', err && (err.message || err.type) || err);
+      w.terminate();
       const jobs = [...this.pending.values()].filter(job => job.worker === w);
-      if (!jobs.length) return;
       if (this.respawns < 8) {
-        this.respawns++; w.terminate();
+        this.respawns++;
         const fresh = this.workers[slot] = this.spawn(slot);
         for (const job of jobs) { job.worker = fresh; fresh.postMessage(job.msg); }
       } else {
+        this.workers[slot] = null;
         for (const job of jobs) { this.pending.delete(job.msg.id); this.inFlight--; job.reject(new Error('terrain worker unavailable')); }
       }
     };
@@ -63,7 +66,9 @@ class WorkerPool {
   }
   request(msg) {
     return new Promise((resolve, reject) => {
-      const worker = this.workers[this.rr++ % this.workers.length];
+      let worker = null;
+      for (let i = 0; i < this.workers.length && !worker; i++) worker = this.workers[this.rr++ % this.workers.length];
+      if (!worker) { reject(new Error('terrain workers unavailable')); return; } // every slot retired: fail fast so callers re-queue instead of hanging
       const job = { msg: { ...msg, id: ++this.id }, resolve, reject, worker };
       this.pending.set(job.msg.id, job); this.inFlight++;
       worker.postMessage(job.msg);

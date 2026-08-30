@@ -62,9 +62,10 @@ export class WorldMap {
     if (this.inFlight >= 4) return null;
     t = { canvas: null }; this.tiles.set(key, t); this.inFlight++;
     this.T.tile(i * COARSE, j * COARSE, COARSE, COARSE_PX, 'chart').then(rgba => {
-      this.inFlight--; const c = document.createElement('canvas'); c.width = COARSE_PX; c.height = COARSE_PX;
+      const c = document.createElement('canvas'); c.width = COARSE_PX; c.height = COARSE_PX;
       c.getContext('2d').putImageData(new ImageData(rgba, COARSE_PX, COARSE_PX), 0, 0); t.canvas = c; if (this.open) this.render();
-    }).catch(() => { this.inFlight--; this.tiles.delete(key); }); // a failed tile must give its slot back or the chart stops filling in
+    }).catch(() => { this.tiles.delete(key); }) // failed tile: drop the placeholder so a later pass retries it
+      .finally(() => { this.inFlight--; }); // the slot comes back exactly once, even if the success path throws
     return null;
   }
   render() {

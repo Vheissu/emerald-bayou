@@ -37,7 +37,6 @@ export class Minimap {
     if (this.inFlight >= 3) return null;
     t = { canvas: null, used: performance.now() }; this.tiles.set(key, t); this.inFlight++;
     this.T.tile(i * TILE, j * TILE, TILE, TILE_PX).then(rgba => {
-      this.inFlight--;
       const c = document.createElement('canvas'); c.width = TILE_PX; c.height = TILE_PX;
       c.getContext('2d').putImageData(new ImageData(rgba, TILE_PX, TILE_PX), 0, 0);
       t.canvas = c;
@@ -47,7 +46,8 @@ export class Minimap {
           const [oldKey, old] = list[k]; old.canvas.width = 0; old.canvas.height = 0; this.tiles.delete(oldKey); this.tileEvictions++;
         }
       }
-    }).catch(() => { this.inFlight--; this.tiles.delete(key); }); // a failed tile must give its slot back or the radar stops filling in
+    }).catch(() => { this.tiles.delete(key); }) // failed tile: drop the placeholder so a later frame retries it
+      .finally(() => { this.inFlight--; }); // the slot comes back exactly once, even if the success path throws
     return null;
   }
   memoryStats() {
