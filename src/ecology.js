@@ -28,6 +28,17 @@ export function feedingDisturbance(input = {}, speedArg = 0, wakeArg = 0) {
   return '';
 }
 
+export function trafficFeedingDisturbance(boats = [], x = 0, z = 0, wake = 0) {
+  let distance = Infinity, speed = 0;
+  for (let i = 0; i < boats.length; i++) {
+    const boat = boats[i]; if (!boat?.active || boat.collision?.active || boat.state === 'sheltered') continue;
+    const d = Math.hypot(boat.x - x, boat.z - z);
+    if (d < distance) { distance = d; speed = boat.speed; }
+  }
+  const reason = feedingDisturbance(distance, speed, wake);
+  return reason ? `traffic-${reason}` : '';
+}
+
 export function bioluminescenceContrast(moonlight = 0) {
   return 1 - smooth(0.04, 0.9, clamp(Number(moonlight) || 0)) * 0.44;
 }
@@ -41,9 +52,10 @@ export class Ecology {
     this.visibilityT = 0; this.frogT = 8 + Math.random() * 10;
     this.residentRoutineInput = { role: 'camp', seed: 0.5, day: 1, hour: 12, storm: 0, rain: 0, wind: 0, distance: Infinity, playerSpeed: 0, attention: 0, pursuit: false };
     this.residentRoutineStats = { groups: 0, actors: 0, inside: 0, outside: 0, watching: 0, bracing: 0, passes: 0 };
+    this.trafficWildlifeT = 0; this.trafficWildlifeStats = { passes: 0, boats: 0, manateeAlerts: 0, waderFlushes: 0, gatorSlides: 0, gatorDives: 0 };
     this.bio = 0; this.bioPotential = 0; this.bioContrast = 1; this.bioOverride = null; this.radio = null;
     this.nature = this.game ? (this.game.save.nature ||= {}) : {};
-    this.feeding = { active: false, state: 'idle', x: 0, z: 0, age: 0, duration: 0, boilT: 0, safetyT: 0, seen: false, observed: false, quietT: 0, scatterT: 0, reason: '', potential: 0, intensity: 1, scatter: 0 };
+    this.feeding = { active: false, state: 'idle', x: 0, z: 0, age: 0, duration: 0, boilT: 0, safetyT: 0, trafficT: 0, seen: false, observed: false, quietT: 0, scatterT: 0, reason: '', potential: 0, intensity: 1, scatter: 0 };
     this.feedingCooldown = 48 + Math.random() * 58; this._feedingFlow = new THREE.Vector2();
     this.applyBioluminescence();
   }
@@ -121,7 +133,7 @@ export class Ecology {
     const at = this.feedingSpot(nearby); if (!at) { this.feedingCooldown = Math.max(this.feedingCooldown, 18); return false; }
     const F = this.feeding;
     F.active = true; F.state = 'feeding'; F.x = at.x; F.z = at.z; F.age = 0; F.duration = 42 + Math.random() * 34;
-    F.boilT = 0; F.safetyT = 0; F.seen = false; F.observed = false; F.quietT = 0; F.scatterT = 0; F.reason = ''; F.intensity = 1; F.scatter = 0;
+    F.boilT = 0; F.safetyT = 0; F.trafficT = 0; F.seen = false; F.observed = false; F.quietT = 0; F.scatterT = 0; F.reason = ''; F.intensity = 1; F.scatter = 0;
     this.birds?.setFeedingActivity(F);
     return true;
   }
@@ -131,6 +143,8 @@ export class Ecology {
     F.state = 'scatter'; F.scatterT = 0; F.reason = reason;
     if (reason === 'prop-wash') this.game.toast('Bait blown out', 'Prop wash sent the mullet down.', 2.7);
     else if (reason === 'wake') this.game.toast('Wake reached the school', 'The birds lifted and the bait went deep.', 2.7);
+    else if (reason === 'traffic-prop-wash') this.game.toast('Another boat blew the bait out', 'Its prop wash sent the mullet down.', 2.7);
+    else if (reason === 'traffic-wake') this.game.toast('Another wake reached the school', 'The birds lifted before you got there.', 2.7);
   }
 
   endFeeding() {
@@ -158,7 +172,12 @@ export class Ecology {
     }
     const distance = Math.hypot(F.x - P.pos.x, F.z - P.pos.y);
     if (F.state === 'feeding') {
-      const wake = this.life.traffic.playerWakeAt(F.x, F.z, t), reason = feedingDisturbance(distance, P.speed, wake);
+      const traffic = this.life.traffic, wake = traffic.playerWakeAt(F.x, F.z, t); let reason = feedingDisturbance(distance, P.speed, wake);
+      F.trafficT -= dt;
+      if (!reason && F.trafficT <= 0) {
+        F.trafficT = Math.max(0.04, F.trafficT + 0.2);
+        reason = trafficFeedingDisturbance(traffic.boats, F.x, F.z, traffic.wakeHeightAt(F.x, F.z, t));
+      }
       if (reason) this.scatterFeeding(reason);
       else if (this.environment.values.storm > 0.68 || this.environment.values.wind > 16) this.scatterFeeding();
       else if (F.age >= F.duration) this.scatterFeeding();
@@ -220,6 +239,34 @@ export class Ecology {
 
   residentRoutineSnapshot() { return { ...this.residentRoutineStats }; }
 
+  updateTrafficWildlife(dt) {
+    this.trafficWildlifeT -= dt; if (this.trafficWildlifeT > 0) return this.trafficWildlifeStats;
+    this.trafficWildlifeT = Math.max(0.04, this.trafficWildlifeT + 0.2);
+    const stats = this.trafficWildlifeStats, boats = this.life?.traffic?.boats || [];
+    stats.passes++; stats.boats = 0;
+    for (let i = 0; i < boats.length; i++) {
+      const boat = boats[i];
+      if (!boat?.active || boat.collision?.active || boat.assisting || boat.state === 'sheltered' || boat.speed < 0.8) continue;
+      stats.boats++;
+      if (boat.speed > 1.9) stats.waderFlushes += this.waders?.flushNear?.(boat.x, boat.z, Math.min(34, 14 + boat.speed * 2), 'traffic') || 0;
+      if (boat.speed > 1.2 && this.gators?.disturbByBoat) {
+        const disturbed = this.gators.disturbByBoat(boat.x, boat.z, boat.speed, 'traffic');
+        stats.gatorSlides += disturbed.slides; stats.gatorDives += disturbed.dives;
+      }
+      if (!this.manatees?.list) continue;
+      const reach = boat.kind === 'canoe' ? 18 : 34 + Math.min(12, boat.speed * 1.4);
+      for (let j = 0; j < this.manatees.list.length; j++) {
+        const m = this.manatees.list[j]; if (!m?.pos || m.held || m.trafficAlertT > 0) continue;
+        const d = Math.hypot(m.pos.x - boat.x, m.pos.z - boat.z);
+        if (d >= reach || (boat.speed <= (boat.kind === 'canoe' ? 1.05 : 1.35) && d >= 10)) continue;
+        this.manatees.alert(m, boat.x, boat.z, Math.min(1.45, 0.45 + boat.speed / 10)); m.trafficAlertT = 5; stats.manateeAlerts++;
+      }
+    }
+    return stats;
+  }
+
+  trafficWildlifeSnapshot() { return { ...this.trafficWildlifeStats }; }
+
   update(dt, t, enabled = true) {
     if (!enabled) return;
     const E = this.environment, V = E.values, h = E.hour;
@@ -247,6 +294,7 @@ export class Ecology {
     this.waders.activity = clamp(this.bird * 0.9 + 0.05);
     this.manatees.surfaceActivity = this.surface;
     this.gators.activity = this.gator;
+    this.updateTrafficWildlife(dt);
     const feedingPotential = feedingEventPotential(h, V.wind * this.environment.gust, V.rain, V.storm, this.environment.tideRate, this.fish, this.bird);
     this.updateFeeding(dt, t, feedingPotential);
 

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createNavigationEncounter } from '../src/navigationrules.js';
+import { createManateeAvoidance } from '../src/wildlifetraffic.js';
 
 const previousDocument = globalThis.document;
 globalThis.document = {
@@ -58,4 +59,25 @@ test('a resident hull rides the retained wake field from another traffic boat wi
   assert.ok(Math.abs(peerWake) > 0.02);
   assert.equal(traffic.surfaceHeightAt(receiver.x, receiver.z, 0, receiver), 0.4 + peerWake);
   assert.equal(traffic.wakeHeightAt(receiver.x, receiver.z, 0, source), 0);
+});
+
+test('the live traffic appraiser retains a visible manatee crossing and eases the hull down after recognition', () => {
+  const own = boat('marsh-ice');
+  Object.assign(own, {
+    shelterSlot: 0, wildlifeAvoidance: 0, wildlifeDistance: Infinity, wildlifeClosest: Infinity,
+    wildlifeNoticeT: 0, wildlifeReactionDelay: 0.4, wildlifeReacted: false, wildlifeEvalT: 0,
+    wildlifeTarget: null, wildlifePlan: createManateeAvoidance(),
+  });
+  const traffic = trafficWith([own]);
+  traffic.environment = { restrictedVisibility: 0, night: 0, values: { storm: 0 } };
+  traffic.wildlife = { manatees: { list: [{
+    pos: { x: 6, z: -48 }, heading: Math.PI / 2, speed: 0.8, surfaced: true, zoneT: 8,
+    held: false, mesh: { visible: true },
+  }] } };
+  traffic._wildlifeInput = {}; traffic._wildlifeCandidate = createManateeAvoidance(); traffic.wildlifeCallT = 0; traffic.radio = null;
+
+  traffic.updateWildlifeResponse(own, 0.2, false);
+  assert.equal(own.wildlifePlan.active, true); assert.equal(own.wildlifeAvoidance, 0);
+  traffic.updateWildlifeResponse(own, 0.2, false);
+  assert.ok(own.wildlifeAvoidance > 0.1); assert.ok(own.wildlifeClosest < 15.24); assert.equal(own.wildlifeReacted, true);
 });

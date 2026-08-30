@@ -234,13 +234,14 @@ async function init() {
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
   const life = new Life({ terrain, scene, water, camera, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
+  life.traffic.setWildlife({ manatees, gators, waders });
   const playerWater = (x, z, t) => water.waveHeight(x, z, t) + life.traffic.wakeHeightAt(x, z, t);
-  world.fx = { plume, spray, audio, fish: life.fish, playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) }; world.onShot = (x, z) => { waders.flushNear && waders.flushNear(x, z, 140); };
+  world.fx = { plume, spray, audio, fish: life.fish, playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) }; world.onShot = (x, z) => { waders.flushNear(x, z, 140, 'gunshot'); };
   birds.audio = audio; gators.audio = audio;
   gators.onCharge = (g) => game.gatorCharge(g);
-  gators.onSlide = (g, d) => { game.bounties.event('spook', 1); };
+  gators.onSlide = (g, d, source = 'player') => { if (source === 'player') game.bounties.event('spook', 1); };
   gators.onSplash = (x, z, sc) => { for (let i = 0; i < 14; i++) plume.emit(x + jitter() * 1.2, 0.1, z + jitter() * 1.2, jitter() * 2, 0.8 + Math.random() * 1.8, jitter() * 2, 0.2 + Math.random() * 0.25, 1.0, 0.6 + Math.random() * 0.4, 0.3); for (let i = 0; i < 40; i++) spray.emit(x + jitter() * 1.2, 0.05, z + jitter() * 1.2, jitter() * 3, 1 + Math.random() * 2.5, jitter() * 3, 0.015 + Math.random() * 0.03, 0.4 + Math.random() * 0.4, 0.6); audio.splash(0.5 * sc); };
-  waders.onFlush = (w, d) => { game.bounties.event('flush', 1); if (Math.random() < 0.5) audio.squawk(0.25 * Math.max(0, 1 - d / 40), w.x, w.z); };
+  waders.onFlush = (w, d, source = 'player') => { if (source === 'player') game.bounties.event('flush', 1); if (Math.random() < 0.5) audio.squawk(0.25 * Math.max(0, 1 - d / 40), w.x, w.z); };
   const environment = new Environment({ scene, fxScene, camera, terrain, world, water, sky, sun, hemi, pipeline, wind, boat: boat.group, audio, game, phys, sunDir: SUN_DIR, effectBudget: startup.effectBudget, profile: renderProfile });
   life.traffic.environment = environment; environment.traffic = life.traffic;
   const currents = new CurrentField({ fxScene, terrain, water, environment, phys, game });
@@ -445,6 +446,43 @@ async function init() {
         gator.bask = false; gator.dive = 0; gator.charge = 0; gator.hitT = 0; gator.preyCooldown = 0; gator.mesh.visible = true;
         fishing.attractAlligator(1);
       }
+    }
+    if (import.meta.env.DEV && e.code === 'KeyU' && e.altKey && e.shiftKey && !e.repeat) {
+      e.preventDefault();
+      const traffic = life.traffic, resident = traffic.boats.find(b => b.kind === 'john') || traffic.boats[0], animal = manatees.list[0];
+      let staged = null;
+      for (let i = 0; i < 12 && !staged; i++) {
+        const heading = phys.heading + (i % 2 ? -1 : 1) * Math.ceil(i / 2) * Math.PI / 6;
+        const fx = -Math.sin(heading), fz = -Math.cos(heading), rx = Math.cos(heading), rz = -Math.sin(heading);
+        const bx = phys.pos.x + fx * 34 + rx * 24, bz = phys.pos.y + fz * 34 + rz * 24;
+        const mx = bx + fx * 44 + rx * 6, mz = bz + fz * 44 + rz * 6;
+        let clear = terrain.heightAt(bx, bz) < -0.72 && terrain.heightAt(mx, mz) < -0.9 && !world.blockedAt(bx, bz) && !world.blockedAt(mx, mz);
+        for (let step = 1; step < 5 && clear; step++) {
+          const amount = step / 5, x = bx + (mx - bx) * amount, z = bz + (mz - bz) * amount;
+          if (terrain.heightAt(x, z) > -0.62 || world.blockedAt(x, z)) clear = false;
+        }
+        if (clear) staged = { heading, bx, bz, mx, mz };
+      }
+      if (resident && animal && staged) {
+        for (const b of traffic.boats) traffic.retire(b, 90);
+        traffic.clearShelter(resident); resident.active = true; resident.retiring = false; resident.assisting = false; resident.collision.active = false;
+        resident.x = staged.bx; resident.z = staged.bz; resident.heading = staged.heading; resident.speed = Math.min(8, resident.max * 0.9); resident.turn = 0; resident.ground = 0; resident.mesh.visible = true;
+        traffic.beginLeg(resident, true); resident.routeBias = 0; resident.wildlifeEvalT = 0; resident.wildlifeReactionDelay = 0.45;
+        animal.pos.set(staged.mx, environment.waterLevel - 0.42, staged.mz); animal.heading = staged.heading + Math.PI / 2; animal.speed = 0.8;
+        animal.avoidT = 0; animal.diveT = 0; animal.diveBlend = 0; animal.zoneT = 12; animal.trafficAlertT = 0; animal.surfaced = true; animal.held = false; animal.mesh.visible = true;
+      }
+      const result = { staged: Boolean(staged && resident && animal), boat: resident?.profile?.id || '', distance: staged ? Math.hypot(staged.mx - staged.bx, staged.mz - staged.bz) : null };
+      const report = label => {
+        if (result.staged) result[label] = {
+          avoidance: Number(resident.wildlifeAvoidance.toFixed(3)), speed: Number(resident.speed.toFixed(3)),
+          closestApproach: Number.isFinite(resident.wildlifeClosest) ? Number(resident.wildlifeClosest.toFixed(3)) : null,
+          courseChange: Number(Math.abs(Math.atan2(Math.sin(resident.heading - staged.heading), Math.cos(resident.heading - staged.heading))).toFixed(3)),
+          animalDive: Number(animal.diveBlend.toFixed(3)), ecology: { ...ecology.trafficWildlifeStats },
+        };
+        document.documentElement.dataset.emeraldWildlifeTraffic = JSON.stringify(result);
+        console.info('[emerald-wildlife-traffic]', JSON.stringify(result));
+      };
+      report('start'); if (result.staged) { window.setTimeout(() => report('after1500'), 1500); window.setTimeout(() => report('after4500'), 4500); }
     }
     if (started && e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
   });

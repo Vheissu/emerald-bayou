@@ -172,6 +172,22 @@ export class Waders {
       this.list.push({ mesh, x: spot.x, z: spot.z, y: mesh.position.y, fly: 0, vx: 0, vz: 0, vy: 0, ph: this.rand() * 6 });
     }
   }
+  flush(w, bx, bz, distance, source = 'ambient') {
+    if (!w || w.fly > 0 || w.mesh?.visible === false) return false;
+    const d = Math.max(0, Number(distance) || 0), ax = (w.x - bx) / (d || 1), az = (w.z - bz) / (d || 1);
+    const side = this.rand() < 0.5 ? -1 : 1;
+    w.vx = (ax * 0.8 - az * 0.4 * side) * 7; w.vz = (az * 0.8 + ax * 0.4 * side) * 7; w.vy = 2.2;
+    w.fly = 5 + this.rand() * 3; w.mesh.rotation.y = Math.atan2(-w.vx, -w.vz);
+    if (this.onFlush) this.onFlush(w, d, source);
+    return true;
+  }
+  flushNear(x, z, radius = 24, source = 'ambient') {
+    const reach = Math.max(0, Number(radius) || 0); let count = 0;
+    for (const w of this.list) {
+      const d = Math.hypot(w.x - x, w.z - z); if (d <= reach && this.flush(w, x, z, d, source)) count++;
+    }
+    return count;
+  }
   update(dt, t, bx, bz, bs) {
     for (let wi = 0; wi < this.list.length; wi++) {
       const w = this.list[wi]; w.mesh.visible = wi < this.list.length * this.activity;
@@ -183,13 +199,7 @@ export class Waders {
           if (spot) { w.x = spot.x; w.z = spot.z; w.y = Math.max(spot.h, -0.1) + 0.02; w.mesh.position.set(w.x, w.y, w.z); }
           continue;
         }
-        if (d < 22 && bs > 3) { // flush
-          const ax = (w.x - bx) / (d || 1), az = (w.z - bz) / (d || 1);
-          const side = this.rand() < 0.5 ? -1 : 1;
-          w.vx = (ax * 0.8 - az * 0.4 * side) * 7; w.vz = (az * 0.8 + ax * 0.4 * side) * 7; w.vy = 2.2; w.fly = 5 + this.rand() * 3;
-          w.mesh.rotation.y = Math.atan2(-w.vx, -w.vz);
-          if (this.onFlush) this.onFlush(w, d);
-        }
+        if (d < 22 && bs > 3) this.flush(w, bx, bz, d, 'player');
         w.mesh.rotation.z = Math.sin(t * 0.8 + w.ph) * 0.02;
         continue;
       }
@@ -261,7 +271,7 @@ export class Manatees {
       this.list.push({
         mesh: m, pos: new THREE.Vector3(x, -0.7, z), heading: r() * Math.PI * 2, escapeHeading: 0,
         t: r() * 50, speed, cruiseSpeed: speed, ph: r() * 6, zoneKey: `manatee:${i}`,
-        avoidT: 0, diveT: 0, diveBlend: 0, zoneT: 0, strikeT: 0, nearMissT: 0, surfaced: false,
+        avoidT: 0, diveT: 0, diveBlend: 0, zoneT: 0, strikeT: 0, nearMissT: 0, trafficAlertT: 0, surfaced: false,
       });
     }
   }
@@ -277,7 +287,7 @@ export class Manatees {
     if (!this.rand) this.rand = mulberry32(77);
     for (const m of this.list) {
       m.avoidT = Math.max(0, m.avoidT - dt); m.diveT = Math.max(0, m.diveT - dt);
-      m.zoneT = Math.max(0, m.zoneT - dt); m.strikeT = Math.max(0, m.strikeT - dt); m.nearMissT = Math.max(0, m.nearMissT - dt);
+      m.zoneT = Math.max(0, m.zoneT - dt); m.strikeT = Math.max(0, m.strikeT - dt); m.nearMissT = Math.max(0, m.nearMissT - dt); m.trafficAlertT = Math.max(0, (m.trafficAlertT || 0) - dt);
       if (!m.held && Math.hypot(m.pos.x - bx, m.pos.z - bz) > 700) {
         const spot = findNear(this.T, this.rand, bx, bz, 180, 450, -6, -2.4);
         if (spot) {
@@ -450,8 +460,9 @@ export class Gators {
       g.pos.set(x, g.float, z); this.list.push(g);
     }
     this.eyeshinePool = new GatorEyeshinePool(count); this.eyeshine = this.eyeshinePool.mesh;
-    this.calm = false; this.onCharge = null; this.onSlide = null; this.audio = null; this.spooked = 0; this.activity = 1;
+    this.rand = mulberry32(91); this.calm = false; this.onCharge = null; this.onSlide = null; this.audio = null; this.spooked = 0; this.activity = 1;
     this.wakeBoatX = 0; this.wakeBoatZ = 0; this.wakeActive = 0;
+    this.disturbanceStats = { slides: 0, dives: 0 };
   }
   // scare(x, z, radius): gators inside the radius slip under for a while
   scare(x, z, radius = 24) {
@@ -459,6 +470,27 @@ export class Gators {
       g.dive = 6 + Math.random() * 4;
       g.wakeKick = Math.max(Number(g.wakeKick) || 0, 0.85);
     }
+  }
+  beginSlide(g, distance, source = 'ambient') {
+    if (!g?.bask || g.slide > 0 || g.towed || g.parked || g.preySource || g.charge > 0 || g.hitT > 0) return false;
+    g.slide = 3.5; g.heading = g.toWater; this.spooked++;
+    if (this.audio) this.audio.hiss(0.4 * Math.max(0, 1 - distance / 50), g.pos.x, g.pos.z);
+    if (this.onSlide) this.onSlide(g, distance, source);
+    return true;
+  }
+  disturbByBoat(x, z, speed = 0, source = 'ambient') {
+    const stats = this.disturbanceStats; stats.slides = 0; stats.dives = 0;
+    const vesselSpeed = Math.max(0, Number(speed) || 0);
+    for (const g of this.list) {
+      if (!g?.pos || g.mesh?.visible === false || g.towed || g.parked || g.preySource || g.charge > 0 || g.hitT > 0) continue;
+      const d = Math.hypot(g.pos.x - x, g.pos.z - z);
+      if (g.bask) {
+        if (((d < 32 && vesselSpeed > 2) || d < 12) && this.beginSlide(g, d, source)) stats.slides++;
+      } else if (g.dive <= 0 && d < 22 && vesselSpeed > 4.5) {
+        g.dive = 7 + this.rand() * 4; g.wakeKick = Math.max(Number(g.wakeKick) || 0, 0.85); stats.dives++;
+      }
+    }
+    return stats;
   }
   releaseHookedFish(source = null) {
     for (const g of this.list) {
@@ -509,7 +541,7 @@ export class Gators {
         g.surfaced = false;
         if (g.slide <= 0) {
           g.mesh.position.copy(g.pos); g.mesh.rotation.set(0, g.heading, 0);
-          if ((dB < 32 && boatSpeed > 2) || dB < 12) { g.slide = 3.5; g.heading = g.toWater; this.spooked++; if (this.audio) this.audio.hiss(0.4 * Math.max(0, 1 - dB / 50), g.pos.x, g.pos.z); if (this.onSlide) this.onSlide(g, dB); }
+          if ((dB < 32 && boatSpeed > 2) || dB < 12) this.beginSlide(g, dB, 'player');
           continue;
         }
         g.slide -= dt;

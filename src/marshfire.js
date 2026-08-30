@@ -271,7 +271,7 @@ export class MarshFireDirector {
     });
     this.stats.ignitions++;
     if (patch.source === 'ember') this.stats.spotFires++;
-    this.waders?.flushNear?.(x, z, 180);
+    this.waders?.flushNear?.(x, z, 180, 'marsh-fire');
     const feeding = this.ecology?.feeding;
     if (feeding?.active && Math.hypot(feeding.x - x, feeding.z - z) < 220) this.ecology.scatterFeeding?.('fire');
     if (announce) this.announceIgnition(patch);

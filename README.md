@@ -77,6 +77,10 @@ That whole gathering borrows three skiffs, four people and the alligator already
 
 The seven resident crews keep their own schedules, jobs and operator records. They run for shelter when the weather exceeds what their boat can carry, complain about wake over working gear and remember collisions. FWC 27 can break from patrol to answer an emergency tow call when there is a safe approach.
 
+Those crews also watch for manatee backs and footprints. Five times a second, each skipper projects the closest approach over the next seven seconds, waits a human beat, then comes off plane and turns into the safer water. Darkness, fog and hard weather shorten the distance at which a crew notices the animal. The behaviour follows [FWC boating guidance](https://myfwc.com/education/wildlife/manatee/for-boaters/): stay at least 50 ft away, slow down and watch for footprints, backs, snouts and tails.
+
+Resident wakes affect the rest of the swamp too. Prop wash can blow a bait school down before the player reaches it, passing hulls flush waders, nearby manatees dive, and gators leave a bank or slip under. These ambient reactions do not pay player bounties. The pass reuses the seven boats, four manatees, sixteen waders and eighteen gators already in memory, with one retained avoidance record per boat and no new render resource. [Everglades boating rules](https://www.nps.gov/ever/planyourvisit/boatingrulesregs.htm) prohibit harassing wildlife.
+
 Surface patrols cannot see through islands. During a chase they check the waterline five times a second; an emergent bank or mangrove point breaks their view, sends them to the last reported position and changes the wanted display to FWC searching. Another patrol boat with a clear angle, or Air 2 overhead, can keep the hull identified. The check keeps one small state record and uses bounded terrain samples, with no new scene or GPU resources.
 
 At four wanted stars, Shallow Water 4 reads the player's current course, checks a predicted intercept for depth and obstructions, then runs ahead and turns broadside. The point stays fixed, so an early turn beats the roadblock. Hold course and its hull becomes a real collision obstacle while FWC 27 and Marine 12 keep pressing and ramming. The tactic uses the third pooled patrol boat and adds no scene resources.
@@ -182,8 +186,10 @@ src/
   discoveries.js   tide, time and region-driven field observations
   navigationaids.js seeded channel markers, light failures and reports
   fishing.js       boat-bound fishing, habitat, line tension and catch log
+  ecology.js       weather, time and traffic-driven world behaviour
   nocturnal.js     seeded bank fireflies and night disturbance response
   wildlife.js      birds, fish, gators and spotlight eyeshine
+  wildlifetraffic.js retained manatee closest-approach and safe-speed rules
   wrangler.js      nuisance-gator station keeping and wake-risk rules
   encounters.js    rescues, patrols, races, contraband and wildlife calls
   law.js           wanted attention and pursuit state
@@ -214,6 +220,7 @@ __dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fi
 __dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspection
 __dbg.nocturnal.resourceStats()           // point count, draw count and geometry bytes
 __dbg.gators.resourceStats()               // 18 animals and the fixed 36-eye instanced pool
+Alt+Shift+U                                // stage one resident-boat/manatee crossing in development
 __dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
 __dbg.environment.settlementPowerSnapshot() // five-light pool, live grid stress and saved strike outages
 __dbg.environment.spotlightVolumeSnapshot() // one weather-scaled beam mesh and its fixed geometry budget

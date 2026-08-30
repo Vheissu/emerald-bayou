@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { bioluminescenceContrast, feedingDisturbance, feedingEventPotential } from '../src/ecology.js';
+import { bioluminescenceContrast, feedingDisturbance, feedingEventPotential, trafficFeedingDisturbance } from '../src/ecology.js';
 import { Birds } from '../src/wildlife.js';
 
 test('feeding activity follows light, moving tide and safe weather', () => {
@@ -26,6 +26,17 @@ test('only prop wash or a consequential wake scatters a feeding school', () => {
   assert.equal(feedingDisturbance({ distance: 34, speed: 2, wake: 0.08 }), 'wake');
   assert.equal(feedingDisturbance({ distance: 34, speed: 2, wake: 0.03 }), '');
   assert.equal(feedingDisturbance({ distance: 70, speed: 12, wake: 0.2 }), '');
+});
+
+test('resident traffic can scatter bait without attributing its wake to the player', () => {
+  const boats = [
+    { active: true, x: 18, z: 0, speed: 6, state: 'transit', collision: { active: false } },
+    { active: false, x: 2, z: 0, speed: 12, state: 'off', collision: { active: false } },
+  ];
+  assert.equal(trafficFeedingDisturbance(boats, 0, 0, 0), 'traffic-prop-wash');
+  boats[0].x = 34; boats[0].speed = 2;
+  assert.equal(trafficFeedingDisturbance(boats, 0, 0, 0.08), 'traffic-wake');
+  assert.equal(trafficFeedingDisturbance(boats, 0, 0, 0.02), '');
 });
 
 test('moonlight changes perceived blue-fire contrast without erasing the bloom', () => {
