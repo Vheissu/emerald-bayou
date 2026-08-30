@@ -55,7 +55,9 @@ export function gpuQualityCeiling(rendererName = '') {
   if (geforce) {
     const model = Number(geforce[2]);
     if (geforce[1] === 'gt' || model <= 750) return 1;
-    if (model <= 1050) return 2;
+    // Pascal GTX 1060-1080 cards are now decade-old hardware. Balanced is the safe first frame budget; Auto can
+    // still promote one after four clean windows instead of making the title prove itself with Cinematic work.
+    if (model <= 1080) return 2;
   }
   if (/radeon\s+hd\s+\d|firepro\s+[dmvw]\d/.test(name)) return 1;
   if (/radeon\s+(?:r[579]|pro\s+[45]\d\d)\b/.test(name)) return 2;

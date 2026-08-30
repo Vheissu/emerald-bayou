@@ -5,17 +5,19 @@ import * as THREE from 'three';
 import { OPTIONAL_MODEL_NAMES, startupPlan, startupTerrainReady } from '../src/startup.js';
 import { compareTerrainBuildPriority, normalizeTerrainStreamOptions, shouldPreemptTerrainBuild, Terrain } from '../src/terrain.js';
 
-test('cinematic hardware keeps the complete shader and model warm-up', () => {
+test('cinematic hardware warms shaders without blocking the title on authored models', () => {
   const plan = startupPlan('cinematic');
   assert.equal(plan.warmShaders, true);
-  assert.deepEqual(plan.blockingModels, ['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a', 'driver']);
-  assert.equal(plan.terrainReadiness, 'settled');
-  assert.equal(plan.maxWaitMs, 20000);
-  assert.equal(plan.compileDelayMs, 250);
-  assert.equal(plan.deferOptionalModels, false);
-  assert.equal(plan.modelConcurrency, 4);
-  assert.equal(plan.modelPressureMaxWaitMs, 0);
-  assert.equal(plan.solidGrass, 'blocking');
+  assert.deepEqual(plan.blockingModels, []);
+  assert.equal(plan.terrainReadiness, 'local');
+  assert.equal(plan.maxWaitMs, 6000);
+  assert.equal(plan.compileDelayMs, 0);
+  assert.equal(plan.deferOptionalModels, true);
+  assert.equal(plan.releaseModelsAtTitle, true);
+  assert.equal(plan.titleModelReleaseDelayMs, 1200);
+  assert.equal(plan.modelConcurrency, 2);
+  assert.equal(plan.modelPressureMaxWaitMs, 6000);
+  assert.equal(plan.solidGrass, 'deferred');
   assert.deepEqual(plan.disabledModels, []);
 });
 
@@ -28,6 +30,7 @@ test('older-hardware profiles do not block on optional models or the full shader
     assert.ok(plan.maxWaitMs >= 3000 && plan.maxWaitMs <= 6000);
     assert.equal(plan.compileDelayMs, 0);
     assert.equal(plan.deferOptionalModels, true);
+    assert.equal(plan.releaseModelsAtTitle, false);
     assert.ok(plan.modelConcurrency >= 1 && plan.modelConcurrency <= 2);
     assert.ok(plan.modelReleaseDelayMs >= 700);
     assert.ok(plan.modelBatchDelayMs >= 0);
@@ -46,6 +49,7 @@ test('older-hardware profiles do not block on optional models or the full shader
   assert.equal(fallback.disabledModels.length, 10);
   assert.deepEqual([fallback.solidGrass, performance.solidGrass, balanced.solidGrass], ['off', 'off', 'deferred']);
   assert.deepEqual([fallback.modelPressureMaxWaitMs, performance.modelPressureMaxWaitMs, balanced.modelPressureMaxWaitMs], [12000, 8000, 6000]);
+  assert.deepEqual(['fallback', 'performance', 'balanced', 'cinematic'].map(id => startupPlan(id).blockingModels), [[], [], [], []]);
 });
 
 test('older-hardware profiles allocate smaller bounded weather and spray pools', () => {
@@ -105,6 +109,13 @@ test('terrain workers are primed before the synchronous environment convolution'
   const captureAt = source.indexOf("environmentReflections.capture(initialReflectionState, 'initial'");
   assert.ok(primeAt >= 0 && captureAt >= 0 && primeAt < captureAt);
   assert.ok(managerSource.includes('generator.fromScene('));
+});
+
+test('cinematic model upgrades start behind the title without retaining the disposed warm-up tree', () => {
+  const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.ok(source.includes('if (startup.releaseModelsAtTitle) scheduleDeferredModels(startup.titleModelReleaseDelayMs)'));
+  assert.ok(source.includes('scheduleDeferredModels(startup.modelReleaseDelayMs, true)'));
+  assert.ok(source.includes('if (!startup.deferOptionalModels) for (const [k, name]'));
 });
 
 test('local startup only opens on terrain that is actually visible under the dock', () => {

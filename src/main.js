@@ -481,6 +481,19 @@ async function init() {
   const startEl = document.getElementById('start');
   const titlePrimary = document.getElementById('titlePrimary');
   const titleNew = document.getElementById('titleNew');
+  let deferredModelReleaseTimer = 0, deferredModelsStarted = false;
+  const scheduleDeferredModels = (delayMs = 0, reschedule = false) => {
+    if (!startup.deferOptionalModels || deferredModelsStarted) return false;
+    if (deferredModelReleaseTimer) {
+      if (!reschedule) return false;
+      window.clearTimeout(deferredModelReleaseTimer);
+    }
+    deferredModelReleaseTimer = window.setTimeout(() => {
+      deferredModelReleaseTimer = 0; deferredModelsStarted = true;
+      void releaseDeferredModels();
+    }, Math.max(0, Number(delayMs) || 0));
+    return true;
+  };
   const cashLabel = value => '$' + Math.round(value).toLocaleString('en-US');
   const renderTitle = () => {
     const progress = game.hasProgress(), region = regionAt(phys.pos.x, phys.pos.y), resetArmed = game.newGameArmed();
@@ -506,7 +519,7 @@ async function init() {
   const beginGame = (jobs = false) => {
     audio.start(); started = true; game.playing = true; game.paused = false;
     startEl.classList.add('hidden'); startEl.setAttribute('aria-hidden', 'true');
-    window.setTimeout(() => releaseDeferredModels(), startup.modelReleaseDelayMs);
+    scheduleDeferredModels(startup.modelReleaseDelayMs, true);
     if (jobs) game.openMenu('jobs');
   };
   const showTitle = (persist = true) => {
@@ -516,6 +529,7 @@ async function init() {
     for (const key in keys) keys[key] = false;
     if (persist) game.persist();
     renderTitle(); startEl.classList.remove('hidden'); startEl.setAttribute('aria-hidden', 'false');
+    if (startup.releaseModelsAtTitle) scheduleDeferredModels(startup.titleModelReleaseDelayMs);
     requestAnimationFrame(() => titlePrimary.focus({ preventScroll: true }));
   };
   game.getQualityLabel = () => qualityPreferenceLabel(qualityPreference, renderProfile.id);
@@ -921,7 +935,9 @@ async function init() {
       }
       for (let k = 0; k < 6; k++) life.fish.launch(startX + k, startZ - 6, 3, 0, 0, 1, 0, true);
       { const pr = mulberry32(11); let k = 0; for (const pose of ['stand', 'sit', 'sitEdge', 'crouch']) { const pp = person(pr, { pose, rod: k % 2 === 0, gun: k === 3 }); pp.position.set(startX - 8 + k * 2, 0.4, startZ - 6); warm.add(pp); k++; } const cn = canoe(pr); cn.position.set(startX + 6, 0, startZ - 8); warm.add(cn); }
-      for (const [k, name] of ['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat'].entries()) { const m = spawn(name); m.position.set(startX - 10 + k * 5, 0.3, startZ - 16); warm.add(m); }
+      // Deferred model callbacks belong only to live stand-ins. Attaching one to this soon-disposed warm-up tree
+      // would retain the detached group until the late model request completed.
+      if (!startup.deferOptionalModels) for (const [k, name] of ['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat'].entries()) { const m = spawn(name); m.position.set(startX - 10 + k * 5, 0.3, startZ - 16); warm.add(m); }
     }
     warm.scale.setScalar(0.004); warm.position.set(startX, 0.3, startZ - 6);
     scene.add(warm); skiff.mesh.visible = true; skiff.mesh.position.set(startX, 0, startZ - 12);
