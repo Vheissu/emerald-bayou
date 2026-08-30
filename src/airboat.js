@@ -405,8 +405,8 @@ function seatedDriverSpring(state, valueKey, velocityKey, target, stiffness, dam
   state[valueKey] = poseClamp(state[valueKey] + state[velocityKey] * dt, -limit, limit);
 }
 
-// One retained state object and one retained target record are reused for the life of the player model. NPC drivers
-// stay static, so ambient traffic pays no pose update cost at all.
+// One retained state object and one retained target record are reused for the life of each animated driver. Callers
+// apply animation LOD before invoking this for ambient operators, so distant traffic pays no pose update cost.
 export function updateSeatedDriverPose(driver, physics = {}, dt = 0, time = 0) {
   if (!driver) return null;
   const step = poseClamp(poseNumber(dt), 0, 0.05);

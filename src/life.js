@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './noise.js';
 import { buildModelBoatFallback, buildSkiff } from './npc.js';
-import { buildAirboat, installDriver } from './airboat.js';
+import { buildAirboat, installDriver, updateSeatedDriverPose } from './airboat.js';
 import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
 import * as TEX from './textures.js';
 import { spawn, loadGeo, SPEC } from './models.js';
@@ -282,6 +282,7 @@ const ANGLER_WAKE = ['Slow down! You are rocking my boat!', 'Idle speed, you foo
 const STEER_PROBES = [-0.7, -0.35, 0, 0.35, 0.7];
 const SHELTER_RELEASE_MARGIN = 0.09;
 const TOW_BERTH_RADII = [6.5, 8.5, 10.5, 12.5];
+const TRAFFIC_DRIVER_POSE_RANGE = 120;
 const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 const TRAFFIC_PROFILES = [
   { id: 'net-nine', callsign: 'NET BOAT 9', operator: 'EDDIE MORA', job: 'mullet netter', duty: [4.5, 14], threshold: 0.12, cruise: 0.72, work: [18, 34, 0.72], maxStorm: 0.58, channel: 'CH 16', faction: 'locals', color: '#78a6bd' },
@@ -371,6 +372,37 @@ function fisherman(rr) {
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
 }
+
+export function createTrafficDriverPoseInput() {
+  return {
+    speed: 0, steer: 0, angVel: 0, pitch: 0, roll: 0, apparentWind: 0, rpm: 0,
+    airborne: false, airTime: 0, impact: 0, hit: 0, heading: 0, hitNormal: new THREE.Vector2(),
+  };
+}
+
+// Ambient airboat operators use the same retained whole-body spring as the player. The input record belongs to the
+// persistent boat, and animation LOD keeps invisible body motion out of the far-field traffic simulation.
+export function updateTrafficDriverPose(boat, dt, time, distance) {
+  const driver = boat?.driver, input = boat?.driverPoseInput;
+  if (!driver || !input || distance > TRAFFIC_DRIVER_POSE_RANGE) return null;
+  const speed = Math.max(0, Number(boat.speed) || 0), max = Math.max(0.01, Number(boat.max) || 0.01);
+  const heading = Number(boat.heading) || 0, forwardX = -Math.sin(heading), forwardZ = -Math.cos(heading);
+  const wind = boat.surfaceWind, windSpeed = Math.max(0, Number(wind?.speed) || 0);
+  const airX = (Number(wind?.x) || 0) * windSpeed - forwardX * speed;
+  const airZ = (Number(wind?.z) || 0) * windSpeed - forwardZ * speed;
+  input.speed = speed;
+  input.steer = Math.max(-1, Math.min(1, (Number(boat.turn) || 0) / 1.54));
+  input.angVel = Number(boat.turn) || 0;
+  input.pitch = Number(boat.pitch) || 0;
+  input.roll = Number(boat.roll) || 0;
+  input.apparentWind = Math.hypot(airX, airZ);
+  input.rpm = boat.collision?.active ? 0 : Math.min(1, speed / max * 0.82 + (speed > 0.05 ? 0.1 : 0));
+  input.heading = heading;
+  const state = updateSeatedDriverPose(driver, input, dt, time);
+  input.hit = 0; input.impact = 0;
+  return state;
+}
+
 export class Traffic {
   constructor(terrain, scene, phys, fx) {
     this.T = terrain; this.scene = scene; this.phys = phys; this.fx = fx; // { plume, spray, audio, waveFn, emitStamp, game }
@@ -380,7 +412,7 @@ export class Traffic {
     this.state = saved && saved.version === 1 ? saved : { version: 1, operators: {} };
     this.state.operators ||= {}; fx.game.save.traffic = this.state;
     const john = (hull) => { const m = buildSkiff({ crew: true }); if (hull) recolor(m, 0x6f7570, hull); return { kind: 'john', mesh: m, crew: m.userData.crew, people: m.userData.people, max: 6.5 + this.rand() * 2.5 }; };
-    const air = (hull) => { const b = buildAirboat(); recolor(b.group, 0xd8dcda, hull); installDriver(b.group); return { kind: 'air', mesh: b.group, prop: b.prop, blur: b.blur, rudders: b.rudders, max: 10.5 + this.rand() * 2.5 }; };
+    const air = (hull) => { const b = buildAirboat(); recolor(b.group, 0xd8dcda, hull); const driver = installDriver(b.group); return { kind: 'air', mesh: b.group, prop: b.prop, blur: b.blur, rudders: b.rudders, driver, driverPoseInput: createTrafficDriverPoseInput(), max: 10.5 + this.rand() * 2.5 }; };
     const cruiser = () => { const m = spawn('boat_dreams', buildModelBoatFallback('boat_dreams')); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0.45, 0.95, 0.3); d.rotation.y = Math.PI; m.add(d); const pas = person(rr, { pose: 'sit', hat: false, vest: true }); pas.position.set(-0.45, 0.95, 0.3); pas.rotation.y = Math.PI; m.add(pas); pair(d, pas); return { kind: 'cruiser', mesh: m, max: 8.5 + rr() * 2, people: [d, pas] }; };
     const skiff = () => { const m = spawn('beau_boat', buildModelBoatFallback('beau_boat')); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0, 0.32, 0.7); d.rotation.y = Math.PI; m.add(d); return { kind: 'skiff', mesh: m, max: 5 + rr() * 1.5, people: [d] }; };
     const paddlers = () => ({ kind: 'canoe', mesh: canoe(this.rand), max: 1.3 + this.rand() * 0.4 });
@@ -407,6 +439,7 @@ export class Traffic {
       this.addWorkingDetails(b, i);
       b.mesh.visible = false; scene.add(b.mesh); this.boats.push(b);
       b.obs = { tag: 'boat', r: b.kind === 'air' ? 1.35 : b.kind === 'cruiser' ? 1.3 : b.kind === 'canoe' ? 0.5 : 1.1, boat: b, onHit: (into, nx, nz) => {
+        if (b.driverPoseInput && into >= b.driverPoseInput.hit) { b.driverPoseInput.hit = into; b.driverPoseInput.hitNormal.set(nx, nz); }
         b.shx += -nx * into * 0.5; b.shz += -nz * into * 0.5; b.speed *= 0.5;
         let pursuit = false;
         if (b.yellT <= 0 && into > 2.5) { b.yellT = 8; b.record.collisions++; pursuit = fx.game.boatHit(b, into); fx.game.persist(); }
@@ -1207,7 +1240,7 @@ export class Traffic {
       b.roll += ((-b.turn * b.speed * 0.02 + b.waterRoll + b.windHeel) - b.roll) * (1 - Math.exp(-dt * 4));
       b.pitch += ((b.speed * (b.kind === 'air' ? 0.004 : 0.007) + b.waterPitch) - b.pitch) * (1 - Math.exp(-dt * 3));
       b.mesh.position.set(b.x, wy + (b.kind === 'air' ? -0.27 : b.kind === 'john' || b.kind === 'canoe' ? -0.05 : 0), b.z); b.mesh.rotation.set(b.pitch, b.heading, b.roll, 'YXZ');
-      if (b.kind === 'air') { if (!b.collision.active) b.prop.rotation.z += dt * (8 + b.speed * 8); b.blur.material.opacity = b.collision.active ? 0 : Math.min(0.35, b.speed / b.max * 0.4); for (const r of b.rudders) r.rotation.y = -b.turn * 0.25; }
+      if (b.kind === 'air') { if (!b.collision.active) b.prop.rotation.z += dt * (8 + b.speed * 8); b.blur.material.opacity = b.collision.active ? 0 : Math.min(0.35, b.speed / b.max * 0.4); for (const r of b.rudders) r.rotation.y = -b.turn * 0.25; updateTrafficDriverPose(b, dt, t, d); }
       else if (b.kind === 'john') { const motor = b.mesh.userData.motor; motor.rotation.y = -b.turn * 0.3; if (!b.collision.active) motor.userData.prop.rotation.z += dt * (6 + b.speed * 5); }
       else if (b.kind === 'canoe') paddleAnim(b.mesh, t, Math.min(1, b.speed / b.max));
       if (b.people && d < 90) for (const pp of b.people) animatePerson(pp, t, dt, { x: bx, z: bz, speed: P.speed }, null);
