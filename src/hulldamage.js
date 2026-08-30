@@ -115,7 +115,7 @@ varying vec3 vHullDamagePosition;`)
 float hullScarMetal = 0.0, hullScarGrime = 0.0;
 if (uHullScarCount > 0.5 && uHullDamageDetail > 0.001) {
   for (int i = 0; i < ${MAX_HULL_SCARS}; i++) {
-    float active = 1.0 - step(uHullScarCount, float(i) + 0.5);
+    float scarActive = 1.0 - step(uHullScarCount, float(i) + 0.5);
     vec4 centre = uHullScarCenters[i], frame = uHullScarFrames[i];
     vec3 delta = vHullDamagePosition - centre.xyz;
     vec2 tangent = vec2(-frame.y, frame.x);
@@ -125,8 +125,8 @@ if (uHullScarCount > 0.5 && uHullDamageDetail > 0.001) {
     float envelope = 1.0 - smoothstep(0.7, 1.04, length(vec2(scarUv.x * 0.66, scarUv.y * 2.15)));
     float mainCut = 1.0 - smoothstep(0.035, 0.095, abs(scarUv.y - sin(scarUv.x * 6.2 + frame.z) * 0.045));
     float splitCut = 1.0 - smoothstep(0.025, 0.075, abs(scarUv.y + 0.18 - scarUv.x * 0.16));
-    float metal = max(mainCut, splitCut * 0.72) * envelope * frame.w * active;
-    float grime = envelope * (1.0 - smoothstep(0.18, 0.62, abs(scarUv.y))) * (0.28 + frame.w * 0.34) * active;
+    float metal = max(mainCut, splitCut * 0.72) * envelope * frame.w * scarActive;
+    float grime = envelope * (1.0 - smoothstep(0.18, 0.62, abs(scarUv.y))) * (0.28 + frame.w * 0.34) * scarActive;
     hullScarMetal = max(hullScarMetal, metal);
     hullScarGrime = max(hullScarGrime, grime);
   }

@@ -57,6 +57,8 @@ test('the hull material carries six scars without decals, textures or draw calls
   assert.match(shader.vertexShader, /vHullDamagePosition = transformed/);
   assert.match(shader.fragmentShader, /uHullScarCenters\[6\]/);
   assert.match(shader.fragmentShader, /hullScarMetal/);
+  assert.match(shader.fragmentShader, /float scarActive/);
+  assert.doesNotMatch(shader.fragmentShader, /float active/);
   assert.equal(damage.setQuality({ hullDamageDetail: 0 }), 0);
   damage.setScars([]);
   assert.equal(material.version, version);
