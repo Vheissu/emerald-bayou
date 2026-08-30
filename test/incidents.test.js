@@ -68,6 +68,8 @@ test('a deliberate hit on the offender drives it off while a victim strike is wi
   local.director.hitCd = 0; offender.onHit(4.2, 1, 0);
   assert.equal(local.director.active.choice, 'locals');
   assert.equal(local.director.active.state, 'fleeing');
+  assert.ok(local.director.rigs.runner.agent.shx < 0);
+  assert.ok(local.director.rigs.runner.agent.impactCd > 0);
   assert.deepEqual(local.law, []);
 
   const victimCase = makeDirector(), victim = victimCase.director.makeBoatObstacle(victimCase.director.rigs.victim.agent, 'work skiff');
@@ -76,6 +78,19 @@ test('a deliberate hit on the offender drives it off while a victim strike is wi
   assert.equal(victimCase.director.active.victimHit, true);
   assert.equal(victimCase.law[0][0], 'violation');
   assert.equal(victimCase.reputation[0][0], 'locals');
+});
+
+test('one player contact cannot repeatedly drain a pooled incident hull through duplicate callbacks', () => {
+  const { director } = makeDirector(), hull = director.rigs.runner.agent, obstacle = director.makeBoatObstacle(hull, 'runner');
+  director.hitCd = 2; hull.speed = 8;
+
+  obstacle.onHit(5, 1, 0);
+  const speedAfterImpact = hull.speed, shoveAfterImpact = hull.shx;
+  obstacle.onHit(5, 1, 0);
+
+  assert.equal(speedAfterImpact, 4.4);
+  assert.equal(hull.speed, speedAfterImpact);
+  assert.equal(hull.shx, shoveAfterImpact);
 });
 
 test('a reported offender can ram and damage the player but respects its contact cooldown', () => {
@@ -91,7 +106,95 @@ test('a reported offender can ram and damage the player but respects its contact
   assert.equal(director.attemptShakedownRam(director.active, offender, 5), true);
   assert.ok(director.phys.vel.y < 0);
   assert.equal(director.phys.hitTag, 'boat');
+  assert.ok(offender.shz > 0);
+  assert.ok(Math.hypot(offender.shx, offender.shz) <= 5.2);
+  assert.ok(offender.impactCd > 0);
   assert.equal(damage.length, 1);
   assert.equal(director.attemptShakedownRam(director.active, offender, 5), false);
   assert.equal(damage.length, 1);
+});
+
+test('pooled incident hulls take bounded shove, yaw, and heel then reset cleanly', () => {
+  const { director } = makeDirector(), hull = director.rigs.runner.agent;
+  director.phys = { pos: { x: 3, y: -2 } };
+  Object.assign(hull, { x: 0, z: 0, heading: 0.35, speed: 8, yawKick: 0, heelKick: 0, impactCd: 0 });
+
+  assert.equal(director.impactAgent(hull, 10, 0.8, 0.6, 0.48, 1.6), true);
+  const shove = Math.hypot(hull.shx, hull.shz), yaw = Math.abs(hull.yawKick), heel = Math.abs(hull.heelKick);
+  assert.ok(shove > 4.7 && shove <= 5.2);
+  assert.ok(yaw > 0 && yaw <= 1.1);
+  assert.ok(heel > 0 && heel <= 0.22);
+  assert.equal(director.impactAgent(hull, 10, 0.8, 0.6, 0.48, 1.6), false);
+
+  director.decayAgentImpact(hull, 0.2);
+  assert.ok(Math.hypot(hull.shx, hull.shz) < shove);
+  assert.ok(Math.abs(hull.yawKick) < yaw);
+  assert.ok(Math.abs(hull.heelKick) < heel);
+  assert.equal(hull.impactCd, 0);
+
+  const retained = hull; director.resetAgentImpact(hull);
+  assert.equal(hull, retained);
+  assert.deepEqual([hull.shx, hull.shz, hull.yawKick, hull.heelKick, hull.impactCd], [0, 0, 0, 0, 0]);
+});
+
+test('a recycled incident hull clears its old impact pose before becoming visible', () => {
+  const director = Object.create(WorldIncidents.prototype), pose = { position: null, rotation: null };
+  director.water = { waveHeight: () => 1.4 };
+  const hull = {
+    mesh: {
+      position: { set: (...values) => { pose.position = values; } },
+      rotation: { set: (...values) => { pose.rotation = values; } },
+      visible: false,
+    },
+    shx: 2, shz: -1, yawKick: 0.7, heelKick: -0.18, impactCd: 0.12,
+  };
+
+  director.setAgent(hull, 18, -9, 0.65, 7);
+
+  assert.deepEqual([pose.position[0], pose.position[2]], [18, -9]);
+  assert.ok(Math.abs(pose.position[1] - 1.35) < 1e-9);
+  assert.deepEqual(pose.rotation, [0, 0.65, 0, 'YXZ']);
+  assert.deepEqual([hull.shx, hull.shz, hull.yawKick, hull.heelKick, hull.impactCd], [0, 0, 0, 0, 0]);
+  assert.equal(hull.mesh.visible, true);
+});
+
+test('FWC incident intercepts exchange opposite impulses across the same pooled hulls', () => {
+  const { director } = makeDirector(), patrol = director.rigs.patrol.agent, runner = director.rigs.runner.agent;
+  director.phys = { pos: { x: 40, y: 40 } };
+  director.active = { type: 'pursuit', state: 'running', resolved: '', interceptCd: 0, intercepts: 0, catchT: 0 };
+  Object.assign(patrol, { x: 0, z: 0, heading: Math.PI / 2, speed: 12, active: true, shx: 0, shz: 0, yawKick: 0, heelKick: 0, impactCd: 0 });
+  Object.assign(runner, { x: -4, z: 2, heading: Math.PI / 2, speed: 7, active: true, shx: 0, shz: 0, yawKick: 0, heelKick: 0, impactCd: 0 });
+  const distance = Math.hypot(runner.x - patrol.x, runner.z - patrol.z);
+
+  assert.equal(director.attemptIncidentIntercept(director.active, patrol, runner, distance), true);
+  assert.equal(director.active.intercepts, 1);
+  assert.ok(director.active.interceptCd > 0);
+  assert.ok(patrol.shx > 0 && patrol.shz < 0);
+  assert.ok(runner.shx < 0 && runner.shz > 0);
+  assert.ok(patrol.shx * runner.shx + patrol.shz * runner.shz < 0);
+  assert.ok(Math.hypot(patrol.shx, patrol.shz) <= 5.2);
+  assert.ok(Math.hypot(runner.shx, runner.shz) <= 5.2);
+  assert.ok(Math.abs(patrol.yawKick) <= 1.1 && Math.abs(runner.yawKick) <= 1.1);
+  assert.ok(Math.abs(patrol.heelKick) <= 0.22 && Math.abs(runner.heelKick) <= 0.22);
+  assert.equal(director.attemptIncidentIntercept(director.active, patrol, runner, distance), false);
+});
+
+test('incident collision telemetry keeps the fixed three-boat and one-kayak pools', () => {
+  const { director } = makeDirector();
+  director.agents = [director.rigs.patrol.agent, director.rigs.runner.agent, director.rigs.victim.agent];
+  director.obs = [{}, {}];
+  director.active = { type: 'pursuit', intercepts: 3 };
+  director.rigs.runner.agent.shx = 0.8;
+
+  assert.deepEqual(director.resourceStats(), {
+    active: true,
+    type: 'pursuit',
+    pooledAgents: 3,
+    pooledBoats: 3,
+    pooledKayaks: 1,
+    activeAgents: 3,
+    reactingAgents: 1,
+    obstacles: 2,
+    intercepts: 3,
+  });
 });

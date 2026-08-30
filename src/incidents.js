@@ -30,7 +30,8 @@ function signalLight(parent, color, x, y, z) {
 function makeAgent(mesh, role) {
   return {
     mesh, role, x: 0, z: 0, heading: 0, navHeading: 0, speed: 0, turn: 0, choice: 0, decisionT: 0,
-    targetX: 0, targetZ: 0, safeX: 0, safeZ: 0, active: false, backing: false, shx: 0, shz: 0, groundT: 0,
+    targetX: 0, targetZ: 0, safeX: 0, safeZ: 0, active: false, backing: false, shx: 0, shz: 0,
+    yawKick: 0, heelKick: 0, impactCd: 0, groundT: 0,
   };
 }
 
@@ -106,8 +107,49 @@ export class WorldIncidents {
   }
 
   setAgent(A, x, z, heading, speed = 0) {
-    Object.assign(A, { x, z, heading, navHeading: heading, speed, turn: 0, choice: 0, decisionT: 0, active: true, backing: false, safeX: x, safeZ: z, shx: 0, shz: 0, groundT: 0 });
-    A.mesh.position.set(x, this.water.waveHeight(x, z, 0) - 0.05, z); A.mesh.rotation.y = heading; A.mesh.visible = true;
+    Object.assign(A, { x, z, heading, navHeading: heading, speed, turn: 0, choice: 0, decisionT: 0, active: true, backing: false, safeX: x, safeZ: z, groundT: 0 });
+    this.resetAgentImpact(A);
+    A.mesh.position.set(x, this.water.waveHeight(x, z, 0) - 0.05, z); A.mesh.rotation.set(0, heading, 0, 'YXZ'); A.mesh.visible = true;
+  }
+
+  resetAgentImpact(A) {
+    if (!A) return A;
+    A.shx = 0; A.shz = 0; A.yawKick = 0; A.heelKick = 0; A.impactCd = 0;
+    return A;
+  }
+
+  impactAgent(A, into, nx, nz, shoveScale = 0.44, contactAlong = null) {
+    const hit = clamp(Number(into) || 0, 0, 12), normalLength = Math.hypot(nx, nz);
+    if (!A || hit <= 0 || !Number.isFinite(normalLength) || normalLength < 1e-5 || (Number(A.impactCd) || 0) > 0) return false;
+    nx /= normalLength; nz /= normalLength;
+    const impulse = Math.min(4.8, hit * Math.max(0.1, Number(shoveScale) || 0.44));
+    A.shx = (Number(A.shx) || 0) - nx * impulse; A.shz = (Number(A.shz) || 0) - nz * impulse;
+    const shoveSpeed = Math.hypot(A.shx, A.shz), maxShove = 5.2;
+    if (shoveSpeed > maxShove) { const scale = maxShove / shoveSpeed; A.shx *= scale; A.shz *= scale; }
+    const fx = -Math.sin(Number(A.heading) || 0), fz = -Math.cos(Number(A.heading) || 0);
+    const derivedAlong = this.phys?.pos ? (this.phys.pos.x - A.x) * fx + (this.phys.pos.y - A.z) * fz : 0;
+    const along = clamp(contactAlong === null ? derivedAlong : Number(contactAlong) || 0, -2, 2);
+    const forceX = -nx * impulse, forceZ = -nz * impulse, torque = (fz * along) * forceX - (fx * along) * forceZ;
+    A.yawKick = clamp((Number(A.yawKick) || 0) + clamp(torque * 0.1, -0.85, 0.85), -1.1, 1.1);
+    const rightX = -Math.cos(Number(A.heading) || 0), rightZ = Math.sin(Number(A.heading) || 0), contactSide = nx * rightX + nz * rightZ;
+    A.heelKick = clamp((Number(A.heelKick) || 0) + contactSide * hit * 0.022, -0.22, 0.22);
+    A.impactCd = 0.16;
+    return true;
+  }
+
+  impactAgents(A, B, into, nx, nz, scaleA = 0.3, scaleB = 0.42, alongA = 1.8, alongB = -1.5) {
+    if (!A || !B || (Number(A.impactCd) || 0) > 0 || (Number(B.impactCd) || 0) > 0) return false;
+    const first = this.impactAgent(A, into, nx, nz, scaleA, alongA);
+    const second = this.impactAgent(B, into, -nx, -nz, scaleB, alongB);
+    return first && second;
+  }
+
+  decayAgentImpact(A, dt) {
+    if (!A) return;
+    const step = Math.max(0, Number(dt) || 0), shoveDecay = Math.exp(-step * 2.05);
+    A.impactCd = Math.max(0, (Number(A.impactCd) || 0) - step);
+    A.shx = (Number(A.shx) || 0) * shoveDecay; A.shz = (Number(A.shz) || 0) * shoveDecay;
+    A.yawKick = (Number(A.yawKick) || 0) * Math.exp(-step * 3.25); A.heelKick = (Number(A.heelKick) || 0) * Math.exp(-step * 2.9);
   }
 
   pickType() {
@@ -140,7 +182,7 @@ export class WorldIncidents {
     this.active = {
       type: 'pursuit', state: 'running', x: at.x, z: at.z, region, t: 0, life: 62 + Math.random() * 26,
       originX: at.x, originZ: at.z,
-      choice: '', choiceT: 0, misdirectT: 0, falseX: 0, falseZ: 0, catchT: 0, seen: false, resolved: '', resolveT: 0,
+      choice: '', choiceT: 0, misdirectT: 0, falseX: 0, falseZ: 0, catchT: 0, interceptCd: 0, intercepts: 0, seen: false, resolved: '', resolveT: 0,
     };
     this.radio.transmit({ channel: 'FWC TAC', speaker: 'FWC DISPATCH', text: `Twenty-seven is chasing a dark johnboat through ${region.name}. Small craft hold the bends.`, priority: 2, key: `incident:pursuit:${Math.floor(this.radio.clock)}`, cooldown: 0 });
   }
@@ -175,7 +217,7 @@ export class WorldIncidents {
       originX: at.x, originZ: at.z, patrolX: at.x - fx * 115, patrolZ: at.z - fz * 115,
       escapeX: at.x + fx * 1500, escapeZ: at.z + fz * 1500, victimX: at.x + fx * 130, victimZ: at.z + fz * 130,
       choice: '', choiceT: 0, seen: false, cargoTaken: false, pressure: 0, bumpCd: 1.5, contactCd: 0,
-      hostileT: 0, reportT: 0, escapeT: 0, captureT: 0, victimHit: false, resolved: '', resolveT: 0,
+      hostileT: 0, reportT: 0, escapeT: 0, captureT: 0, interceptCd: 0, intercepts: 0, victimHit: false, resolved: '', resolveT: 0,
     };
     this.radio.transmit({ channel: 'CH 16', speaker: 'WORK SKIFF', text: `Mayday. Black johnboat has us pinned in ${region.name}. They are taking the fuel cans. Any boat close, answer now.`, priority: 4, key: `incident:shakedown:${Math.floor(this.radio.clock)}`, cooldown: 0 });
   }
@@ -211,19 +253,33 @@ export class WorldIncidents {
     if (!A.safe) want *= 0.22;
     if (depthHere < 0.45) want = Math.min(want, depthHere < 0.18 ? 0.2 : 1.25);
     if (A.backing) want = Math.min(want, 0.35);
-    A.turn += (turn - A.turn) * (1 - Math.exp(-dt * 4)); A.heading += A.turn * dt;
+    A.turn += (turn - A.turn) * (1 - Math.exp(-dt * 4)); A.heading += (A.turn + (Number(A.yawKick) || 0)) * dt;
     A.speed += (want - A.speed) * (1 - Math.exp(-dt * (want > A.speed ? 0.72 : 2.5)));
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), flow = this.currents ? this.currents.flowAt(A.x, A.z, this._flow) : null;
     let vx = fx * A.speed, vz = fz * A.speed;
     if (A.backing) { const sd = Math.hypot(A.safeX - A.x, A.safeZ - A.z); if (sd > 0.05) { const reverse = Math.min(1.8, 0.55 + sd * 0.2); vx = (A.safeX - A.x) / sd * reverse; vz = (A.safeZ - A.z) / sd * reverse; } }
     A.x += (vx + (flow ? flow.x : 0) + A.shx) * dt; A.z += (vz + (flow ? flow.y : 0) + A.shz) * dt;
-    const decay = Math.exp(-dt * 2.4); A.shx *= decay; A.shz *= decay;
     A.x = clamp(A.x, -WORLD_HALF + 80, WORLD_HALF - 80); A.z = clamp(A.z, -WORLD_HALF + 80, WORLD_HALF - 80);
     const clearance = this.water.level - this.terrain.heightAt(A.x, A.z); A.groundT = clearance < 0.28 ? A.groundT + dt : 0;
     if (A.groundT > 0) A.speed *= Math.exp(-dt * 1.8);
     const y = this.water.waveHeight(A.x, A.z, t);
-    A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -A.turn * A.speed * 0.018, 'YXZ');
+    A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -A.turn * A.speed * 0.018 + (Number(A.heelKick) || 0), 'YXZ');
     if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -A.turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
+    this.decayAgentImpact(A, dt);
+  }
+
+  attemptIncidentIntercept(e, chaser, target, distance) {
+    if (!e || e.resolved || (Number(e.interceptCd) || 0) > 0 || !chaser?.active || !target?.active || distance >= 7.2 || chaser.speed <= 4) return false;
+    const dx = target.x - chaser.x, dz = target.z - chaser.z, d = Math.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d;
+    const cfx = -Math.sin(chaser.heading), cfz = -Math.cos(chaser.heading), tfx = -Math.sin(target.heading), tfz = -Math.cos(target.heading);
+    const relativeClosing = (cfx * chaser.speed - tfx * target.speed) * nx + (cfz * chaser.speed - tfz * target.speed) * nz;
+    if (relativeClosing <= 0.35) return false;
+    const impact = Math.max(2.2, relativeClosing);
+    if (!this.impactAgents(chaser, target, impact, nx, nz, 0.3, 0.44, 1.8, -1.5)) return false;
+    e.interceptCd = 2.4; e.intercepts = (Number(e.intercepts) || 0) + 1;
+    chaser.speed *= clamp(1 - impact * 0.026, 0.66, 0.9); target.speed *= clamp(1 - impact * 0.065, 0.48, 0.82);
+    if (this.phys?.pos && Math.min(Math.hypot(chaser.x - this.phys.pos.x, chaser.z - this.phys.pos.y), Math.hypot(target.x - this.phys.pos.x, target.z - this.phys.pos.y)) < 150) this.audio.thud(0.42);
+    return true;
   }
 
   updateLights(t, search = false) {
@@ -284,7 +340,7 @@ export class WorldIncidents {
       this.updateAgent(patrol, dt, t, runner.x, runner.z, e.resolved === 'caught' ? 1.4 : 6, e.resolved === 'caught' ? 12 : 0, runner);
       if (e.resolveT <= 0) this.finish(); return;
     }
-    e.life -= dt; e.misdirectT = Math.max(0, e.misdirectT - dt);
+    e.life -= dt; e.misdirectT = Math.max(0, e.misdirectT - dt); e.interceptCd = Math.max(0, (Number(e.interceptCd) || 0) - dt);
     const runMax = e.choice === 'runners' ? 13.4 : 11.7;
     this.updateAgent(runner, dt, t, runner.x - Math.sin(runner.heading) * 320, runner.z - Math.cos(runner.heading) * 320, runMax, 0, patrol);
     const tx = e.misdirectT > 0 ? e.falseX : runner.x, tz = e.misdirectT > 0 ? e.falseZ : runner.z;
@@ -298,6 +354,7 @@ export class WorldIncidents {
       this.setPrompt('<b>E</b> report the runner’s heading <i>· F send FWC into the wrong cut</i>');
       if (this.interact) this.choosePursuit('fwc'); else if (this.alternate) this.choosePursuit('runners');
     } else this.clearPrompt();
+    if (this.attemptIncidentIntercept(e, patrol, runner, chaseGap)) e.catchT += 0.65;
     if (chaseGap < 10) e.catchT += dt; else e.catchT = Math.max(0, e.catchT - dt * 0.5);
     if (e.choice === 'fwc' && e.t - e.choiceT > 15) this.resolvePursuit('caught');
     else if (e.choice === 'runners' && e.t - e.choiceT > 13) this.resolvePursuit('escaped');
@@ -377,8 +434,10 @@ export class WorldIncidents {
     if (!e || e.state !== 'reported' || e.hostileT <= 0 || e.contactCd > 0 || distance >= 6.2 || A.speed <= 5) return false;
     const p = this.phys, dx = p.pos.x - A.x, dz = p.pos.y - A.z, d = Math.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), closing = fx * nx + fz * nz; if (closing <= 0.28) return false;
+    const relativeClosing = Math.max(0, A.speed * closing - (p.vel.x * nx + p.vel.y * nz));
     const cross = fx * nz - fz * nx, side = cross < 0 ? -1 : 1;
     e.contactCd = 3.2; A.speed *= 0.68; p.vel.x += nx * 1.65 + fx * 0.7; p.vel.y += nz * 1.65 + fz * 0.7;
+    this.impactAgent(A, Math.max(2.2, relativeClosing), nx, nz, 0.34, 1.8);
     p.hit = Math.max(p.hit, 4.6); p.hitNormal.set(nx, nz); p.hitTag = 'boat'; p.angVel += side * 1.25; p.rollVel += side * 1.35;
     this.game.shake = Math.max(this.game.shake, 0.3); if (this.condition) this.condition.damage(0.34, 0.05); this.audio.thud(0.78);
     this.game.toast('Johnboat ram', 'They are trying to knock the tower hull off the radio call.', 2.5); return true;
@@ -386,7 +445,7 @@ export class WorldIncidents {
 
   updateShakedown(e, dt, t) {
     const runner = this.rigs.runner.agent, victim = this.rigs.victim.agent, patrol = this.rigs.patrol.agent;
-    e.bumpCd = Math.max(0, e.bumpCd - dt); e.contactCd = Math.max(0, e.contactCd - dt);
+    e.bumpCd = Math.max(0, e.bumpCd - dt); e.contactCd = Math.max(0, e.contactCd - dt); e.interceptCd = Math.max(0, (Number(e.interceptCd) || 0) - dt);
     const victimSpeed = e.cargoTaken ? 0.18 : e.resolved ? 0.55 : 0.9;
     this.updateAgent(victim, dt, t, e.victimX, e.victimZ, victimSpeed, 10, runner);
     if (e.resolved) {
@@ -404,7 +463,8 @@ export class WorldIncidents {
       const gap = Math.hypot(runner.x - victim.x, runner.z - victim.z);
       if (gap < 7.1 && e.bumpCd <= 0) {
         const dx = victim.x - runner.x, dz = victim.z - runner.z, d = Math.hypot(dx, dz) || 1;
-        e.bumpCd = 5.4; e.pressure++; victim.shx += dx / d * 1.25; victim.shz += dz / d * 1.25; victim.speed *= 0.45;
+        const impact = Math.max(2.4, runner.speed - victim.speed + e.pressure * 0.25);
+        e.bumpCd = 5.4; e.pressure++; this.impactAgents(runner, victim, impact, dx / d, dz / d, 0.24, 0.38, 1.7, -1.4); runner.speed *= 0.78; victim.speed *= 0.45;
         if (playerD < 115) { this.audio.thud(0.3); this.game.toast('Black hull on the work skiff', 'They are pushing it toward the bank.', 2.1); }
       }
       if (playerD < 34 && this.phys.speed * MPH < 30 && this.canInteract()) {
@@ -421,7 +481,8 @@ export class WorldIncidents {
       this.updateAgent(runner, dt, t, tx, tz, hostile ? 12.6 : 12.1, 0, patrol, !hostile);
       this.updateAgent(patrol, dt, t, runner.x, runner.z, 14.4, 7.5, runner); this.updateLights(t, false);
       const gap = Math.hypot(runner.x - patrol.x, runner.z - patrol.z), d = Math.hypot(runner.x - this.phys.pos.x, runner.z - this.phys.pos.y);
-      this.attemptShakedownRam(e, runner, d); e.captureT = gap < 9 ? e.captureT + dt : Math.max(0, e.captureT - dt * 0.5);
+      this.attemptShakedownRam(e, runner, d); if (this.attemptIncidentIntercept(e, patrol, runner, gap)) e.captureT += 0.55;
+      e.captureT = gap < 9 ? e.captureT + dt : Math.max(0, e.captureT - dt * 0.5);
       if ((e.reportT > 4 && e.captureT > 2.2) || e.reportT > 19) this.resolveShakedown('captured');
     } else {
       e.escapeT += dt; this.updateAgent(runner, dt, t, e.escapeX, e.escapeZ, 12.8, 0, victim);
@@ -485,7 +546,7 @@ export class WorldIncidents {
 
   makeBoatObstacle(A, tag) {
     return { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag, onHit: (into, nx, nz) => {
-      A.shx += -nx * into * 0.48; A.shz += -nz * into * 0.48; A.speed *= 0.55;
+      if (this.impactAgent(A, into, nx, nz, 0.48)) A.speed *= 0.55;
       if (this.hitCd > 0 || into < 2.7) return; this.hitCd = 4;
       if (tag === 'FWC patrol') { this.game.toast('FWC vessel struck', 'Twenty-seven is logging the collision.', 2.4); this.law.violation(0.8, 'FWC vessel struck', true); }
       else if (tag === 'work skiff') {
@@ -574,6 +635,15 @@ export class WorldIncidents {
     }
   }
 
+  resourceStats() {
+    let activeAgents = 0, reactingAgents = 0;
+    for (const A of this.agents) {
+      if (A.active) activeAgents++;
+      if (Math.hypot(Number(A.shx) || 0, Number(A.shz) || 0) > 0.01 || Math.abs(Number(A.yawKick) || 0) > 0.01 || Math.abs(Number(A.heelKick) || 0) > 0.01) reactingAgents++;
+    }
+    return { active: Boolean(this.active), type: this.active?.type || '', pooledAgents: this.agents.length, pooledBoats: 3, pooledKayaks: 1, activeAgents, reactingAgents, obstacles: this.obs.length, intercepts: Number(this.active?.intercepts) || 0 };
+  }
+
   stamps(out) {
     for (const A of this.agents) {
       if (!A.active || A.backing || A.speed < 2 || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 90) continue;
@@ -590,6 +660,7 @@ export class WorldIncidents {
     this.rigs.victim.boat.visible = false; this.rigs.victim.agent.active = false;
     if (this.rigs.victim.boat.userData.fuel) this.rigs.victim.boat.userData.fuel.visible = true;
     if (this.rigs.runner.boat.userData.fuel) this.rigs.runner.boat.userData.fuel.visible = true;
+    for (const A of this.agents) this.resetAgentImpact(A);
     this.active = null; this.next = 210 + Math.random() * 210; this.updateAudio();
   }
 }
