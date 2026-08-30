@@ -15,6 +15,7 @@ import { WakeStampPool } from './wakestamps.js';
 // generated from the cell seed on demand and only built as meshes when the boat is near.
 const CAMP_CELL = 1600, TRAP_CELL = 700;
 const CAMP_CACHE_LIMIT = 160, SITE_CACHE_LIMIT = 384, TRAP_CACHE_LIMIT = 256;
+const BLOCK_RADIUS = 30, BLOCK_RADIUS_SQ = BLOCK_RADIUS * BLOCK_RADIUS;
 const FIRST = ['Turner', 'Cooter', 'Mullet', 'Lostman', 'Chokoloskee', 'Sawgrass', 'Gator Hole', 'Possum', 'Broad River', 'Hell\'s Bay', 'Whitewater', 'Shark Point', 'Tarpon', 'Buzzard', 'Cane Patch', 'Rookery', 'Onion Key', 'Lopez', 'Watson', 'Panther', 'Kingfisher', 'Snake Bight', 'Cormorant', 'Moss Hammock', 'Cypress Knee', 'Otter', 'Bream Hole', 'Halfway', 'Ten Mile', 'Dead River'];
 const SECOND = ['Camp', 'Landing', 'Fish Camp', 'Station', 'Bend', 'Dock', 'Camp', 'Landing'];
 const hash2 = (i, j) => { let h = (i * 374761393 + j * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return (h ^ (h >>> 16)) >>> 0; };
@@ -146,8 +147,35 @@ export class World {
   }
   // ground the vegetation must leave alone: around every camp and homestead
   blockedAt(x, z) {
-    for (const st of this.sitesNear(x, z, 30)) { const r = st.kind === 'house' ? 16 : st.kind === 'ramp' ? 22 : 9; if (Math.hypot(st.x - x, st.z - z) < r) return true; if (st.kind === 'house' && Math.hypot(st.bank.x - x, st.bank.z - z) < 8) return true; if (st.kind === 'ramp') { const ux = -Math.cos(st.ang), uz = -Math.sin(st.ang); const px = st.x + ux * 14, pz = st.z + uz * 14; if (Math.hypot(px - x, pz - z) < 12) return true; } }
-    for (const c of this.campsNear(x, z, 30)) { if (Math.hypot(c.x - x, c.z - z) < 12 || Math.hypot(c.bank.x - x, c.bank.z - z) < 7) return true; }
+    // This predicate is used by placement and navigation loops, so walk the cells directly and stop at the first hit.
+    const siteI0 = Math.floor((x - BLOCK_RADIUS) / SITE_CELL), siteI1 = Math.floor((x + BLOCK_RADIUS) / SITE_CELL);
+    const siteJ0 = Math.floor((z - BLOCK_RADIUS) / SITE_CELL), siteJ1 = Math.floor((z + BLOCK_RADIUS) / SITE_CELL);
+    for (let j = siteJ0; j <= siteJ1; j++) for (let i = siteI0; i <= siteI1; i++) {
+      const st = this.siteAt(i, j); if (!st) continue;
+      let dx = st.x - x, dz = st.z - z, dSq = dx * dx + dz * dz;
+      if (dSq > BLOCK_RADIUS_SQ) continue;
+      const radius = st.kind === 'house' ? 16 : st.kind === 'ramp' ? 22 : 9;
+      if (dSq < radius * radius) return true;
+      if (st.kind === 'house') {
+        dx = st.bank.x - x; dz = st.bank.z - z;
+        if (dx * dx + dz * dz < 64) return true;
+      } else if (st.kind === 'ramp') {
+        const px = st.x - Math.cos(st.ang) * 14, pz = st.z - Math.sin(st.ang) * 14;
+        dx = px - x; dz = pz - z;
+        if (dx * dx + dz * dz < 144) return true;
+      }
+    }
+
+    const campI0 = Math.floor((x - BLOCK_RADIUS) / CAMP_CELL), campI1 = Math.floor((x + BLOCK_RADIUS) / CAMP_CELL);
+    const campJ0 = Math.floor((z - BLOCK_RADIUS) / CAMP_CELL), campJ1 = Math.floor((z + BLOCK_RADIUS) / CAMP_CELL);
+    for (let j = campJ0; j <= campJ1; j++) for (let i = campI0; i <= campI1; i++) {
+      const c = this.campAt(i, j); if (!c) continue;
+      let dx = c.x - x, dz = c.z - z, dSq = dx * dx + dz * dz;
+      if (dSq > BLOCK_RADIUS_SQ) continue;
+      if (dSq < 144) return true;
+      dx = c.bank.x - x; dz = c.bank.z - z;
+      if (dx * dx + dz * dz < 49) return true;
+    }
     return false;
   }
   campColliders(c) {
