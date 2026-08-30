@@ -123,6 +123,7 @@ export class SkiffAI {
     this.mesh = buildSkiff();
     this.pos = new THREE.Vector2(); this.vel = new THREE.Vector2(); this.heading = 0; this.speed = 0;
     this.maxSpeed = 11.6; this.path = []; this.i = 0; this.active = false; this.done = false; this.waveFn = waveFn;
+    this.navigationLights = true;
     this.roll = 0; this.pitch = 0; this.dist = 0;
     this.shoveX = 0; this.shoveZ = 0; this.yawKick = 0; this.heelKick = 0;
     this.lookAhead = 14; this._flow = new THREE.Vector2(); this._forward = new THREE.Vector2();
@@ -190,7 +191,7 @@ export class SkiffAI {
     return wakeSampleAt(this.pos.x, this.pos.y, this.heading, this.speed, this.maxSpeed, 0.11, x, z, t);
   }
   visitActiveVessels(visitor) {
-    if (this.active) visitor(this.pos.x, this.pos.y, this.speed, 'skiff');
+    if (this.active) visitor(this.pos.x, this.pos.y, this.speed, 'skiff', this);
   }
   // wake stamps for the water sim (only worth pushing when inside the sim window)
   stamps(out) {

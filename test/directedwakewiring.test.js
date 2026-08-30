@@ -35,3 +35,24 @@ test('small story boat pools are retained instead of rebuilt in wake and stamp l
   assert.match(contracts, /this\.agents = \[this\.rigs\.patrolAgent, this\.rigs\.receiverAgent\]/);
   assert.match(contracts, /for \(const A of this\.agents\)/);
 });
+
+test('directed boat visitors expose retained light metadata to one shared renderer pool', async () => {
+  const [main, npc, encounters, incidents, passage, stormline, contracts, story, aftermath] = await Promise.all([
+    'main.js', 'npc.js', 'encounters.js', 'incidents.js', 'passage.js', 'stormline.js', 'contracts.js', 'story.js', 'aftermath.js',
+  ].map(file => readFile(join(root, 'src', file), 'utf8')));
+
+  assert.match(main, /new DirectedNavigationLights\(scene\)/);
+  assert.match(main, /directedNavigationLights\.update\(directedVesselSources, camera\.position, environment, started\)/);
+  assert.match(npc, /visitor\(this\.pos\.x, this\.pos\.y, this\.speed, 'skiff', this\)/);
+  for (const source of [encounters, incidents, aftermath]) assert.match(source, /visitor\(agent\.x, agent\.z, agent\.speed, 'skiff', agent\)/);
+  assert.match(story, /visitor\(passageAgent\.x, passageAgent\.z, passageAgent\.speed, 'skiff', passageAgent\)/);
+  assert.match(story, /visitor\(this\.departPoint\.x, this\.departPoint\.z, this\.departSpeed, 'skiff', this\.departPoint\)/);
+
+  assert.match(npc, /this\.navigationLights = true/);
+  assert.match(incidents, /navigationLights: role === 'patrol' \|\| role === 'victim'/);
+  assert.match(encounters, /navigationLights = searchRole >= 0/);
+  assert.match(passage, /this\.agent\.navigationLights = patrol/);
+  assert.match(stormline, /this\.convoy\.navigationLights = !runner; this\.chaser\.navigationLights = runner/);
+  assert.match(contracts, /navigationLights: role === 'contract-patrol'/);
+  assert.match(story, /this\.departPoint\.navigationLights = navigationLights/);
+});

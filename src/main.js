@@ -42,6 +42,7 @@ import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel,
 import { constrainedAssetTransfer, startupPlan, startupTerrainReady } from './startup.js';
 import { FieldDiscoveryDirector } from './discoveries.js';
 import { NavigationAids } from './navigationaids.js';
+import { DirectedNavigationLights } from './vesselnavigationlights.js';
 import { DolphinPod } from './dolphins.js';
 import { Fishing } from './fishing.js';
 import { NocturnalWetland } from './nocturnal.js';
@@ -285,6 +286,7 @@ async function init() {
   const directedVesselSources = [skiff, encounters, incidents, story, aftermath];
   physicalWakeFields.push(...directedVesselSources);
   ecology.setDirectedVesselSources(directedVesselSources);
+  const directedNavigationLights = new DirectedNavigationLights(scene);
   const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
   game.discoveries = discoveries;
   const navigationAids = new NavigationAids({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition });
@@ -356,6 +358,7 @@ async function init() {
       shoreFolk: { live: life.folk.live.size, cachedCells: life.folk.cells.size, cacheEvictions: life.folk.cacheEvictions, disposedLineGeometries: life.folk.disposedLineGeometries },
       fishFallbackReleased: life.fish.fallbackReleased,
       worldIncidents: incidents.resourceStats(),
+      directedNavigationLights: directedNavigationLights.resourceStats(),
       fieldDiscoveries: discoveries.resourceStats(),
       navigationAids: navigationAids.resourceStats(),
       fishing: fishing.resourceStats(),
@@ -389,7 +392,7 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
@@ -816,6 +819,7 @@ async function init() {
     ecology.update(dtRaw, time, started && !game.paused);
     dolphins.update(dtRaw, time, started && !game.paused);
     incidents.update(dtRaw, time, started && !game.paused && !fishing.blocking() && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
+    directedNavigationLights.update(directedVesselSources, camera.position, environment, started);
     discoveries.update(dtRaw, time, started && !game.paused && !fishing.blocking());
     navigationAids.update(dtRaw, time, started && !game.paused && !fishing.blocking());
     radio.update(dtRaw, started && !game.paused);

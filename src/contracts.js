@@ -88,6 +88,7 @@ function makeAgent(mesh, role) {
   return {
     mesh, role, x: 0, z: 0, heading: 0, navHeading: 0, speed: 0, turn: 0, choice: 0, decisionT: 0,
     targetX: 0, targetZ: 0, safeX: 0, safeZ: 0, active: false, backing: false, shx: 0, shz: 0, groundT: 0,
+    navigationLights: role === 'contract-patrol',
   };
 }
 

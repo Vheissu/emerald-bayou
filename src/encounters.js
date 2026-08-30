@@ -242,11 +242,12 @@ function makeSpotlightRig(rr, boat, scene) {
   return { gunner, gator, eyes, target, light, pool, uniforms };
 }
 
-function boatAgent(mesh, searchRole = -1) {
+function boatAgent(mesh, searchRole = -1, navigationLights = searchRole >= 0) {
   const enforcement = searchRole >= 0;
   const agent = {
     mesh, x: 0, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: 0, targetZ: 0, decisionT: 0, active: false, enforcement,
-    shx: 0, shz: 0, yawKick: 0, heelKick: 0, impactCd: 0, tactic: { lead: 0, fore: 0, side: 0 },
+    shx: 0, shz: 0, yawKick: 0, heelKick: 0, impactCd: 0, navigationLights,
+    tactic: { lead: 0, fore: 0, side: 0 },
   };
   if (enforcement) Object.assign(agent, {
     downburstResponse: 0, downburstDistance: Infinity, downburstNoticeT: 0, downburstReactionDelay: 0.38 + searchRole * 0.16, downburstReacted: false,
@@ -376,7 +377,7 @@ export class EncounterDirector {
     const grounding = makeGroundingRig(rr, this.scene);
     const airrescue = makeAirRescueRig(rr, this.scene);
 
-    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat) }, airrescue, grounding, patrol, patrolBackups, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire }, manatee, spotlight };
+    return { distress: { boat: distressBoat, survivor, passenger, flare, echoAgent: boatAgent(distressBoat, -1, true) }, airrescue, grounding, patrol, patrolBackups, smuggler, salvage, netline, fire: { boat: fireBoat, operator: fireOperator, swimmer, fire }, manatee, spotlight };
   }
 
   spot(min = 160, max = 300, sideMax = 170) {
@@ -3122,7 +3123,7 @@ export class EncounterDirector {
 
   visitActiveVessels(visitor) {
     for (let i = 0; i < this.agents.length; i++) {
-      const agent = this.agents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff');
+      const agent = this.agents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff', agent);
     }
   }
 

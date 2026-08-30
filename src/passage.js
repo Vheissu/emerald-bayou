@@ -278,7 +278,7 @@ export class FalsePassage {
     if (this.chaseActive || this.state.stage !== 'delivery') return false;
     const at = this.chaserSpawn(); if (!at) { this.chaseDelay = 2; return false; }
     const patrol = this.state.branch === 'runner', mesh = patrol ? this.rigs.patrol : this.rigs.runner;
-    this.rigs.runner.visible = !patrol; this.rigs.patrol.visible = patrol; this.agent.mesh = mesh;
+    this.rigs.runner.visible = !patrol; this.rigs.patrol.visible = patrol; this.agent.mesh = mesh; this.agent.navigationLights = patrol;
     this.P.incidents.setAgent(this.agent, at.x, at.z, at.heading, 3.2); this.chaseActive = true; this.chasePressure = 0; this.lostT = 0;
     this.state.chaseStarted = true; this.state.chaseCleared = false; this.persist();
     if (patrol) {
@@ -345,7 +345,7 @@ export class FalsePassage {
     else this.rigs.survivor.visible = false;
     Object.assign(this.state, { stage: 'complete', ending: branch, completedAt: Date.now(), consequenceAt: Date.now() + 75000, consequence: false, cargoUntil: 0, chaseCleared: true });
     this.rigs.wreck.visible = false; this.P.phys.loaded = 0; this.P.clearPrompt(); this.P.game.wpTarget = null; this.P.law.hotCargoT = 0; this.P.law.cool(0.3);
-    this.P.startDeparture(recipient, berth, cargo, branch === 'runner' ? 0.82 : 0.9);
+    this.P.startDeparture(recipient, berth, cargo, branch === 'runner' ? 0.82 : 0.9, branch !== 'runner');
     if (branch === 'runner') {
       this.P.game.addCash(1100); this.P.reputation.change('runners', 1.8, 'false-passage-sale', 'You sold Cal Rook a clinic cooler taken from a wreck.', true);
       this.P.reputation.change('locals', -1.15, 'false-passage-sale', 'The camps heard Nolan was left on the wreck while the cooler went south.', false);

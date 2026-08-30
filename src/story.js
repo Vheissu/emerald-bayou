@@ -74,7 +74,7 @@ export class StoryDirector {
     if (!Number.isFinite(S.caseX)) S.caseX = C.search.x + Math.cos(C.search.heading + 1.2) * 6;
     if (!Number.isFinite(S.caseZ)) S.caseZ = C.search.z + Math.sin(C.search.heading + 1.2) * 6;
     this.clock = 0; this.offerT = 34; this.choiceT = 0; this.persistT = 6; this.departT = 0; this.departSpeed = 0; this.enabled = false;
-    this.departPoint = { x: 0, z: 0, heading: 0 }; this.departMesh = null; this.departCargo = []; this.departPitch = 0.86; this.obLevel = 0; this.obPitch = 0.86;
+    this.departPoint = { x: 0, z: 0, heading: 0, mesh: null, navigationLights: false }; this.departMesh = null; this.departCargo = []; this.departPitch = 0.86; this.obLevel = 0; this.obPitch = 0.86;
     this.interact = false; this.alternate = false; this.prompting = false; this.wantInput = false; this.approachHold = 0; this.routeStart = 0; this.routeBand = this.state.routeBand;
     this.obs = [];
     this.wreckObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'maintenance skiff' };
@@ -237,7 +237,7 @@ export class StoryDirector {
     if (this.state.stage !== 'delivery') return;
     const branch = this.state.branch, recipient = branch === 'runner' ? this.rigs.lostKey : this.rigs.oldMill;
     recipient.add(this.rigs.case); this.rigs.case.position.set(0.55, 0.68, -0.9); this.rigs.case.rotation.set(0, 0.2, 0); this.rigs.case.visible = true;
-    const berth = this.destination(); this.startDeparture(recipient, berth, [this.rigs.case], branch === 'runner' ? 0.82 : 0.9);
+    const berth = this.destination(); this.startDeparture(recipient, berth, [this.rigs.case], branch === 'runner' ? 0.82 : 0.9, branch !== 'runner');
     this.state.stage = 'complete'; this.state.ending = branch; this.state.completedAt = Date.now(); this.state.consequenceAt = Date.now() + 60000; this.state.consequence = false; this.state.cargoUntil = 0;
     this.rigs.wreck.visible = false; this.phys.loaded = 0; this.clearPrompt(); this.game.wpTarget = null;
     if (branch === 'runner') {
@@ -403,9 +403,10 @@ export class StoryDirector {
     }
   }
 
-  startDeparture(mesh, point, cargo = [], pitch = 0.86) {
+  startDeparture(mesh, point, cargo = [], pitch = 0.86, navigationLights = true) {
     this.residents?.departed(mesh);
     this.departMesh = mesh; this.departCargo = cargo; this.departPitch = pitch; this.departPoint.x = point.x; this.departPoint.z = point.z; this.departPoint.heading = point.heading;
+    this.departPoint.mesh = mesh; this.departPoint.navigationLights = navigationLights;
     this.departSpeed = 0; this.departT = 10; mesh.visible = true;
   }
 
@@ -414,7 +415,7 @@ export class StoryDirector {
     this.departT -= dt; this.departSpeed += (6.6 - this.departSpeed) * (1 - Math.exp(-dt * 0.58));
     const flow = this.currents.flowAt(p.x, p.z, this._flow), fx = -Math.sin(p.heading), fz = -Math.cos(p.heading);
     p.x += (fx * this.departSpeed + flow.x) * dt; p.z += (fz * this.departSpeed + flow.y) * dt; this.placeBoat(mesh, p, t, -0.012);
-    if (this.departT <= 0) { mesh.visible = false; for (const cargo of this.departCargo) cargo.visible = false; this.departCargo.length = 0; this.departMesh = null; this.departSpeed = 0; }
+    if (this.departT <= 0) { mesh.visible = false; for (const cargo of this.departCargo) cargo.visible = false; this.departCargo.length = 0; this.departMesh = null; this.departPoint.mesh = null; this.departPoint.navigationLights = false; this.departSpeed = 0; }
   }
 
   updateAudio() {
@@ -444,16 +445,16 @@ export class StoryDirector {
 
   visitActiveVessels(visitor) {
     const passageAgent = this.passage?.agent;
-    if (this.passage?.chaseActive && passageAgent?.active) visitor(passageAgent.x, passageAgent.z, passageAgent.speed, 'skiff');
+    if (this.passage?.chaseActive && passageAgent?.active) visitor(passageAgent.x, passageAgent.z, passageAgent.speed, 'skiff', passageAgent);
     const stormAgents = this.stormLine?.agents;
     if (stormAgents) for (let i = 0; i < stormAgents.length; i++) {
-      const agent = stormAgents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff');
+      const agent = stormAgents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff', agent);
     }
     const contractAgents = this.contracts?.agents;
     if (contractAgents) for (let i = 0; i < contractAgents.length; i++) {
-      const agent = contractAgents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff');
+      const agent = contractAgents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff', agent);
     }
-    if (this.departT > 0) visitor(this.departPoint.x, this.departPoint.z, this.departSpeed, 'skiff');
+    if (this.departT > 0) visitor(this.departPoint.x, this.departPoint.z, this.departSpeed, 'skiff', this.departPoint);
   }
 
   stamps(out) {

@@ -31,7 +31,7 @@ function makeAgent(mesh, role) {
   return {
     mesh, role, x: 0, z: 0, heading: 0, navHeading: 0, speed: 0, turn: 0, choice: 0, decisionT: 0,
     targetX: 0, targetZ: 0, safeX: 0, safeZ: 0, active: false, backing: false, shx: 0, shz: 0,
-    yawKick: 0, heelKick: 0, impactCd: 0, groundT: 0,
+    yawKick: 0, heelKick: 0, impactCd: 0, groundT: 0, navigationLights: role === 'patrol' || role === 'victim',
   };
 }
 
@@ -631,7 +631,7 @@ export class WorldIncidents {
 
   visitActiveVessels(visitor) {
     for (let i = 0; i < this.agents.length; i++) {
-      const agent = this.agents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff');
+      const agent = this.agents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff', agent);
     }
   }
 

@@ -76,7 +76,7 @@ function makeReceiverAgent(mesh) {
   return {
     mesh, role: 'storm-recovery', x: 0, z: 0, heading: 0, navHeading: 0, speed: 0, turn: 0, choice: 0,
     decisionT: 0, targetX: 0, targetZ: 0, safeX: 0, safeZ: 0, active: false, backing: false,
-    shx: 0, shz: 0, groundT: 0, safe: true,
+    shx: 0, shz: 0, groundT: 0, safe: true, navigationLights: true,
   };
 }
 
@@ -692,7 +692,7 @@ export class StormRecovery {
       const movingRecovery = site.type === 'survivor' && site.stage === 'reported';
       if (!movingWorkboat && !movingRecovery) continue;
       const agent = this.rigs.get(site.id)?.agent;
-      if (agent?.active) visitor(agent.x, agent.z, agent.speed, 'skiff');
+      if (agent?.active) visitor(agent.x, agent.z, agent.speed, 'skiff', agent);
     }
   }
 

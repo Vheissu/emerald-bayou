@@ -64,7 +64,7 @@ function makeAgent(mesh, role) {
   return {
     mesh, role, x: 0, z: 0, heading: 0, navHeading: 0, speed: 0, turn: 0, choice: 0, decisionT: 0,
     targetX: 0, targetZ: 0, safeX: 0, safeZ: 0, active: false, backing: false, shx: 0, shz: 0,
-    groundT: 0, safe: true,
+    groundT: 0, safe: true, navigationLights: false,
   };
 }
 
@@ -128,6 +128,7 @@ export class StormLine {
     const runner = this.state.branch === 'runner', color = runner ? 0x4f8fff : 0xf4d989;
     this.rigs.lamp.mat.color.setHex(color); this.rigs.lamp.light.color.setHex(color);
     this.convoy.mesh = this.convoyMesh(); this.chaser.mesh = this.chaserMesh();
+    this.convoy.navigationLights = !runner; this.chaser.navigationLights = runner;
     this.convoyObs.tag = runner ? 'Cal Rook storm convoy' : 'Split Pine evacuation skiff';
     this.chaserObs.tag = runner ? 'FWC patrol' : 'runner skiff';
   }
@@ -420,7 +421,7 @@ export class StormLine {
   triggerConsequence(force = false) {
     if (this.state.stage !== 'complete' || this.state.consequence || (!force && Date.now() < this.state.consequenceAt)) return false;
     this.state.consequence = true;
-    this.P.startDeparture(this.convoyMesh(), this.destination(), this.departureCargo(), this.state.branch === 'runner' ? 0.82 : 0.9);
+    this.P.startDeparture(this.convoyMesh(), this.destination(), this.departureCargo(), this.state.branch === 'runner' ? 0.82 : 0.9, this.state.branch !== 'runner');
     if (this.P.environment.key === 'hurricane') this.P.environment.setWeather('tropical', false, false);
     if (this.state.branch === 'runner') this.P.call('CH 16', 'MARA KEENE · TOWER', 'Lost Key has power somewhere in the mangroves. Split Pine is running on lanterns. FWC will sort out the rest after the water falls.', 3, 'high-water-aftermath-runner');
     else this.P.call('CH 16', 'MARA KEENE · TOWER', 'Old Mill storm light is on and Split Pine’s people are accounted for. That berth stays on the chart.', 3, 'high-water-aftermath-rescue');
