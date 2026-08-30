@@ -11,8 +11,8 @@ import { WORLD_HALF } from './heightfield.js';
 import { buildRaceCourse } from './racecourse.js';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitBackupDelay,
-  pursuitChannelClosurePlan, pursuitLostDistance, pursuitSirenLevel, pursuitSpeed, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount,
-  pursuitVisualHeld, wantedLevel,
+  pursuitChannelClosurePlan, pursuitLostDistance, pursuitSightSampleCount, pursuitSirenLevel, pursuitSpeed, pursuitSurfaceLineOfSight,
+  pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from './pursuit.js';
 import { emitWakeStamp } from './wakestamps.js';
 import {
@@ -288,6 +288,7 @@ export class EncounterDirector {
     this.game.save.encounterMemorySeq = Math.max(0, Number(this.game.save.encounterMemorySeq) || 0);
     this.distressEcho = null; this.patrolAlert = 0;
     this._f = new THREE.Vector2(); this._r = new THREE.Vector2(); this._flow = new THREE.Vector2(); this._personBoat = { x: 0, z: 0, speed: 0 };
+    this._patrolSight = { timer: 0, clear: true, held: true, inRange: true, blockedFor: 0, clearFor: 0, occluded: false, checkedUnits: 0, samples: 0 };
     this.stormEvacuationUsed = false; this.stormEvacuationWeather = this.environment.key;
     this.stormEvacuationContext = { weather: '', phase: '', progress: 0, surge: 0, surgeRate: 0, duration: 0, playerX: 0, playerZ: 0, waterLevel: 0, leadSeconds: 0 };
     this.airWashStamp = { x: 0, z: 0, radius: 8.5, height: -0.82, foam: 2.2, foamRadius: 9.5 };
@@ -1195,10 +1196,12 @@ export class EncounterDirector {
     if (!e || e.type !== 'patrol') return false;
     const fresh = e.state !== 'pursuit'; e.state = 'pursuit'; e.wanted = true; e.lostT = 0; e.surrender = 0;
     if (fresh) {
+      this.resetPatrolSight();
       e.pursuit = 0; e.tacticT = 0; e.tacticSide = Math.random() < 0.5 ? -1 : 1; e.lastKnownX = this.phys.pos.x; e.lastKnownZ = this.phys.pos.y;
       e.backupRequested = 0; e.backupCount = 0; e.units = 1; e.backupDue[0] = Infinity; e.backupDue[1] = Infinity; this.resetPatrolBackups();
       e.aviationRequested = false; e.aviationDue = Infinity; e.aviationActive = false; e.aviationVisual = false; e.aviationBeamActive = false;
       e.aviationLastSeen = 0; e.aviationAircraftDistance = Infinity; e.aviationBeamDistance = Infinity; this.resetPatrolAviation();
+      e.surfaceVisual = true; e.surfaceOccluded = false; e.visual = true; e.sightCallCd = 0;
     }
     if (this.law) {
       if (addViolation) { this.law.stats.failureToStop = (this.law.stats.failureToStop || 0) + 1; this.law.add(0.65, reason, false); }
@@ -1353,7 +1356,7 @@ export class EncounterDirector {
   }
 
   startPatrol(at, options = {}) {
-    this.resetPatrolBackups(); this.resetPatrolAviation();
+    this.resetPatrolBackups(); this.resetPatrolAviation(); this.resetPatrolSight();
     const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: Number(options.speed) || 4, want: 8, turn: 0, active: true });
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading;
     A.mesh.visible = true;
@@ -1362,6 +1365,7 @@ export class EncounterDirector {
       type: 'patrol', x: at.x, z: at.z, state: options.pursuit ? 'pursuit' : 'approach', t: 0, comply: 0, warned: false, pursuit: 0, known: Boolean(options.pursuit),
       wanted: Boolean(options.pursuit || (this.law && this.law.attention >= 1.2) || fwcStanding <= -4), recognized: fwcStanding >= 2 || goodwill >= 4,
       lostT: 0, surrender: 0, tacticT: 0, tacticSide: Math.random() < 0.5 ? -1 : 1, contactCd: 0, ramCd: 0, ramHits: options.impact ? 1 : 0,
+      surfaceVisual: true, surfaceOccluded: false, visual: true, sightCallCd: 0,
       lastKnownX: this.phys.pos.x, lastKnownZ: this.phys.pos.y, backupRequested: 0, backupCount: 0, units: 1, backupDue: [Infinity, Infinity],
       aviationRequested: false, aviationDue: Infinity, aviationActive: false, aviationVisual: false, aviationBeamActive: false,
       aviationLastSeen: 0, aviationAircraftDistance: Infinity, aviationBeamDistance: Infinity,
@@ -2202,6 +2206,57 @@ export class EncounterDirector {
     this.game.save.encounters.patrol = (this.game.save.encounters.patrol || 0) + 1; this.remember(seized ? 'patrol-seizure' : 'patrol-cited'); this.game.persist(); this.finish(true);
   }
 
+  resetPatrolSight() {
+    const sight = this._patrolSight || (this._patrolSight = {});
+    Object.assign(sight, { timer: 0, clear: true, held: true, inRange: true, blockedFor: 0, clearFor: 0, occluded: false, checkedUnits: 0, samples: 0 });
+  }
+
+  patrolAgentHasVisual(agent, lostDistance, sight) {
+    if (!agent?.active) return false;
+    const player = this.phys.pos, distance = Math.hypot(agent.x - player.x, agent.z - player.y);
+    if (!Number.isFinite(distance) || distance > lostDistance) return false;
+    sight.checkedUnits++; sight.samples += Math.max(0, pursuitSightSampleCount(distance) - 1);
+    return pursuitSurfaceLineOfSight(this.terrain, agent.x, agent.z, player.x, player.y, this.environment.waterLevel);
+  }
+
+  patrolSurfaceVisual(dt, lostDistance) {
+    const sight = this._patrolSight || (this._patrolSight = {}), nearest = this.patrolNearestDistance();
+    const inRange = pursuitVisualHeld(nearest, lostDistance, true);
+    if (!inRange) {
+      sight.inRange = false; sight.held = false; sight.blockedFor = 0; sight.clearFor = 0; sight.occluded = false;
+      return false;
+    }
+    if (!sight.inRange) sight.timer = 0;
+    sight.inRange = true; sight.timer = Math.max(-0.2, (Number(sight.timer) || 0) - Math.max(0, dt));
+    if (sight.timer <= 0) {
+      sight.checkedUnits = 0; sight.samples = 0;
+      sight.clear = this.patrolAgentHasVisual(this.rigs.patrol.agent, lostDistance, sight);
+      if (!sight.clear) for (const unit of this.rigs.patrolBackups) if (this.patrolAgentHasVisual(unit.agent, lostDistance, sight)) { sight.clear = true; break; }
+      sight.occluded = sight.checkedUnits > 0 && !sight.clear; sight.timer = 0.2;
+    }
+    if (sight.clear) {
+      sight.blockedFor = Math.max(0, (Number(sight.blockedFor) || 0) - dt * 2); sight.clearFor = (Number(sight.clearFor) || 0) + dt;
+      if (sight.held || sight.clearFor >= 0.12) sight.held = true;
+    } else {
+      sight.clearFor = 0; sight.blockedFor = (Number(sight.blockedFor) || 0) + dt;
+      if (sight.blockedFor >= 0.32) sight.held = false;
+    }
+    return pursuitVisualHeld(nearest, lostDistance, sight.held);
+  }
+
+  reportPatrolVisualTransition(e, previous, current) {
+    if (previous === current || e.pursuit < 0.8 || e.sightCallCd > 0) return;
+    e.sightCallCd = current ? 8 : 11;
+    if (!current) {
+      const bank = Boolean(e.surfaceOccluded), detail = bank ? 'The bank is between you and the patrol line. They are working from the last fix.' : 'The surface units are working from your last reported position.';
+      this.game.toast('FWC visual broken', detail, 3);
+      this.radio?.transmit({ channel: 'FWC TAC', speaker: 'FWC 27 · WARDEN SOTO', text: bank ? 'Visual broken behind the bank. Hold the last cut and work from Tower Boat’s last fix.' : 'Visual broken. Surface units hold the last fix and search the adjoining cuts.', priority: 3, key: 'patrol-visual-broken', cooldown: 10 });
+    } else if (e.lostT > 0.35) {
+      this.game.toast('FWC visual reacquired', 'A surface unit has the hull again.', 2.4);
+      this.radio?.transmit({ channel: 'FWC TAC', speaker: 'FWC 27 · WARDEN SOTO', text: 'Tower Boat reacquired. Surface line is back on the hull.', priority: 3, key: 'patrol-visual-reacquired', cooldown: 8 });
+    }
+  }
+
   patrolNearestDistance() {
     const p = this.phys, main = this.rigs.patrol.agent; let nearest = main.active ? Math.hypot(main.x - p.pos.x, main.z - p.pos.y) : Infinity;
     for (const R of this.rigs.patrolBackups) if (R.agent.active) nearest = Math.min(nearest, Math.hypot(R.agent.x - p.pos.x, R.agent.z - p.pos.y));
@@ -2214,7 +2269,8 @@ export class EncounterDirector {
     const finite = value => Number.isFinite(value) ? Math.round(value * 10) / 10 : null;
     return {
       active: Boolean(e), wantedLevel: wantedLevel(this.law?.attention || 0), surfaceUnits: e ? e.units : 0,
-      sharedVisual: Boolean(e?.visual), surfaceVisual: Boolean(e?.surfaceVisual), lostFor: finite(e?.lostT),
+      sharedVisual: Boolean(e?.visual), surfaceVisual: Boolean(e?.surfaceVisual), surfaceOccluded: Boolean(e?.surfaceOccluded), lostFor: finite(e?.lostT),
+      surfaceSight: { held: Boolean(this._patrolSight.held), checkedUnits: this._patrolSight.checkedUnits, terrainSamples: this._patrolSight.samples },
       channelClosure: { active: Boolean(e && closure?.active), holding: Boolean(e && closure?.holding), cooldown: e && closure ? finite(closure.cooldown) : null },
       aviation: {
         requested: Boolean(e?.aviationRequested), active: Boolean(e?.aviationActive), directVisual: Boolean(e?.aviationVisual), beamActive: Boolean(e?.aviationBeamActive),
@@ -2295,14 +2351,15 @@ export class EncounterDirector {
   updatePatrol(e, dt, t) {
     const A = this.rigs.patrol.agent, p = this.phys; let d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y);
     e.contactCd = Math.max(0, e.contactCd - dt); e.ramCd = Math.max(0, e.ramCd - dt);
+    e.sightCallCd = Math.max(0, (Number(e.sightCallCd) || 0) - dt); const priorSharedVisual = Boolean(e.visual);
     const heat = this.law?.attention || (e.wanted ? 1.2 : 0), stars = wantedLevel(heat);
     let tx = p.pos.x + p.vel.x * 1.5, tz = p.pos.y + p.vel.y * 1.5, maxSpeed = 8.4, holdRadius = e.state === 'check' ? 24 : 0;
     if (e.state === 'pursuit') {
       e.pursuit += dt; e.tacticT -= dt; this.schedulePatrolBackups(e, heat, t);
       if (e.tacticT <= 0) { e.tacticT = 4.5 + Math.random() * 3.5; e.tacticSide *= -1; }
       const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0);
-      const surfaceVisual = pursuitVisualHeld(this.patrolNearestDistance(), lostDistance), visual = this.updatePatrolAviation(e, dt, t, surfaceVisual, heat);
-      e.surfaceVisual = surfaceVisual;
+      const surfaceVisual = this.patrolSurfaceVisual(0, lostDistance), visual = this.updatePatrolAviation(e, dt, t, surfaceVisual, heat);
+      e.surfaceVisual = surfaceVisual; e.surfaceOccluded = Boolean(this._patrolSight.occluded);
       if (visual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; }
       if (visual) {
         const tactic = pursuitTactic(0, heat, d, e.tacticSide, A.tactic), pfx = -Math.sin(p.heading), pfz = -Math.cos(p.heading), prx = Math.cos(p.heading), prz = -Math.sin(p.heading);
@@ -2345,9 +2402,10 @@ export class EncounterDirector {
         if (unitDistance < nearest) { nearest = unitDistance; sirenX = R.agent.x; sirenZ = R.agent.z; }
       }
       this.audio.patrolSiren(pursuitSirenLevel(nearest, heat, true), heat, sirenX, sirenZ);
-      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0), surfaceVisual = pursuitVisualHeld(nearest, lostDistance), visual = surfaceVisual || Boolean(e.aviationVisual);
-      e.surfaceVisual = surfaceVisual;
+      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0), surfaceVisual = this.patrolSurfaceVisual(dt, lostDistance), visual = surfaceVisual || Boolean(e.aviationVisual);
+      e.surfaceVisual = surfaceVisual; e.surfaceOccluded = Boolean(this._patrolSight.occluded);
       e.visual = visual; if (visual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; }
+      this.law?.setPursuitVisual?.(visual); this.reportPatrolVisualTransition(e, priorSharedVisual, visual);
       const stopped = nearest < 19 && p.speed * MPH < 4.5 && !p.airborne && p.wipeT <= 0;
       e.surrender = stopped ? e.surrender + dt : Math.max(0, e.surrender - dt * 1.4);
       if (stopped) this.setPrompt(`hold idle <i>· ${e.units > 1 ? 'patrol line alongside' : 'patrol alongside'} · ${Math.max(0, 4 - e.surrender).toFixed(1)}s</i>`, 'STOP');

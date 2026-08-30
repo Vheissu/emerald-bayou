@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitAviationVisualRange,
-  pursuitBackupDelay, pursuitChannelClosurePlan, pursuitLostDistance, pursuitLostTime, pursuitSpeed, pursuitSirenLevel, pursuitTactic,
-  pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
+  pursuitBackupDelay, pursuitChannelClosurePlan, pursuitLostDistance, pursuitLostTime, pursuitSightSampleCount, pursuitSpeed,
+  pursuitSirenLevel, pursuitSurfaceLineOfSight, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
 
 test('maps attention to one through five visible wanted stars', () => {
@@ -80,8 +80,20 @@ test('escape requires both a minimum chase and sustained loss of visual', () => 
 
 test('any nearby active unit holds visual during a coordinated pursuit', () => {
   assert.equal(pursuitVisualHeld(74, 180), true);
+  assert.equal(pursuitVisualHeld(74, 180, false), false);
   assert.equal(pursuitVisualHeld(181, 180), false);
   assert.equal(pursuitVisualHeld(Infinity, 180), false);
+});
+
+test('emergent banks break surface visual while submerged bars do not', () => {
+  const open = { heightAt: () => -2 };
+  const submerged = { heightAt: x => x > 42 && x < 58 ? -0.18 : -2 };
+  const island = { heightAt: x => x > 42 && x < 58 ? 0.12 : -2 };
+  assert.equal(pursuitSurfaceLineOfSight(open, 0, 0, 100, 0, 0), true);
+  assert.equal(pursuitSurfaceLineOfSight(submerged, 0, 0, 100, 0, 0), true);
+  assert.equal(pursuitSurfaceLineOfSight(island, 0, 0, 100, 0, 0), false);
+  assert.equal(pursuitSurfaceLineOfSight(island, 0, 0, 12, 0, 0), true);
+  assert.ok(pursuitSightSampleCount(275) <= 20); assert.ok(pursuitSightSampleCount(30) >= 3);
 });
 
 test('patrol siren is distance driven, heat aware, and silent outside pursuit', () => {

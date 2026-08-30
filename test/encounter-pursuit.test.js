@@ -49,6 +49,28 @@ test('the nearest active patrol unit holds the pursuit line', () => {
   director.rigs.patrolBackups[1].agent.active = true; assert.equal(director.patrolNearestDistance(), 8);
 });
 
+test('surface pursuit perception checks banks at AI cadence and any clear unit can hold visual', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 100, y: 0 } }; director.environment = { waterLevel: 0 };
+  director.terrain = { heightAt(x, z) { return x > 42 && x < 58 && Math.abs(z) < 8 ? 0.2 : -2; } };
+  director.rigs = {
+    patrol: { agent: { active: true, x: 0, z: 0 } },
+    patrolBackups: [{ agent: { active: true, x: 60, z: 100 } }, { agent: { active: false, x: 80, z: 0 } }],
+  };
+  director.resetPatrolSight();
+  assert.equal(director.patrolSurfaceVisual(0.2, 180), true);
+  assert.equal(director._patrolSight.clear, true); assert.equal(director._patrolSight.checkedUnits, 2);
+
+  director.rigs.patrolBackups[0].agent.active = false; director._patrolSight.timer = 0;
+  assert.equal(director.patrolSurfaceVisual(0.2, 180), true);
+  assert.equal(director.patrolSurfaceVisual(0.2, 180), false);
+  assert.equal(director._patrolSight.occluded, true); assert.ok(director._patrolSight.samples > 0);
+
+  director.terrain.heightAt = () => -2; director._patrolSight.timer = 0;
+  assert.equal(director.patrolSurfaceVisual(0.06, 180), false);
+  assert.equal(director.patrolSurfaceVisual(0.06, 180), true);
+});
+
 test('backup rams use one shared contact window and damage the player craft', () => {
   const director = Object.create(EncounterDirector.prototype), damage = [];
   director.phys = {

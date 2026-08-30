@@ -93,8 +93,27 @@ export function pursuitUnitCanRam(role, attention) {
   return role === 0 ? wantedLevel(attention) >= 2 : wantedLevel(attention) >= 3;
 }
 
-export function pursuitVisualHeld(nearestUnitDistance, lostDistance) {
-  return Number.isFinite(nearestUnitDistance) && nearestUnitDistance <= Math.max(0, Number(lostDistance) || 0);
+export function pursuitSightSampleCount(distance) {
+  return clamp(Math.ceil(Math.max(0, Number(distance) || 0) / 14), 3, 20);
+}
+
+// Surface patrols cannot see through islands. The terrain mesh does not contain queryable foliage height, so an
+// emergent bank also stands in for the mangrove, cypress and sawgrass screen growing on it. This runs at AI cadence,
+// not render cadence, and performs no allocations.
+export function pursuitSurfaceLineOfSight(terrain, fromX, fromZ, toX, toZ, waterLevel = 0) {
+  if (!terrain || typeof terrain.heightAt !== 'function') return true;
+  const dx = toX - fromX, dz = toZ - fromZ, distance = Math.hypot(dx, dz);
+  if (!Number.isFinite(distance) || distance <= 18) return true;
+  const segments = pursuitSightSampleCount(distance), level = Number.isFinite(waterLevel) ? waterLevel : 0;
+  for (let index = 1; index < segments; index++) {
+    const along = index / segments, ground = terrain.heightAt(fromX + dx * along, fromZ + dz * along);
+    if (Number.isFinite(ground) && ground > level - 0.04) return false;
+  }
+  return true;
+}
+
+export function pursuitVisualHeld(nearestUnitDistance, lostDistance, lineOfSight = true) {
+  return lineOfSight !== false && Number.isFinite(nearestUnitDistance) && nearestUnitDistance <= Math.max(0, Number(lostDistance) || 0);
 }
 
 export function pursuitLostDistance(attention, restrictedVisibility = 0, storm = 0) {

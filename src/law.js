@@ -2,12 +2,17 @@ import { wantedLevel } from './pursuit.js';
 
 const clamp = (v, lo = 0, hi = 5) => Math.max(lo, Math.min(hi, v));
 
+export function pursuitStatusLabel(pursuit, visual = true) {
+  if (!pursuit) return 'Wanted';
+  return visual ? 'Wanted · FWC pursuit' : 'Wanted · FWC searching';
+}
+
 export class Law {
   constructor(o) {
     Object.assign(this, o); // game, phys, environment, audio
     this.stats = this.game.save.law || { citations: 0, escapes: 0, cleanChecks: 0, violations: 0, seizures: 0 };
     this.game.save.law = this.stats;
-    this.attention = clamp(Number(this.stats.attention) || 0); this.sinceEvent = 999; this.violationCd = 0; this.pursuit = false;
+    this.attention = clamp(Number(this.stats.attention) || 0); this.sinceEvent = 999; this.violationCd = 0; this.pursuit = false; this.pursuitVisual = false;
     this.hotCargoT = 0; this.lastReason = typeof this.stats.lastReason === 'string' ? this.stats.lastReason : ''; this.hudT = 0; this.enabled = false;
     this.el = document.getElementById('lawState');
     this.keyHandler = e => { if (import.meta.env.DEV && e.code === 'F4' && !e.repeat && this.enabled) { e.preventDefault(); this.add(3.2, 'reported collision'); } };
@@ -63,7 +68,13 @@ export class Law {
     }
   }
 
-  setPursuit(on) { this.pursuit = on; if (on) this.sinceEvent = 0; }
+  setPursuit(on) {
+    const was = this.pursuit; this.pursuit = Boolean(on);
+    if (this.pursuit) { this.sinceEvent = 0; if (!was) this.pursuitVisual = true; }
+    else this.pursuitVisual = false;
+  }
+
+  setPursuitVisual(on) { if (this.pursuit) this.pursuitVisual = Boolean(on); }
 
   update(dt, enabled = true) {
     this.enabled = enabled; if (!enabled) return;
@@ -87,7 +98,8 @@ export class Law {
     this.el.classList.toggle('on', n > 0 || this.hotCargoT > 0); this.el.classList.toggle('pursuit', this.pursuit);
     if (!n && !this.hotCargoT) { this.el.innerHTML = ''; return; }
     let stars = ''; for (let i = 0; i < 5; i++) stars += `<i class="${i < n ? 'lit' : ''}">★</i>`;
-    const cargo = this.hotCargoT > 0 ? `<small>unmarked cargo · ${Math.ceil(this.hotCargoT)}s</small>` : this.lastReason ? `<small>${this.pursuit ? 'active pursuit · ' : ''}${this.lastReason}</small>` : '';
-    this.el.innerHTML = `<span>${this.pursuit ? 'Wanted · FWC pursuit' : 'Wanted'}</span><b aria-label="${n} of 5 wanted stars">${stars}</b>${cargo}`;
+    const pursuitState = this.pursuit ? (this.pursuitVisual ? 'active pursuit · ' : 'visual broken · searching · ') : '';
+    const cargo = this.hotCargoT > 0 ? `<small>unmarked cargo · ${Math.ceil(this.hotCargoT)}s</small>` : this.lastReason ? `<small>${pursuitState}${this.lastReason}</small>` : '';
+    this.el.innerHTML = `<span>${pursuitStatusLabel(this.pursuit, this.pursuitVisual)}</span><b aria-label="${n} of 5 wanted stars">${stars}</b>${cargo}`;
   }
 }
