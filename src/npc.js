@@ -3,6 +3,7 @@ import { loadDriver } from './airboat.js';
 import { person } from './folk.js';
 import { mulberry32 } from './noise.js';
 import { emitWakeStamp } from './wakestamps.js';
+import { wakeSampleAt } from './wakefield.js';
 
 function skiffHullGeometry() {
   const stations = [
@@ -157,6 +158,11 @@ export class SkiffAI {
     this.mesh.rotation.set(this.pitch, this.heading, this.roll, 'YXZ');
     this.mesh.userData.motor.rotation.y = -turn * 0.4; this.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + this.speed * 5);
     if (this.i >= this.path.length - 1 && Math.hypot(tgt.x - this.pos.x, tgt.z - this.pos.y) < 6) this.done = true;
+  }
+  wakeHeightAt(x, z, t) {
+    if (!this.active || this.speed <= 2.2) return 0;
+    const dx = x - this.pos.x, dz = z - this.pos.y; if (dx * dx + dz * dz > 10609) return 0;
+    return wakeSampleAt(this.pos.x, this.pos.y, this.heading, this.speed, this.maxSpeed, 0.11, x, z, t);
   }
   // wake stamps for the water sim (only worth pushing when inside the sim window)
   stamps(out) {

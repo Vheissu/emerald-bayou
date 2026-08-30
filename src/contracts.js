@@ -6,6 +6,7 @@ import { regionAt } from './regions.js';
 import { fmtDist } from './game.js';
 import { emitWakeStamp } from './wakestamps.js';
 import { emitMapMarker } from './mapmarkers.js';
+import { sampleVesselWake } from './wakefield.js';
 
 const MPH = 2.23694;
 const RESIDENTS = ['leon', 'june', 'cal'];
@@ -137,6 +138,7 @@ export class ResidentContracts {
       notes: Array.isArray(saved.notes) ? saved.notes.map(n => ({ ...n, ...sanePoint(n), expiresMinutes: Math.max(0, finite(n.expiresMinutes)) })).filter(n => Number.isFinite(n.x)).slice(-6) : [],
     };
     this.rigs = this.makeRigs(); this.obs = []; this.phys.addObs('resident-contracts', this.obs);
+    this.agents = [this.rigs.patrolAgent, this.rigs.receiverAgent]; this.agentPitches = [1.12, 0.84];
     this._flow = new THREE.Vector2(); this.enabled = false; this.prompting = false; this.nearOffer = null;
     this.persistT = 5; this.announceT = 7; this.hitCd = 0; this.obLevel = 0; this.obPitch = 1;
     this.aidObs = { x: 0, z: 0, r: 0.7, tag: 'channel marker' };
@@ -687,14 +689,17 @@ export class ResidentContracts {
 
   updateAudio() {
     this.obLevel = 0; this.obPitch = 1;
-    for (const [A, pitch] of [[this.rigs.patrolAgent, 1.12], [this.rigs.receiverAgent, 0.84]]) {
+    for (let i = 0; i < this.agents.length; i++) {
+      const A = this.agents[i], pitch = this.agentPitches[i];
       if (!A.active) continue; const d = Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y);
       if (d < 155) { const level = (0.22 + 0.74 * Math.min(1, A.speed / 11)) * (1 - d / 155); if (level > this.obLevel) { this.obLevel = level; this.obPitch = pitch; } }
     }
   }
 
+  wakeHeightAt(x, z, t) { return sampleVesselWake(this.agents, x, z, t, 12.4, 0.105); }
+
   stamps(out) {
-    for (const A of [this.rigs.patrolAgent, this.rigs.receiverAgent]) {
+    for (const A of this.agents) {
       if (!A.active || A.speed < 2 || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 95) continue;
       const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), sp = Math.min(1, A.speed / 11);
       emitWakeStamp(out, A.x - fx * 1.8, A.z - fz * 1.8, 1.1, 0.5 * sp, 1.55 * sp, 1);

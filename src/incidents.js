@@ -5,6 +5,7 @@ import { WORLD_HALF } from './heightfield.js';
 import { regionAt } from './regions.js';
 import { emitWakeStamp } from './wakestamps.js';
 import { emitMapMarker } from './mapmarkers.js';
+import { sampleVesselWake } from './wakefield.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -564,6 +565,8 @@ export class WorldIncidents {
     }
     this.pushMarkers(); this.updateAudio(); this.interact = false; this.alternate = false;
   }
+
+  wakeHeightAt(x, z, t) { return sampleVesselWake(this.agents, x, z, t, 12.6, 0.11); }
 
   stamps(out) {
     for (const A of this.agents) {

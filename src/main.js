@@ -50,6 +50,7 @@ import { shallowWaterSediment, sedimentPlumeRadius } from './sediment.js';
 import { bindPageLifecycle } from './pagelifecycle.js';
 import { CHASE_CAMERA_SAMPLES, chaseCameraBoomLimit, chaseCameraBoomStep } from './chasecamera.js';
 import { SkyEnvironmentMap } from './environmentmap.js';
+import { sampleWakeFields } from './wakefield.js';
 
 const app = document.getElementById('app');
 const loadingProgress = (message, value) => window.__loadingScreen?.progress?.(message, value);
@@ -246,7 +247,8 @@ async function init() {
   const life = new Life({ terrain, scene, water, camera, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
   markStartup('livingWorldReadyMs');
   life.traffic.setWildlife({ manatees, gators, waders });
-  const playerWater = (x, z, t) => water.waveHeight(x, z, t) + life.traffic.wakeHeightAt(x, z, t);
+  const physicalWakeFields = [life.traffic];
+  const playerWater = (x, z, t) => water.waveHeight(x, z, t) + sampleWakeFields(physicalWakeFields, x, z, t);
   world.fx = { plume, spray, audio, fish: life.fish, playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) }; world.onShot = (x, z) => { waders.flushNear(x, z, 140, 'gunshot'); };
   birds.audio = audio; gators.audio = audio;
   gators.onCharge = (g) => game.gatorCharge(g);
@@ -281,6 +283,7 @@ async function init() {
   game.incidents = incidents; game.story = story; radio.incidents = incidents; radio.story = story;
   const aftermath = new StormRecovery({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, incidents, encounters, story, radio, reputation, condition });
   game.aftermath = aftermath; radio.aftermath = aftermath;
+  physicalWakeFields.push(skiff, encounters, incidents, story, aftermath);
   const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
   game.discoveries = discoveries;
   const navigationAids = new NavigationAids({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition });

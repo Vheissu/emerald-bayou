@@ -7,6 +7,7 @@ import { WORLD_HALF } from './heightfield.js';
 import { cachedResource, sharedResource } from './cache.js';
 import { emitWakeStamp } from './wakestamps.js';
 import { emitMapMarker } from './mapmarkers.js';
+import { clampWakeHeight, wakeSampleAt } from './wakefield.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -667,6 +668,21 @@ export class StormRecovery {
       this.persistT -= dt; if (this.persistT <= 0) { this.persistT = 6; this.persist(); }
     }
     this.cleanupT -= dt; if (this.cleanupT <= 0) { this.cleanupT = 20; this.prune(); }
+  }
+
+  wakeHeightAt(x, z, t) {
+    let height = 0;
+    for (let i = 0; i < this.sites.length; i++) {
+      const site = this.sites[i];
+      const movingWorkboat = site.type === 'blockage' && site.stage === 'marked';
+      const movingRecovery = site.type === 'survivor' && site.stage === 'reported';
+      if (!movingWorkboat && !movingRecovery) continue;
+      const A = this.rigs.get(site.id)?.agent;
+      if (!A?.active || A.backing || A.speed <= 2.2) continue;
+      const dx = x - A.x, dz = z - A.z; if (dx * dx + dz * dz > 10609) continue;
+      height += wakeSampleAt(A.x, A.z, A.heading, A.speed, 9, 0.095, x, z, t);
+    }
+    return clampWakeHeight(height, 0.2);
   }
 
   stamps(out) {

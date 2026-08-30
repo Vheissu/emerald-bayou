@@ -3,6 +3,7 @@ import { buildSkiff } from './npc.js';
 import { regionAt } from './regions.js';
 import { emitWakeStamp } from './wakestamps.js';
 import { emitMapMarker } from './mapmarkers.js';
+import { wakeSampleAt } from './wakefield.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -410,6 +411,12 @@ export class FalsePassage {
       const d = Math.hypot(this.agent.x - this.P.phys.pos.x, this.agent.z - this.P.phys.pos.y);
       if (d < 150) this.obLevel = Math.max(this.obLevel, (0.25 + 0.7 * Math.min(1, this.agent.speed / 13)) * (1 - d / 150));
     }
+  }
+
+  wakeHeightAt(x, z, t) {
+    const A = this.agent;
+    if (!this.chaseActive || !A.active || A.backing || A.speed <= 2.2) return 0;
+    return wakeSampleAt(A.x, A.z, A.heading, A.speed, 13.4, 0.11, x, z, t);
   }
 
   stamps(out) {

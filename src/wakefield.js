@@ -1,4 +1,11 @@
 const MAX_TRAFFIC_WAKE_HEIGHT = 0.24;
+export const MAX_DIRECTED_WAKE_HEIGHT = 0.24;
+export const MAX_COMBINED_WAKE_HEIGHT = 0.34;
+
+export function clampWakeHeight(height, maxHeight = MAX_COMBINED_WAKE_HEIGHT) {
+  const limit = Math.max(0, Number(maxHeight) || 0);
+  return Math.max(-limit, Math.min(limit, Number(height) || 0));
+}
 
 export function wakeSampleAt(sx, sz, heading, speed, maxSpeed, scale, x, z, t) {
   const strength = Math.max(0, Math.min(1, (speed - 2.2) / Math.max(1, maxSpeed - 2.2))); if (strength <= 0) return 0;
@@ -16,6 +23,34 @@ export function trafficWakeScale(kind) {
   return kind === 'air' ? 0.18 : kind === 'cruiser' ? 0.13 : 0.105;
 }
 
+// Mission, police, race, story, and recovery craft already live in small retained agent pools. Sampling those
+// records directly makes their rendered wakes physical without building another graph or allocating a hot-path list.
+export function sampleVesselWake(sources, x, z, t, defaultMaxSpeed = 11.6, defaultScale = 0.105, maxHeight = MAX_DIRECTED_WAKE_HEIGHT) {
+  let height = 0;
+  for (let i = 0; i < sources.length; i++) {
+    const source = sources[i];
+    if (!source?.active || source.backing || source.speed <= 2.2 || !Number.isFinite(source.x) || !Number.isFinite(source.z) || !Number.isFinite(source.heading)) continue;
+    const dx = x - source.x, dz = z - source.z;
+    if (dx * dx + dz * dz > 10609) continue;
+    const maxSpeed = Number.isFinite(source.wakeMaxSpeed) ? source.wakeMaxSpeed : Number.isFinite(source.maxSpeed) ? source.maxSpeed : Number.isFinite(source.max) ? source.max : defaultMaxSpeed;
+    const scale = Number.isFinite(source.wakeScale) ? source.wakeScale : defaultScale;
+    height += wakeSampleAt(source.x, source.z, source.heading, source.speed, maxSpeed, scale, x, z, t);
+  }
+  return clampWakeHeight(height, maxHeight);
+}
+
+// The player hull samples several points per physics step. A retained list of fields keeps that work bounded and
+// prevents overlapping pursuit wakes from stacking into an implausible launch ramp.
+export function sampleWakeFields(fields, x, z, t, maxHeight = MAX_COMBINED_WAKE_HEIGHT) {
+  let height = 0;
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    if (!field || typeof field.wakeHeightAt !== 'function') continue;
+    height += field.wakeHeightAt(x, z, t);
+  }
+  return clampWakeHeight(height, maxHeight);
+}
+
 // Resident traffic is a fixed seven-hull pool. Sampling it directly keeps the field deterministic and avoids
 // allocating a second wake graph or per-frame sample list for the boats that are already alive in the world.
 export function sampleTrafficWake(boats, x, z, t, excludeBoat = null) {
@@ -25,5 +60,5 @@ export function sampleTrafficWake(boats, x, z, t, excludeBoat = null) {
     if (boat === excludeBoat || !boat.active || boat.kind === 'canoe') continue;
     height += wakeSampleAt(boat.x, boat.z, boat.heading, boat.speed, boat.max, trafficWakeScale(boat.kind), x, z, t);
   }
-  return Math.max(-MAX_TRAFFIC_WAKE_HEIGHT, Math.min(MAX_TRAFFIC_WAKE_HEIGHT, height));
+  return clampWakeHeight(height, MAX_TRAFFIC_WAKE_HEIGHT);
 }

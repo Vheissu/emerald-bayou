@@ -3,6 +3,7 @@ import { buildSkiff } from './npc.js';
 import { regionAt } from './regions.js';
 import { emitWakeStamp } from './wakestamps.js';
 import { emitMapMarker } from './mapmarkers.js';
+import { sampleVesselWake } from './wakefield.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -87,6 +88,7 @@ export class StormLine {
     this._f = new THREE.Vector2(); this._r = new THREE.Vector2();
     this.convoy = makeAgent(this.convoyMesh(), 'convoy');
     this.chaser = makeAgent(this.chaserMesh(), 'chaser');
+    this.agents = [this.convoy, this.chaser];
     this.rigs = this.makeRigs(); this.P.scene.add(this.rigs.result, this.rigs.generator);
     this.obs = []; this.P.phys.addObs('story-high-water', this.obs);
     this.convoyObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.08, tag: 'storm convoy', onHit: (into, nx, nz) => this.convoyHit(into, nx, nz) };
@@ -509,8 +511,10 @@ export class StormLine {
     }
   }
 
+  wakeHeightAt(x, z, t) { return sampleVesselWake(this.agents, x, z, t, 12.7, 0.11); }
+
   stamps(out) {
-    for (const A of [this.convoy, this.chaser]) {
+    for (const A of this.agents) {
       if (!A.active || A.backing || A.speed < 2 || Math.hypot(A.x - this.P.phys.pos.x, A.z - this.P.phys.pos.y) > 95) continue;
       const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), sp = Math.min(1, A.speed / 11);
       emitWakeStamp(out, A.x - fx * 1.8, A.z - fz * 1.8, 1.1, 0.54 * sp, 1.7 * sp, 1);

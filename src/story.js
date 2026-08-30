@@ -9,6 +9,7 @@ import { StoryResidents } from './residents.js';
 import { ResidentContracts } from './contracts.js';
 import { emitWakeStamp } from './wakestamps.js';
 import { emitMapMarker } from './mapmarkers.js';
+import { clampWakeHeight, wakeSampleAt } from './wakefield.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -428,6 +429,17 @@ export class StoryDirector {
     if (this.stormLine && this.stormLine.obLevel > this.obLevel) { this.obLevel = this.stormLine.obLevel; this.obPitch = this.stormLine.obPitch; }
     this.contracts?.updateAudio();
     if (this.contracts && this.contracts.obLevel > this.obLevel) { this.obLevel = this.contracts.obLevel; this.obPitch = this.contracts.obPitch; }
+  }
+
+  wakeHeightAt(x, z, t) {
+    let height = this.passage?.wakeHeightAt(x, z, t) || 0;
+    height += this.stormLine?.wakeHeightAt(x, z, t) || 0;
+    height += this.contracts?.wakeHeightAt(x, z, t) || 0;
+    if (this.departT > 0 && this.departSpeed > 2.2) {
+      const p = this.departPoint;
+      height += wakeSampleAt(p.x, p.z, p.heading, this.departSpeed, 6.6, 0.09, x, z, t);
+    }
+    return clampWakeHeight(height, 0.28);
   }
 
   stamps(out) {

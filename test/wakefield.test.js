@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sampleTrafficWake, trafficWakeScale, wakeSampleAt } from '../src/wakefield.js';
+import {
+  MAX_COMBINED_WAKE_HEIGHT, MAX_DIRECTED_WAKE_HEIGHT, clampWakeHeight, sampleTrafficWake, sampleVesselWake,
+  sampleWakeFields, trafficWakeScale, wakeSampleAt,
+} from '../src/wakefield.js';
 
 const leader = (overrides = {}) => ({
   active: true, kind: 'john', x: 0, z: 0, heading: 0, speed: 10, max: 12, ...overrides,
@@ -30,4 +33,31 @@ test('overlapping resident wakes stay inside the bounded physical surface range'
   assert.equal(sampleTrafficWake(traffic, 14.7, 40, 0), -0.24);
   assert.ok(trafficWakeScale('air') > trafficWakeScale('cruiser'));
   assert.ok(trafficWakeScale('cruiser') > trafficWakeScale('john'));
+});
+
+test('retained mission-vessel records produce physical wakes without being mutated', () => {
+  const source = Object.freeze({ active: true, x: 0, z: 0, heading: 0, speed: 10, wakeMaxSpeed: 12, wakeScale: 0.14 });
+  const sources = Object.freeze([source]);
+  const expected = wakeSampleAt(source.x, source.z, source.heading, source.speed, source.wakeMaxSpeed, source.wakeScale, 14.7, 40, 0);
+  assert.ok(Math.abs(expected) > 0.02);
+  assert.equal(sampleVesselWake(sources, 14.7, 40, 0), expected);
+});
+
+test('directed wake sampling skips backed, inactive, malformed, and distant craft', () => {
+  const probe = (overrides = {}) => ({ active: true, x: 0, z: 0, heading: 0, speed: 10, ...overrides });
+  assert.equal(sampleVesselWake([probe({ active: false }), probe({ backing: true }), probe({ x: NaN })], 14.7, 40, 0), 0);
+  assert.equal(sampleVesselWake([probe()], 600, 600, 0), 0);
+  assert.equal(sampleVesselWake(Array.from({ length: 12 }, () => probe({ wakeScale: 0.2 })), 14.7, 40, 0), -MAX_DIRECTED_WAKE_HEIGHT);
+});
+
+test('the combined player wake field is bounded across overlapping systems', () => {
+  const fields = Object.freeze([
+    Object.freeze({ wakeHeightAt: () => 0.22 }),
+    Object.freeze({ wakeHeightAt: () => 0.19 }),
+    Object.freeze({ wakeHeightAt: () => -0.03 }),
+    null,
+  ]);
+  assert.equal(sampleWakeFields(fields, 0, 0, 0), MAX_COMBINED_WAKE_HEIGHT);
+  assert.equal(sampleWakeFields([{ wakeHeightAt: () => -0.8 }], 0, 0, 0), -MAX_COMBINED_WAKE_HEIGHT);
+  assert.equal(clampWakeHeight(Number.NaN, 0.2), 0);
 });

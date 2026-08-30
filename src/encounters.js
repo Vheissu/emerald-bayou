@@ -19,6 +19,7 @@ import {
 import { downburstCraftUrgency, downburstProbeScore, downburstReactionReady } from './downburst.js';
 import { combinedSurfaceWind, vesselLeeway, vesselWindHeel } from './vesselwind.js';
 import { emitWakeStamp } from './wakestamps.js';
+import { sampleVesselWake } from './wakefield.js';
 import { makeSurfaceSearchBeam, surfaceSearchlightResourceStats } from './surface-searchlight.js';
 import {
   pickStormEvacuationCamp, stormEvacuationLeadSeconds, stormEvacuationWindow,
@@ -3059,6 +3060,8 @@ export class EncounterDirector {
     if (this.active && !activePursuit && ((!carryingDistress && !carryingFire && (e.t > 260 || Math.hypot(focus.x - this.phys.pos.x, focus.z - this.phys.pos.y) > 720)) || ((carryingDistress || carryingFire) && e.t > 600))) this.finish(false);
     this.interact = false; this.alternate = false;
   }
+
+  wakeHeightAt(x, z, t) { return sampleVesselWake(this.agents, x, z, t, 12.4, 0.11); }
 
   stamps(out) {
     for (const A of this.agents) {
