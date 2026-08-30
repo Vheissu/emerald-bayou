@@ -67,7 +67,7 @@ class Chunk {
     this.level = level; this.i = i; this.j = j; this.size = SIZE(level); this.segs = SEGS_BY_LEVEL[level]; this.x0 = i * this.size; this.z0 = j * this.size;
     this.key = `${level}:${i}:${j}`;
     this.h = null; this.nrm = null; this.bio = null; this.mesh = null; this.veg = null; this.colliders = [];
-    this.requested = false; this.groundReady = false; this.ready = false; this.used = 0; this.prio = 0; this.build = null;
+    this.requested = false; this.groundReady = false; this.ready = false; this.used = 0; this.prio = 0; this.prioBias = 0; this.build = null;
   }
   sample(x, z, arr = this.h) {
     const n = this.segs, step = this.size / n;
@@ -249,8 +249,17 @@ export class Terrain {
     return Math.hypot(dx, dz);
   }
   request(c, dist) {
+    c.prioBias = Math.max(0, dist - this.boxDist(c.x0, c.z0, c.size)) / c.size;
     c.prio = dist / c.size;
     if (!c.requested) { c.requested = true; this.queue.push(c); }
+  }
+  reprioritizePending() {
+    const update = c => { if (c) c.prio = this.boxDist(c.x0, c.z0, c.size) / c.size + (c.prioBias || 0); };
+    for (const c of this.queue) update(c);
+    for (const c of this.finalize) update(c);
+    update(this.building); update(this.pausedBuilding);
+    this.queue.sort(compareTerrainBuildPriority);
+    this.finalize.sort(compareTerrainBuildPriority);
   }
   streamNode() {
     let node = this.streamNodes[this.streamNodeCount++];
@@ -327,7 +336,9 @@ export class Terrain {
       if (this.building === c) continue;
       this.dispose(c);
     }
-    this.queue.sort((a, b) => a.prio - b.prio);
+    // A resumed save can move the camera away from the dock while its first grids are still queued. Re-score all
+    // unfinished work against the current focus so stale zero-distance dock chunks cannot starve the boat's tile.
+    this.reprioritizePending();
   }
   // Begin the worker-side height grids while the main thread is still preparing lighting, boats and shaders. Results
   // remain in the normal finalization queue, so ground and foliage ownership is unchanged when the frame loop starts.

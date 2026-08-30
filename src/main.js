@@ -39,7 +39,7 @@ import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
 import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor, webglRendererName } from './renderquality.js';
 import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel, readQualityPreference, writeQualityPreference } from './displaysettings.js';
-import { constrainedAssetTransfer, startupPlan, startupTerrainReady } from './startup.js';
+import { constrainedAssetTransfer, startupPlan, startupTerrainFocus, startupTerrainReady } from './startup.js';
 import { FieldDiscoveryDirector } from './discoveries.js';
 import { NavigationAids } from './navigationaids.js';
 import { DirectedNavigationLights } from './vesselnavigationlights.js';
@@ -242,6 +242,12 @@ async function init() {
   veg.blocked = (x, z) => world.blockedAt(x, z);
   const game = new Game({ phys, T: terrain, scene, audio, tricks, manatees, gators, skiff, boat: boat.group, dockTie, startX, startZ, world });
   game.paused = true; // loading and the title screen are presentation states, not unobserved play time
+  const terrainFocus = startupTerrainFocus({
+    dockX: startX, dockZ: startZ, boatX: phys.pos.x, boatZ: phys.pos.y, positionRestored: game.positionRestored,
+  });
+  // The early dock prime overlaps terrain work with the rest of startup. A continuing save may restore the boat
+  // elsewhere, so immediately pivot the pending stream before any more systems are constructed.
+  const terrainRetarget = terrainFocus.retargeted ? terrain.prime(terrainFocus.x, terrainFocus.z) : null;
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
   const life = new Life({ terrain, scene, water, camera, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
@@ -335,7 +341,7 @@ async function init() {
   } : null;
   const debugResourceSnapshot = import.meta.env.DEV ? () => ({
     renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length },
-    startup: { ...startupTiming, terrainPrime, environmentMap: environmentReflections.resourceStats() },
+    startup: { ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, environmentMap: environmentReflections.resourceStats() },
     audio: audio.spatialStats(),
     proceduralSurfaces: TEX.sharedSurfaceTextureStats(),
     sky: sky.resourceStats(),
@@ -392,7 +398,7 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
@@ -1020,10 +1026,13 @@ async function init() {
   const t0 = performance.now();
   const terrainReady = new Promise(r => { const poll = () => {
     const elapsed = performance.now() - t0;
-    const ready = startupTerrainReady(startup.terrainReadiness, { settled: terrain.settled(), localVisible: terrain.visibleAt(startX, startZ) });
+    const visibleAtFocus = terrain.visibleAt(terrainFocus.x, terrainFocus.z);
+    const ready = startupTerrainReady(startup.terrainReadiness, { settled: terrain.settled(), localVisible: visibleAtFocus });
     if ((ready && elapsed >= startup.minWaitMs) || elapsed >= startup.maxWaitMs) {
       terrainReadinessState = {
-        ready, timedOut: !ready && elapsed >= startup.maxWaitMs, visibleAtStart: terrain.visibleAt(startX, startZ), settled: terrain.settled(),
+        ready, timedOut: !ready && elapsed >= startup.maxWaitMs, visibleAtStart: visibleAtFocus, visibleAtFocus,
+        visibleAtDock: terrain.visibleAt(startX, startZ), focusX: terrainFocus.x, focusZ: terrainFocus.z, restored: terrainFocus.restored,
+        settled: terrain.settled(),
         queued: terrain.queue.length, finalizing: terrain.finalize.length, inFlight: terrain.pool.inFlight, visible: terrain.visible.size, building: terrain.building?.key || '',
       };
       startupTiming.terrainWaitMs = elapsed; startupTiming.localTerrainReadyMs = performance.now() - startupStartedAt; r();

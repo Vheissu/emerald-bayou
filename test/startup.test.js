@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { constrainedAssetTransfer, OPTIONAL_MODEL_NAMES, startupPlan, startupTerrainReady } from '../src/startup.js';
+import { constrainedAssetTransfer, OPTIONAL_MODEL_NAMES, startupPlan, startupTerrainFocus, startupTerrainReady } from '../src/startup.js';
 import { compareTerrainBuildPriority, normalizeTerrainStreamOptions, shouldPreemptTerrainBuild, Terrain } from '../src/terrain.js';
 
 test('cinematic hardware warms shaders without blocking the title on authored models', () => {
@@ -111,6 +111,35 @@ test('startup readiness distinguishes a usable local tile from a completely sett
   assert.equal(startupPlan('unknown').id, 'performance');
 });
 
+test('startup terrain follows a restored boat but leaves new games focused on the dock', () => {
+  assert.deepEqual(startupTerrainFocus({ dockX: 12, dockZ: 70, boatX: -900, boatZ: 1200, positionRestored: true }), {
+    x: -900, z: 1200, restored: true, retargeted: true,
+  });
+  assert.deepEqual(startupTerrainFocus({ dockX: 12, dockZ: 70, boatX: -900, boatZ: 1200, positionRestored: false }), {
+    x: 12, z: 70, restored: false, retargeted: false,
+  });
+  assert.deepEqual(startupTerrainFocus({ dockX: 12, dockZ: 70, boatX: Number.NaN, boatZ: 1200, positionRestored: true }), {
+    x: 12, z: 70, restored: false, retargeted: false,
+  });
+});
+
+test('moving the stream focus reprioritizes stale dock work behind the current boat tile', () => {
+  const staleDock = { x0: 0, z0: 0, size: 100, level: 0, prio: 0, prioBias: 0 };
+  const currentBoat = { x0: 900, z0: 0, size: 100, level: 0, prio: 9, prioBias: 0 };
+  const prefetched = { x0: 900, z0: 100, size: 100, level: 0, prio: 2, prioBias: 2 };
+  const returnedBoat = { x0: 900, z0: 0, size: 100, level: 1, prio: 9, prioBias: 0 };
+  const terrain = Object.assign(Object.create(Terrain.prototype), {
+    camPos: new THREE.Vector2(950, 50), queue: [staleDock, prefetched, currentBoat], finalize: [returnedBoat], building: null, pausedBuilding: null,
+  });
+
+  terrain.reprioritizePending();
+
+  assert.equal(terrain.queue[0], currentBoat);
+  assert.equal(terrain.queue[1], prefetched);
+  assert.equal(terrain.queue[2], staleDock);
+  assert.equal(returnedBoat.prio, 0);
+});
+
 test('terrain workers are primed before the synchronous environment convolution', () => {
   const terrain = {
     camPos: new THREE.Vector2(), streamT: 0, queue: [1, 2], pool: { inFlight: 0 },
@@ -136,7 +165,7 @@ test('cinematic model upgrades start behind the title without retaining the disp
   assert.ok(source.includes('if (!startup.deferOptionalModels) for (const [k, name]'));
 });
 
-test('local startup only opens on terrain that is actually visible under the dock', () => {
+test('local startup only opens on terrain that is actually visible under its focus', () => {
   const terrain = { visible: new Set([
     { x0: -100, z0: -100, size: 100, mesh: { visible: true } },
     { x0: 0, z0: 0, size: 100, mesh: { visible: false } },

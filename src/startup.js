@@ -56,3 +56,9 @@ export function startupPlan(profileId, { constrainedTransfer = false } = {}) {
 export function startupTerrainReady(mode, { settled = false, localVisible = false } = {}) {
   return mode === 'settled' ? Boolean(settled) : Boolean(localVisible);
 }
+
+export function startupTerrainFocus({ dockX = 0, dockZ = 0, boatX, boatZ, positionRestored = false } = {}) {
+  const restored = positionRestored && Number.isFinite(boatX) && Number.isFinite(boatZ);
+  const x = restored ? boatX : dockX, z = restored ? boatZ : dockZ;
+  return { x, z, restored, retargeted: restored && Math.hypot(x - dockX, z - dockZ) > 1 };
+}
