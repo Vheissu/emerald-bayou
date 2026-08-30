@@ -132,6 +132,17 @@ test('waterspout audio is lazy and reuses one spatial graph fed by the retained 
   assert.equal(panner.pan.value, -0.96); assert.deepEqual(ctx.counts, { oscillators: 0, gains: 2, filters: 2 });
 });
 
+test('marsh fire and its bank-water pump share one lazy spatial noise graph', () => {
+  const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx; audio.sfx = {}; audio.amb = { connect() {} };
+  audio.marshFire(0, 0); assert.deepEqual(ctx.counts, { oscillators: 0, gains: 0, filters: 0 });
+  audio.setListener(0, 0, 0, -1); audio.marshFire(0.7, 0, 24, 0);
+  assert.deepEqual(ctx.counts, { oscillators: 0, gains: 3, filters: 3 }); assert.equal(ctx.allocations.panners.length, 1);
+  const graph = audio.marshFireAudio, panner = graph.panner;
+  audio.marshFire(0.25, 1, -24, 0); audio.marshFire(0, 0);
+  assert.equal(audio.marshFireAudio, graph); assert.equal(graph.panner, panner); assert.equal(ctx.allocations.panners.length, 1);
+  assert.equal(panner.pan.value, -0.94); assert.deepEqual(ctx.counts, { oscillators: 0, gains: 3, filters: 3 });
+});
+
 test('night-life ambience changes the existing bed without allocating another graph', () => {
   const audio = new EngineAudio(), ctx = mockAudioContext(); audio.ctx = ctx;
   audio.nightLife(2); assert.equal(audio.nightLifeLevel, 1);

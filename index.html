@@ -75,6 +75,10 @@
   #hazardState.on { opacity:0.96; transform:none; }
   #hazardState span { display:block; color:#d7f1f4; font-size:11px; font-weight:650; text-shadow:0 0 12px rgba(190,240,255,0.45); }
   #hazardState small { display:block; margin-top:4px; color:var(--foam); font-size:9px; opacity:0.72; letter-spacing:0.08em; }
+  #fireState { position:absolute; right:32px; top:284px; min-width:220px; text-align:right; text-transform:uppercase; letter-spacing:0.14em; opacity:0; transform:translateX(8px); transition:opacity .2s,transform .2s; }
+  #fireState.on { opacity:0.96; transform:none; }
+  #fireState span { display:block; color:#ff8a4d; font-size:11px; font-weight:700; text-shadow:0 0 14px rgba(255,78,22,0.62); }
+  #fireState small { display:block; margin-top:4px; color:var(--foam); font-size:9px; opacity:0.76; letter-spacing:0.08em; }
   #memoryState { position:absolute; left:28px; bottom:190px; width:270px; padding-left:10px; border-left:2px solid rgba(229,192,99,0.45); text-transform:uppercase; letter-spacing:0.12em; opacity:0; transform:translateX(-8px); transition:opacity .24s,transform .24s; }
   #memoryState.on { opacity:0.92; transform:none; }
   #memoryState span { display:block; color:var(--gold); font-size:10px; font-weight:650; }
@@ -287,6 +291,7 @@
     #menu .menu-keybar span:last-child { display:none; }
     #worldState { right:18px; top:84px; }
     #worldState .world-detail { display:none; }
+    #fireState { right:18px; }
     #waterRule { right:18px; bottom:200px; }
     #regionState { top:24%; min-width:280px; }
     #regionState span { font-size:22px; }
@@ -307,6 +312,7 @@
   <div id="worldState"></div>
   <div id="lawState"></div>
   <div id="hazardState"></div>
+  <div id="fireState" role="status" aria-live="polite"></div>
   <div id="memoryState"></div>
   <div id="boatState"></div>
   <div id="waterRule" role="status" aria-live="polite"></div>

@@ -189,6 +189,30 @@ export class EngineAudio {
     graph.roar.frequency.setTargetAtTime(155 + audible * 105, now, 0.22); graph.spray.frequency.setTargetAtTime(1120 + audible * 760, now, 0.18);
     this.setPersistentPan(graph.panner, x, z, 0.96);
   }
+  // One retained spatial bed serves both a grass fire and the bank-water pump used to fight it. The ambient noise
+  // source already exists, so a long containment attempt only moves AudioParams instead of allocating one-shot nodes.
+  marshFire(level = 0, pump = 0, x, z) {
+    if (!this.ctx || (!this.marshFireAudio && level <= 0.001 && pump <= 0.001)) return; const ctx = this.ctx, now = ctx.currentTime;
+    if (!this.marshFireAudio) {
+      const panner = this.persistentSpatialOutput(), destination = panner || this.sfx;
+      const body = ctx.createBiquadFilter(); body.type = 'bandpass'; body.frequency.value = 420; body.Q.value = 0.46;
+      const crackle = ctx.createBiquadFilter(); crackle.type = 'bandpass'; crackle.frequency.value = 1960; crackle.Q.value = 0.38;
+      const water = ctx.createBiquadFilter(); water.type = 'bandpass'; water.frequency.value = 1320; water.Q.value = 0.44;
+      const bodyGain = ctx.createGain(); bodyGain.gain.value = 0; const crackleGain = ctx.createGain(); crackleGain.gain.value = 0; const waterGain = ctx.createGain(); waterGain.gain.value = 0;
+      this.amb.connect(body); this.amb.connect(crackle); this.amb.connect(water);
+      body.connect(bodyGain); crackle.connect(crackleGain); water.connect(waterGain);
+      bodyGain.connect(destination); crackleGain.connect(destination); waterGain.connect(destination);
+      this.marshFireAudio = { panner, body, crackle, water, bodyGain, crackleGain, waterGain };
+    }
+    const graph = this.marshFireAudio, flame = clampAudio(level), stream = clampAudio(pump);
+    graph.bodyGain.gain.setTargetAtTime(flame * 0.11, now, flame ? 0.12 : 0.38);
+    graph.crackleGain.gain.setTargetAtTime(flame * (0.035 + flame * 0.035), now, flame ? 0.08 : 0.3);
+    graph.waterGain.gain.setTargetAtTime(stream * 0.105, now, stream ? 0.055 : 0.16);
+    graph.body.frequency.setTargetAtTime(340 + flame * 190, now, 0.22);
+    graph.crackle.frequency.setTargetAtTime(1580 + flame * 780, now, 0.16);
+    graph.water.frequency.setTargetAtTime(1120 + stream * 520, now, 0.12);
+    this.setPersistentPan(graph.panner, x, z, 0.94);
+  }
   // A VHF carrier opening or dropping: filtered static and the small relay click from the set in the boat.
   // Dialogue stays legible as captions; this cue makes it feel like radio traffic without synthetic speech.
   radio(open = true, priority = 1) {

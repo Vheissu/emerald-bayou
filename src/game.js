@@ -99,6 +99,7 @@ export class Game {
       || (s.discoveries?.found || []).length
       || (s.navigationAids?.reports || []).length
       || Number(s.fishing?.total)
+      || Number(s.marshFire?.stats?.contained)
       || (story.stage && story.stage !== 'dormant') || travelled
     );
   }
@@ -312,6 +313,7 @@ export class Game {
     records.push(['Aid reports', `${Math.max(0, Number(this.save.navigationAids?.stats?.reports) || 0)}`]);
     records.push(['Fish landed', `${Math.max(0, Number(this.save.fishing?.total) || 0)}`]);
     records.push(['Fish released', `${Math.max(0, Number(this.save.fishing?.released) || 0)}`]);
+    records.push(['Marsh fires contained', `${Math.max(0, Number(this.save.marshFire?.stats?.contained) || 0)}`]);
     const wanted = Math.max(0, Math.min(5, Math.ceil(Number(this.law?.attention) || 0)));
     const deeds = (this.reputation?.deeds || []).slice(-6).reverse();
     const deedRows = deeds.length ? deeds.map(deed => `<div class="deed"><b>${esc(deed.faction)} ${deed.delta > 0 ? '+' : ''}${Number(deed.delta).toFixed(1)}</b>${esc(deed.text)}</div>`).join('') : '<div class="deed">Nobody has made up their mind about this hull yet.</div>';
@@ -399,6 +401,7 @@ export class Game {
     if ((e.code === 'KeyC' || e.code === 'KeyX') && this.fishing?.capturesInput(e)) return;
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.story?.capturesInput(e.code)) return;
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.aftermath?.capturesInput(e.code)) return;
+    if (e.code === 'KeyE' && this.marshFire?.capturesInput(e.code)) return;
     if (e.code === 'KeyE' && this.navigationAids?.capturesInput(e.code)) return;
     if (e.code === 'KeyE' && !this.state && !this.paused) { if (this.dockJob) { if (this.unlocked(this.dockJob.i)) this.start(this.dockJob.i); else this.toast('Locked', `Finish ${this.missions[this.dockJob.i - 1].title} first`, 2); return; } if (this.dockCamp) { this.startRun(this.dockCamp); return; } if (this.atBoard) { this.openMenu(); return; } }
     if (e.code === 'KeyR' && this.state && (this.state.m.countdown || this.state.m.restartOnR)) { this.start(this.missions.indexOf(this.state.m)); }
@@ -768,6 +771,7 @@ const BOUNTY_POOL = [
   { id: 'dolphinpass', text: 'Keep a steady course when dolphins join the bow', kind: 'dolphinpass', target: 1, pay: 200 },
   { id: 'catch3', text: 'Land and release three fish', kind: 'catch', target: 1, count: 3, pay: 180 },
   { id: 'snook', text: 'Land a common snook', kind: 'fishspecies', target: 'common-snook', pay: 220 },
+  { id: 'fireline', text: 'Knock down a marsh fire from the water', kind: 'marshfire', target: 1, pay: 260 },
 ];
 class Bounties {
   constructor(G) {

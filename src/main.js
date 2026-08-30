@@ -29,6 +29,7 @@ import { BoatAnchor } from './anchor.js';
 import { Ecology } from './ecology.js';
 import { Law } from './law.js';
 import { StormHazards } from './stormhazards.js';
+import { MarshFireDirector } from './marshfire.js';
 import { Reputation } from './reputation.js';
 import { CurrentField } from './currents.js';
 import { RegionDirector, regionAt } from './regions.js';
@@ -255,7 +256,6 @@ async function init() {
   loadingProgress('Waking the backcountry', 0.68);
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   life.traffic.hazards = hazards;
-  environment.onLightning = strike => hazards.lightning(strike);
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio, currents, phys, terrain });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
   environment.radio = radio;
@@ -275,6 +275,12 @@ async function init() {
   const fishing = new Fishing({ scene, boat: boat.group, terrain, world, water, phys, game, audio, environment, currents, regions, life });
   game.fishing = fishing;
   const nocturnal = new NocturnalWetland({ scene, terrain, world, phys, environment, regions, audio, profile: renderProfile });
+  const marshFire = new MarshFireDirector({
+    scene, terrain, world, water, phys, game, audio, environment, condition, plume, spray, profile: renderProfile, ecology, waders, radio, reputation,
+    encounters, incidents, story, aftermath, discoveries, navigationAids, fishing,
+  });
+  game.marshFire = marshFire;
+  environment.onLightning = strike => { hazards.lightning(strike); marshFire.lightning(strike); };
   // Apply the saved clock and weather before the first capture. Previously a saved night or hurricane still received
   // the default daytime PMREM for the whole session, even though the visible sky and direct lighting were correct.
   environment.update(0, 0, camera.position, true);
@@ -338,6 +344,7 @@ async function init() {
       spotlightVolume: environment.spotlightVolumeSnapshot(),
       surfaceWetness: environment.surfaceWetnessSnapshot(),
       feedingActivity: ecology.feedingSnapshot(),
+      marshFire: marshFire.resourceStats(),
     },
     chart: worldMap.memoryStats(),
     models: modelLoadingStats(),
@@ -360,7 +367,7 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
@@ -718,6 +725,7 @@ async function init() {
     }
     currents.update(dtRaw, time, started && !game.paused);
     hazards.update(dtRaw, time, started && !game.paused);
+    marshFire.update(dtRaw, time, started && !game.paused);
     aftermath.update(dtRaw, time, started && !game.paused && !fishing.blocking());
     nocturnal.update(dtRaw, time, started && !game.paused);
     ecology.update(dtRaw, time, started && !game.paused);
