@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RESIDENT_ROUTINE } from './residentroutines.js';
 
 // The people of the bayou. A jointed figure (two-segment arms and legs, spine, head) driven by a pose-target system:
 // every frame a target pose is assembled from the figure's base pose (stand / sit / sitEdge / crouch), the thing it is
@@ -220,7 +221,7 @@ function nextAct(u) {
 // per-frame life for one figure. boat = {x, z, speed} in world space; env may carry heightAt(x,z) for walkers.
 const _w = new THREE.Vector3(), _q = new THREE.Quaternion(), _l = new THREE.Vector3(), _b = new THREE.Vector3();
 const P = { ...ZERO };
-function localYaw(g, wx, wz) { g.getWorldPosition(_w); g.getWorldQuaternion(_q); _l.set(wx - _w.x, 0, wz - _w.z).applyQuaternion(_q.invert()); return [Math.atan2(_l.x, _l.z), Math.hypot(_l.x, _l.z)]; }
+function localYaw(g, wx, wz) { g.getWorldPosition(_w); g.getWorldQuaternion(_q); _l.set(wx - _w.x, 0, wz - _w.z).applyQuaternion(_q.invert()); return Math.atan2(_l.x, _l.z); }
 export function animatePerson(g, t, dt, boat, envIn) {
   const u = g.userData; u.g = g; const ph = u.ph; dt = Math.min(dt, 0.1);
   if (u.faceY === null) u.faceY = g.rotation.y;
@@ -239,6 +240,19 @@ export function animatePerson(g, t, dt, boat, envIn) {
   const k = u.actDur > 0 ? u.actT / u.actDur : 0;
   if (u.act === 'guide') { P.rf = 2.35 + Math.sin(t * 3.2) * 0.1; P.re = 0.75 + Math.sin(t * 3.2) * 0.55; P.ro = -0.2; P.sx = -0.05; P.hdx = -0.1; }
   else if (u.act && ACTS[u.act]) ACTS[u.act](u, P, k, t);
+  if (u.routineState === RESIDENT_ROUTINE.BRACE) {
+    P.sx += 0.32; P.hdx += 0.2; P.hy -= u.pose === 'stand' ? 0.1 : 0.035;
+    P.lf = lerp(P.lf, 1.75, 0.72); P.lo = lerp(P.lo, -0.28, 0.72); P.le = lerp(P.le, 1.7, 0.72);
+    P.rf = lerp(P.rf, 1.35, 0.62); P.ro = lerp(P.ro, 0.35, 0.62); P.re = lerp(P.re, 1.55, 0.62);
+    P.lk += u.pose === 'stand' ? 0.34 : 0.08; P.rk += u.pose === 'stand' ? 0.34 : 0.08;
+  } else if (u.routineState === RESIDENT_ROUTINE.WATCH && boat) {
+    const bearing = localYaw(g, boat.x, boat.z), side = Math.max(-1.15, Math.min(1.15, bearing));
+    P.hdy += side * 0.68; P.sy += side * 0.22; P.sx += 0.08;
+    if (u.pose === 'stand' && !u.drive) {
+      P.rf = lerp(P.rf, 1.42, 0.62); P.ro = lerp(P.ro, 0.28 - side * 0.12, 0.62); P.re = lerp(P.re, 0.18, 0.62);
+      P.lf = lerp(P.lf, 0.65, 0.45); P.le = lerp(P.le, 1.45, 0.45);
+    } else P.sx += 0.12;
+  }
   // standing weight shift, changes side every so often
   if (u.pose === 'stand' && u.act !== 'walk') {
     u.sideT -= dt; if (u.sideT <= 0) { u.side = -u.side; u.sideT = 5 + Math.random() * 10; }
@@ -253,10 +267,10 @@ export function animatePerson(g, t, dt, boat, envIn) {
   const c = u.cur; for (const ch of CHANNELS) c[ch] += (P[ch] - c[ch]) * w;
   // --- the head: the boat when it is close, a chatting mate, else a slow wander ---
   let look = 0, lookX = 0, lookRate = 3;
-  if (u.act === 'chat' || u.act === 'listen') { if (u.buddy) { const [a] = localYaw(g, u.buddy.getWorldPosition(_b).x, _b.z); look = Math.max(-1.4, Math.min(1.4, a)); lookX = 0.05; } }
+  if (u.act === 'chat' || u.act === 'listen') { if (u.buddy) { const a = localYaw(g, u.buddy.getWorldPosition(_b).x, _b.z); look = Math.max(-1.4, Math.min(1.4, a)); lookX = 0.05; } }
   if (boat) {
     g.getWorldPosition(_w); const d = Math.hypot(boat.x - _w.x, boat.z - _w.z);
-    if (d < 45 && (boat.speed > 1.5 || d < 22 || u.act === 'idle' || u.act === 'hold')) { const [a] = localYaw(g, boat.x, boat.z); look = Math.max(-1.35, Math.min(1.35, a)); lookX = Math.abs(a) > 1.35 ? 0.35 : 0; }
+    if (d < 45 && (boat.speed > 1.5 || d < 22 || u.act === 'idle' || u.act === 'hold')) { const a = localYaw(g, boat.x, boat.z); look = Math.max(-1.35, Math.min(1.35, a)); lookX = Math.abs(a) > 1.35 ? 0.35 : 0; }
   }
   if (look === 0 && lookX === 0) { u.wanderT -= dt; if (u.wanderT <= 0) { u.wanderT = 2 + Math.random() * 5; u.wander = (Math.random() - 0.5) * 0.7; } look = u.wander; lookRate = 1.5; }
   u.look += (look - u.look) * (1 - Math.exp(-dt * lookRate)); u.lookX += (lookX - u.lookX) * (1 - Math.exp(-dt * 3));

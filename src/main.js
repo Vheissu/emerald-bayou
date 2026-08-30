@@ -326,6 +326,7 @@ async function init() {
       fishing: fishing.resourceStats(),
       nocturnalWetland: nocturnal.resourceStats(),
       settlementPower: environment.settlementPowerSnapshot(),
+      residentRoutines: ecology.residentRoutineSnapshot(),
       spotlightVolume: environment.spotlightVolumeSnapshot(),
       surfaceWetness: environment.surfaceWetnessSnapshot(),
       feedingActivity: ecology.feedingSnapshot(),

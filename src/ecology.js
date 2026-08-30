@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { WORLD_HALF } from './terrain.js';
+import { applyResidentRoutines } from './residentroutines.js';
 
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
@@ -38,6 +39,8 @@ export class Ecology {
     Object.assign(this, o); // environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio
     this.human = 1; this.traffic = 1; this.fish = 1; this.bird = 1; this.gator = 1; this.surface = 1;
     this.visibilityT = 0; this.frogT = 8 + Math.random() * 10;
+    this.residentRoutineInput = { role: 'camp', seed: 0.5, day: 1, hour: 12, storm: 0, rain: 0, wind: 0, distance: Infinity, playerSpeed: 0, attention: 0, pursuit: false };
+    this.residentRoutineStats = { groups: 0, actors: 0, inside: 0, outside: 0, watching: 0, bracing: 0, passes: 0 };
     this.bio = 0; this.bioPotential = 0; this.bioContrast = 1; this.bioOverride = null; this.radio = null;
     this.nature = this.game ? (this.game.save.nature ||= {}) : {};
     this.feeding = { active: false, state: 'idle', x: 0, z: 0, age: 0, duration: 0, boilT: 0, safetyT: 0, seen: false, observed: false, quietT: 0, scatterT: 0, reason: '', potential: 0, intensity: 1, scatter: 0 };
@@ -195,12 +198,27 @@ export class Ecology {
     return { active: F.active, state: F.state, x: F.x, z: F.z, age: F.age, duration: F.duration, distance: F.active ? Math.hypot(F.x - (this.phys || this.game.phys).pos.x, F.z - (this.phys || this.game.phys).pos.y) : null, quiet: F.quietT, seen: F.seen, observed: F.observed, reason: F.reason, potential: F.potential, cooldown: this.feedingCooldown, pools: { fish: this.life.fish.n, birdInstances: this.birds.count } };
   }
 
-  updateVisibility() {
-    const outside = this.human > 0.24;
-    const setPeople = g => { if (g && g.userData && g.userData.people) for (const p of g.userData.people) p.visible = outside; };
-    for (const g of this.world.liveCamps.values()) setPeople(g);
-    for (const { g } of this.world.liveSites.values()) setPeople(g);
+  applyResidentGroup(group, site, role) {
+    if (!site) return;
+    const input = this.residentRoutineInput, phys = this.phys || this.game?.phys;
+    input.role = role; input.distance = phys ? Math.hypot(site.x - phys.pos.x, site.z - phys.pos.y) : Infinity;
+    applyResidentRoutines(group, input, this.residentRoutineStats);
   }
+
+  updateVisibility() {
+    const input = this.residentRoutineInput, stats = this.residentRoutineStats;
+    const environment = this.environment, values = environment.values, phys = this.phys || this.game?.phys;
+    const law = this.game?.law;
+    input.day = environment.day; input.hour = environment.hour;
+    input.storm = values.storm; input.rain = values.rain; input.wind = values.wind * environment.gust;
+    input.playerSpeed = phys?.speed || 0; input.attention = law?.attention || 0; input.pursuit = Boolean(law?.pursuit);
+    stats.groups = 0; stats.actors = 0; stats.inside = 0; stats.outside = 0; stats.watching = 0; stats.bracing = 0; stats.passes++;
+    for (const group of this.world.liveCamps.values()) this.applyResidentGroup(group, group.userData.site, 'camp');
+    for (const { site, g } of this.world.liveSites.values()) this.applyResidentGroup(g, site, site.kind);
+    for (const { f, g } of this.life.folk.live.values()) this.applyResidentGroup(g, f, 'angler');
+  }
+
+  residentRoutineSnapshot() { return { ...this.residentRoutineStats }; }
 
   update(dt, t, enabled = true) {
     if (!enabled) return;

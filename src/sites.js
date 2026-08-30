@@ -330,6 +330,7 @@ export function buildSite(s, T) {
 // per-frame life for a built site: boats bob, decoys bob, towels flap, the ramp runs its launch, people watch and wave
 // ctx = { bx, bz, speed, dt, stamps, plume, spray, audio, fish, ob, truck } (ob / truck are written back: the loudest engine near the boat)
 const _tip = new THREE.Vector3(), _dir = new THREE.Vector3();
+const _boat = { x: 0, z: 0, speed: 0 };
 const siteWaterAt = (waveFn, wakeAt, x, z, t) => waveFn(x, z, t) + (wakeAt ? wakeAt(x, z, t) : 0);
 export function animateSite(g, t, waveFn, wind, ctx) {
   const sk = g.userData.skiff;
@@ -350,14 +351,14 @@ export function animateSite(g, t, waveFn, wind, ctx) {
   const house = g.userData.house; if (house) { const w = wind ? wind.y : 0.5; let i = 0; for (const tw of house.userData.towels) { tw.rotation.x = 0.15 * w + Math.sin(t * 2.2 + i * 1.7) * 0.18 * w; i++; } }
   if (g.userData.rampG) animateRamp(g.userData.rampG, t, waveFn, ctx);
   if (!ctx) return;
-  const dt = ctx.dt, boat = { x: ctx.bx, z: ctx.bz, speed: ctx.speed };
+  const dt = ctx.dt, boat = _boat; boat.x = ctx.bx; boat.z = ctx.bz; boat.speed = ctx.speed;
   const site = g.userData.site; const dSite = site ? Math.hypot(site.x - ctx.bx, site.z - ctx.bz) : 1e9;
-  if ((ctx.humanActivity ?? 1) <= 0.2) return;
   // a shotgun from the blind now and then, when you are not right on top of it
-  if (g.userData.blind && g.userData.blind.userData.people.length) { const b = g.userData.blind; b.userData.shotT -= dt; if (b.userData.shotT < 2.2 && dSite < 520 && !b.userData.aiming) { b.userData.aiming = true; aim(b.userData.people[Math.floor(Math.random() * b.userData.people.length)], 3.2); } if (b.userData.shotT <= 0) { b.userData.aiming = false; b.userData.shotT = 30 + Math.random() * 70; if (dSite > 40 && dSite < 520 && ctx.audio) { ctx.audio.shot(0.4 * (1 - dSite / 520), site.x, site.z); if (ctx.onShot) ctx.onShot(site.x, site.z); } } }
+  if ((ctx.humanActivity ?? 1) > 0.2 && g.userData.blind && g.userData.blind.userData.people.length) { const b = g.userData.blind; b.userData.shotT -= dt; if (b.userData.shotT < 2.2 && dSite < 520 && !b.userData.aiming) { b.userData.aiming = true; aim(b.userData.people[Math.floor(Math.random() * b.userData.people.length)], 3.2); } if (b.userData.shotT <= 0) { b.userData.aiming = false; b.userData.shotT = 30 + Math.random() * 70; if (dSite > 40 && dSite < 520 && ctx.audio) { ctx.audio.shot(0.4 * (1 - dSite / 520), site.x, site.z); if (ctx.onShot) ctx.onShot(site.x, site.z); } } }
   if (dSite > 220) return; // people only move when you can see them
   for (const p of g.userData.people) {
     const u = p.userData;
+    if (!p.visible) { if (u.line) u.line.visible = false; continue; }
     animatePerson(p, t, dt, boat, ctx);
     fishingUpdate(p, t, dt, waveFn, ctx);
     // a wave for a boat idling past
