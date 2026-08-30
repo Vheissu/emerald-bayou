@@ -78,6 +78,7 @@ export class Pipeline {
         near: { value: camera.near }, far: { value: camera.far }, exposure: { value: 1.0 },
         fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, fogMax: { value: 0.6 }, bloomAmt: { value: 0.12 }, bloomQuality: { value: this.bloomEnabled ? 1 : 0 },
         mistAmount: { value: 0 }, mistQuality: { value: quality.surfaceMist ?? 0 }, mistLevel: { value: 0 }, mistHeight: { value: 2.8 }, mistTime: { value: 0 }, mistWind: { value: new THREE.Vector2() },
+        heatAmount: { value: 0 }, heatQuality: { value: quality.heatHaze ?? 0 },
         cloudShadowAmount: { value: 0 }, cloudShadowQuality: { value: quality.cloudShadows ?? 0 }, cloudShadowOffset: { value: new THREE.Vector2() },
         lensWetness: { value: 0 }, lensQuality: { value: quality.lensWater ?? 0 }, lensTime: { value: 0 }, lensWind: { value: 0 }, lensAspect: { value: w / Math.max(1, h) },
         invProj: { value: new THREE.Matrix4() }, camMat: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
@@ -86,6 +87,7 @@ export class Pipeline {
       fragmentShader: `
         uniform sampler2D tColor, tDepth, tBloom, tNoise; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt, bloomQuality; uniform vec3 fogColor, sunDir;
         uniform float mistAmount, mistQuality, mistLevel, mistHeight, mistTime; uniform vec2 mistWind;
+        uniform float heatAmount, heatQuality;
         uniform float cloudShadowAmount, cloudShadowQuality; uniform vec2 cloudShadowOffset;
         uniform float lensWetness, lensQuality, lensTime, lensWind, lensAspect;
         uniform mat4 invProj, camMat; varying vec2 vUv;
@@ -114,7 +116,34 @@ export class Pipeline {
         }
         void main() {
           float lensStrength = lensWetness * lensQuality, lensMask = 0.0, lensRim = 0.0;
+          float cloudStrength = cloudShadowAmount * cloudShadowQuality;
+          float mistStrength = mistAmount * mistQuality;
+          float heatStrength = heatAmount * heatQuality;
+          float d = texture2D(tDepth, vUv).r, z = far, rayDist = 0.0;
+          // One retained depth sample locates every atmospheric effect in the world. Heat refraction is restricted to
+          // distant low air; the sky and nearby boat stay stable while the effect fades through the high canopy.
+          vec4 vp = invProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+          vec3 viewRay = normalize(vp.xyz / vp.w), vdir = normalize((camMat * vec4(viewRay, 0.0)).xyz);
+          vec3 cameraWorld = camMat[3].xyz, worldPos = cameraWorld;
+          if (d < 0.99999) {
+            z = linZ(d);
+            if (cloudStrength > 0.001 || mistStrength > 0.001 || heatStrength > 0.001) {
+              rayDist = min(z / max(-viewRay.z, 0.05), 7500.0);
+              worldPos = cameraWorld + vdir * rayDist;
+            }
+          }
           vec2 lensSampleUv = vUv;
+          if (heatStrength > 0.001 && d < 0.99999 && rayDist > 40.0) {
+            float distanceMask = smoothstep(45.0, 175.0, rayDist) * (1.0 - smoothstep(4200.0, 7000.0, rayDist));
+            float heightMask = 1.0 - smoothstep(7.0, 54.0, max(worldPos.y - mistLevel, 0.0));
+            float horizonMask = 1.0 - smoothstep(0.58, 0.94, abs(vdir.y));
+            vec2 heatUv = worldPos.xz * 0.0048 - mistWind * mistTime * 0.0018 + vec2(mistTime * 0.013, -mistTime * 0.009);
+            vec2 heatNoise = texture2D(tNoise, heatUv).rg * 2.0 - 1.0;
+            heatNoise.y += sin(worldPos.x * 0.067 + worldPos.z * 0.041 - mistTime * 1.8) * 0.18;
+            float heatMask = heatStrength * distanceMask * heightMask * horizonMask;
+            vec2 refraction = vec2(heatNoise.x * 0.38 / max(lensAspect, 0.5), heatNoise.y) * 0.00115 * heatMask;
+            lensSampleUv = clamp(lensSampleUv + refraction, vec2(0.002), vec2(0.998));
+          }
           if (lensStrength > 0.003) {
             vec4 coarseDrop = lensDropLayer(vUv, 5.2, 1.3);
             vec4 fineDrop = lensDropLayer(vUv + vec2(0.17, 0.07), 10.8, 4.7);
@@ -122,24 +151,13 @@ export class Pipeline {
             lensMask = clamp(max(coarseDrop.z, fineDrop.z * 0.82), 0.0, 1.0);
             lensRim = clamp(max(coarseDrop.w, fineDrop.w * 0.72), 0.0, 1.0);
             vec2 refraction = vec2(lensNormal.x / max(lensAspect, 0.5), lensNormal.y) * 0.0065 * lensStrength;
-            lensSampleUv = clamp(vUv + refraction, vec2(0.002), vec2(0.998));
+            lensSampleUv = clamp(lensSampleUv + refraction, vec2(0.002), vec2(0.998));
           }
           vec3 c = texture2D(tColor, lensSampleUv).rgb;
-          float d = texture2D(tDepth, vUv).r;
           // view ray for aerial perspective tint
-          vec4 vp = invProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0); vec3 viewRay = normalize(vp.xyz / vp.w); vec3 vdir = normalize((camMat * vec4(viewRay, 0.0)).xyz);
           float sunAmt = pow(max(dot(vdir, sunDir), 0.0), 8.0);
           vec3 fc = mix(fogColor, vec3(0.95, 0.9, 0.8), sunAmt * 0.5);
           if (d < 0.99999) {
-            float z = linZ(d);
-            float cloudStrength = cloudShadowAmount * cloudShadowQuality;
-            float mistStrength = mistAmount * mistQuality;
-            float rayDist = 0.0; vec3 cameraWorld = vec3(0.0), worldPos = vec3(0.0);
-            if (cloudStrength > 0.001 || mistStrength > 0.001) {
-              rayDist = min(z / max(-viewRay.z, 0.05), 7500.0);
-              cameraWorld = camMat[3].xyz;
-              worldPos = cameraWorld + vdir * rayDist;
-            }
             if (cloudStrength > 0.001) {
               // Intersect the sightline endpoint's ray to the sun with a broad notional cloud deck. Its retained
               // wind offset moves the cover through world space, while mipmapped shared noise keeps distant banks
@@ -255,6 +273,7 @@ export class Pipeline {
     if (this.grade) {
       this.grade.material.uniforms.bloomQuality.value = this.bloomEnabled ? 1 : 0;
       this.grade.material.uniforms.mistQuality.value = quality.surfaceMist ?? 0;
+      this.grade.material.uniforms.heatQuality.value = quality.heatHaze ?? 0;
       this.grade.material.uniforms.cloudShadowQuality.value = quality.cloudShadows ?? 0;
       this.grade.material.uniforms.lensQuality.value = quality.lensWater ?? 0;
     }
@@ -300,7 +319,9 @@ export class Pipeline {
     const grade = this.grade.material.uniforms;
     return {
       width, height, pixels, samples, dormant: this.dormant, bloom: this.bloomEnabled, finalPass: this.finalEnabled,
-      surfaceMist: grade.mistQuality.value, cloudShadows: grade.cloudShadowQuality.value, cloudShadowAmount: grade.cloudShadowAmount.value,
+      surfaceMist: grade.mistQuality.value, heatHaze: grade.heatQuality.value, heatHazeAmount: grade.heatAmount.value,
+      heatHazeExtraPasses: 0, heatHazeExtraPrograms: 0, heatHazeExtraTextures: 0, heatHazeExtraAttachmentBytes: 0,
+      cloudShadows: grade.cloudShadowQuality.value, cloudShadowAmount: grade.cloudShadowAmount.value,
       cloudShadowExtraPasses: 0, cloudShadowExtraPrograms: 0, cloudShadowExtraTextures: 0, cloudShadowExtraAttachmentBytes: 0,
       lensWater: grade.lensQuality.value, lensWetness: this.lensWetness,
       estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes,

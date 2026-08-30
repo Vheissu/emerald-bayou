@@ -28,6 +28,25 @@ export function surfaceMistEnvelope({ hour = 12, fog = 0, rain = 0, wind = 0, st
   return clamp(weatherFog + dawnCooling * calm * 0.58 + rainCooling);
 }
 
+// Refractive shimmer belongs to sun-heated low surfaces, not to a generic sunny-screen wobble. The thermal lag peaks
+// after solar noon; cloud, rain, fog and strong mixing wind all remove the near-surface temperature gradient.
+export function heatHazePotential(input = {}, daylightArg = 0, sunAltitudeArg = 0, cloudArg = 0.49, rainArg = 0, windArg = 0, stormArg = 0, fogArg = 0) {
+  const object = input && typeof input === 'object';
+  const hour = object ? input.hour ?? 12 : input, daylight = object ? input.daylight ?? 0 : daylightArg;
+  const sunAltitude = object ? input.sunAltitude ?? 0 : sunAltitudeArg, cloud = object ? input.cloud ?? 0.49 : cloudArg;
+  const rain = object ? input.rain ?? 0 : rainArg, wind = object ? input.wind ?? 0 : windArg;
+  const storm = object ? input.storm ?? 0 : stormArg, fog = object ? input.fog ?? 0 : fogArg;
+  const h = ((Number(hour) || 0) % 24 + 24) % 24;
+  const thermalLag = Math.exp(-Math.pow((h - 14) / 3.25, 2));
+  const solarHeating = clamp(Number(daylight) || 0) * smooth(0.28, 0.72, Number(sunAltitude) || 0);
+  const openDeck = smooth(0.37, 0.5, Number(cloud) || 0);
+  const dry = 1 - smooth(0.015, 0.32, Number(rain) || 0);
+  const calm = 1 - smooth(7, 22, Number(wind) || 0);
+  const clear = 1 - smooth(0.00055, 0.0018, Number(fog) || 0);
+  const stable = 1 - smooth(0.08, 0.58, Number(storm) || 0);
+  return clamp(thermalLag * solarHeating * openDeck * dry * calm * clear * stable);
+}
+
 // Cloud cover is a threshold in the sky shader: lower values build a more continuous deck. Distinct moving
 // shadows therefore peak under broken fair/overcast cover, then recede when a severe cell becomes uniformly dark.
 export function cloudShadowPotential(cover = 0.49, daylight = 0, sunAltitude = 0, storm = 0) {
@@ -393,7 +412,7 @@ export class Environment {
     this.navVisibility = { port: true, starboard: true, stern: true }; this.hornCooldown = 0;
     this.precip = new Precipitation(this.fxScene, this.effectBudget);
     this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
-    this.cloudShadowOffset = new THREE.Vector2(); this.cloudShadowAmount = 0;
+    this.cloudShadowOffset = new THREE.Vector2(); this.cloudShadowAmount = 0; this.heatHaze = 0; this.heatHazeTarget = 0;
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
@@ -530,6 +549,13 @@ export class Environment {
     return {
       amount: this.cloudShadowAmount, quality: grade.cloudShadowQuality.value,
       offsetX: this.cloudShadowOffset.x, offsetZ: this.cloudShadowOffset.y,
+      extraPasses: 0, extraPrograms: 0, extraTextures: 0, extraAttachmentBytes: 0,
+    };
+  }
+  heatHazeSnapshot() {
+    const grade = this.pipeline.grade.material.uniforms;
+    return {
+      amount: this.heatHaze, target: this.heatHazeTarget, quality: grade.heatQuality.value,
       extraPasses: 0, extraPrograms: 0, extraTextures: 0, extraAttachmentBytes: 0,
     };
   }
@@ -814,6 +840,9 @@ export class Environment {
     this.cloudShadowAmount = cloudShadowPotential(V.cloud, daylight, this.sunDir.y, V.storm);
     fog.cloudShadowAmount.value = this.cloudShadowAmount;
     fog.cloudShadowOffset.value.copy(this.cloudShadowOffset);
+    this.heatHazeTarget = heatHazePotential(this.hour, daylight, this.sunDir.y, V.cloud, V.rain, V.wind * this.gust, V.storm, V.fog);
+    if (step) this.heatHaze += (this.heatHazeTarget - this.heatHaze) * (1 - Math.exp(-step * 0.42));
+    fog.heatAmount.value = this.heatHaze;
     fog.mistAmount.value = surfaceMistEnvelope({ hour: this.hour, fog: V.fog, rain: V.rain, wind: V.wind * this.gust, storm: V.storm });
     fog.mistLevel.value = this.waterLevel;
     fog.mistHeight.value = lerp(2.35, 4.1, this.restrictedVisibility) + V.rain * 0.35;

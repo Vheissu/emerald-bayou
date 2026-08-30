@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { cloudShadowPotential, rainbowMoistureStep, rainbowPotential, rainbowResponse, surfaceMistEnvelope } from '../src/environment.js';
+import { cloudShadowPotential, heatHazePotential, rainbowMoistureStep, rainbowPotential, rainbowResponse, surfaceMistEnvelope } from '../src/environment.js';
 import { Sky } from '../src/sky.js';
 
 test('surface mist follows calm dawn cooling and real fog without surviving hurricane wind', () => {
@@ -29,6 +29,21 @@ test('cloud shadows belong to sunlit broken cover rather than night or a solid h
   assert.equal(cloudShadowPotential(0.49, 0, 0.72, 0), 0);
   assert.equal(cloudShadowPotential(0.49, 1, -0.02, 0), 0);
   assert.equal(cloudShadowPotential(0.16, 1, 0.72, 1), 0);
+});
+
+test('heat haze belongs to clear calm afternoon low air rather than every bright frame', () => {
+  const fair = heatHazePotential({ hour: 14, daylight: 1, sunAltitude: 0.94, cloud: 0.49, rain: 0, wind: 3.5, storm: 0, fog: 0.00028 });
+  const morning = heatHazePotential({ hour: 8, daylight: 1, sunAltitude: 0.5, cloud: 0.49, rain: 0, wind: 3.5, storm: 0, fog: 0.00028 });
+  const overcast = heatHazePotential({ hour: 14, daylight: 1, sunAltitude: 0.94, cloud: 0.4, rain: 0.04, wind: 6.5, storm: 0.28, fog: 0.00042 });
+
+  assert.ok(fair > 0.95);
+  assert.ok(morning < 0.02);
+  assert.ok(overcast < 0.1);
+  assert.equal(heatHazePotential(14, 1, 0.94, 0.49, 0.7, 3.5, 0, 0.00028), 0);
+  assert.equal(heatHazePotential(14, 1, 0.94, 0.49, 0, 24, 0, 0.00028), 0);
+  assert.equal(heatHazePotential(14, 1, 0.94, 0.52, 0, 1.6, 0.02, 0.0034), 0);
+  assert.equal(heatHazePotential({ hour: 1, daylight: 0, sunAltitude: -0.5, cloud: 0.49, wind: 3.5 }), 0);
+  assert.equal(heatHazePotential({ hour: 14, daylight: 1, sunAltitude: 0.94, cloud: 0.16, rain: 1, wind: 36, storm: 1, fog: 0.00134 }), 0);
 });
 
 test('a rainbow needs a clearing rain curtain and a low unobscured sun', () => {
