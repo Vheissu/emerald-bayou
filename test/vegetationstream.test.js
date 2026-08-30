@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { Vegetation } from '../src/vegetation.js';
+import { foliageInstanceCount, normalizeFoliageDetail, Vegetation } from '../src/vegetation.js';
 
 function deferredVegetation(chunks) {
   const terrain = {
@@ -28,6 +28,13 @@ const grassResource = () => ({
   geo: new THREE.PlaneGeometry(0.5, 1),
   mat: new THREE.MeshStandardMaterial({ color: 0x6f8d45 }),
   height: 1,
+});
+
+test('foliage detail keeps silhouettes bounded while reducing retained cards', () => {
+  assert.deepEqual([normalizeFoliageDetail(-2), normalizeFoliageDetail(0.56), normalizeFoliageDetail(4), normalizeFoliageDetail('bad')], [0.25, 0.56, 1, 1]);
+  assert.deepEqual([0.36, 0.56, 0.82, 1].map(detail => foliageInstanceCount(100, detail, 12)), [36, 56, 82, 100]);
+  assert.equal(foliageInstanceCount(5, 0.25, 2), 2);
+  assert.equal(foliageInstanceCount(0, 0.5, 2), 0);
 });
 
 test('retrofits deferred solid grass at one ready chunk per frame', () => {

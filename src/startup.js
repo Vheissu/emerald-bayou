@@ -14,11 +14,22 @@ const EFFECT_BUDGETS = Object.freeze({
   cinematic: Object.freeze({ spray: 12000, plume: 2600, rain: 2200, hail: 720 }),
 });
 
+// The map and simulation radius never change. These budgets only control how much foliage card detail is retained,
+// how far terrain children are prepared ahead of a moving boat, and how much main-thread time a frame may spend
+// turning completed worker grids into meshes. Low-end machines keep every physical tree in the near ring while far
+// stands use larger, sparser cards, avoiding a million-instance background build after the title has already opened.
+const STREAM_BUDGETS = Object.freeze({
+  fallback: Object.freeze({ foliageDetail: 0.36, terrainPrefetch: 1.15, terrainFinalizeBudgetMs: 1.25, terrainWorkerLimit: 1 }),
+  performance: Object.freeze({ foliageDetail: 0.56, terrainPrefetch: 1.2, terrainFinalizeBudgetMs: 2, terrainWorkerLimit: 1 }),
+  balanced: Object.freeze({ foliageDetail: 0.82, terrainPrefetch: 1.3, terrainFinalizeBudgetMs: 3, terrainWorkerLimit: 2 }),
+  cinematic: Object.freeze({ foliageDetail: 1, terrainPrefetch: 1.35, terrainFinalizeBudgetMs: 4, terrainWorkerLimit: 4 }),
+});
+
 const PLANS = Object.freeze({
-  fallback: Object.freeze({ id: 'fallback', effectBudget: EFFECT_BUDGETS.fallback, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: LOW_MEMORY_DISABLED_MODELS, solidGrass: 'off', deferOptionalModels: true, modelConcurrency: 1, modelReleaseDelayMs: 1800, modelBatchDelayMs: 1200, modelIdleTimeoutMs: 2500, modelPressureMaxWaitMs: 12000, terrainReadiness: 'local', minWaitMs: 250, maxWaitMs: 3000, compileDelayMs: 0 }),
-  performance: Object.freeze({ id: 'performance', effectBudget: EFFECT_BUDGETS.performance, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: LOW_MEMORY_DISABLED_MODELS, solidGrass: 'off', deferOptionalModels: true, modelConcurrency: 1, modelReleaseDelayMs: 1200, modelBatchDelayMs: 650, modelIdleTimeoutMs: 1800, modelPressureMaxWaitMs: 8000, terrainReadiness: 'local', minWaitMs: 350, maxWaitMs: 4000, compileDelayMs: 0 }),
-  balanced: Object.freeze({ id: 'balanced', effectBudget: EFFECT_BUDGETS.balanced, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: BALANCED_DISABLED_MODELS, solidGrass: 'deferred', deferOptionalModels: true, modelConcurrency: 1, modelReleaseDelayMs: 700, modelBatchDelayMs: 420, modelIdleTimeoutMs: 1600, modelPressureMaxWaitMs: 6000, terrainReadiness: 'local', minWaitMs: 500, maxWaitMs: 6000, compileDelayMs: 0 }),
-  cinematic: Object.freeze({ id: 'cinematic', effectBudget: EFFECT_BUDGETS.cinematic, warmShaders: true, blockingModels: FULL_WARM_MODELS, disabledModels: NO_DISABLED_MODELS, solidGrass: 'blocking', deferOptionalModels: false, modelConcurrency: 4, modelReleaseDelayMs: 0, modelBatchDelayMs: 0, modelIdleTimeoutMs: 900, modelPressureMaxWaitMs: 0, terrainReadiness: 'settled', minWaitMs: 800, maxWaitMs: 20000, compileDelayMs: 250 }),
+  fallback: Object.freeze({ id: 'fallback', effectBudget: EFFECT_BUDGETS.fallback, streamBudget: STREAM_BUDGETS.fallback, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: LOW_MEMORY_DISABLED_MODELS, solidGrass: 'off', deferOptionalModels: true, modelConcurrency: 1, modelReleaseDelayMs: 1800, modelBatchDelayMs: 1200, modelIdleTimeoutMs: 2500, modelPressureMaxWaitMs: 12000, terrainReadiness: 'local', minWaitMs: 250, maxWaitMs: 3000, compileDelayMs: 0 }),
+  performance: Object.freeze({ id: 'performance', effectBudget: EFFECT_BUDGETS.performance, streamBudget: STREAM_BUDGETS.performance, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: LOW_MEMORY_DISABLED_MODELS, solidGrass: 'off', deferOptionalModels: true, modelConcurrency: 1, modelReleaseDelayMs: 1200, modelBatchDelayMs: 650, modelIdleTimeoutMs: 1800, modelPressureMaxWaitMs: 8000, terrainReadiness: 'local', minWaitMs: 350, maxWaitMs: 4000, compileDelayMs: 0 }),
+  balanced: Object.freeze({ id: 'balanced', effectBudget: EFFECT_BUDGETS.balanced, streamBudget: STREAM_BUDGETS.balanced, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: BALANCED_DISABLED_MODELS, solidGrass: 'deferred', deferOptionalModels: true, modelConcurrency: 1, modelReleaseDelayMs: 700, modelBatchDelayMs: 420, modelIdleTimeoutMs: 1600, modelPressureMaxWaitMs: 6000, terrainReadiness: 'local', minWaitMs: 500, maxWaitMs: 6000, compileDelayMs: 0 }),
+  cinematic: Object.freeze({ id: 'cinematic', effectBudget: EFFECT_BUDGETS.cinematic, streamBudget: STREAM_BUDGETS.cinematic, warmShaders: true, blockingModels: FULL_WARM_MODELS, disabledModels: NO_DISABLED_MODELS, solidGrass: 'blocking', deferOptionalModels: false, modelConcurrency: 4, modelReleaseDelayMs: 0, modelBatchDelayMs: 0, modelIdleTimeoutMs: 900, modelPressureMaxWaitMs: 0, terrainReadiness: 'settled', minWaitMs: 800, maxWaitMs: 20000, compileDelayMs: 250 }),
 });
 
 export function startupPlan(profileId) {

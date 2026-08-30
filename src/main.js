@@ -108,7 +108,11 @@ async function init() {
 
   // Start the local height grids before the synchronous PBR convolution. On old hardware this lets its one terrain
   // worker make progress while the GPU prepares the much smaller profile-scaled environment map.
-  const terrain = new Terrain(7);
+  const terrain = new Terrain(7, {
+    prefetch: startup.streamBudget.terrainPrefetch,
+    finalizeBudgetMs: startup.streamBudget.terrainFinalizeBudgetMs,
+    workerLimit: startup.streamBudget.terrainWorkerLimit,
+  });
   const groundTex = { grass: TEX.grassGround(), mud: TEX.mudGround(), sand: TEX.sandGround(), noise: TEX.noiseTex() };
   scene.add(terrain.buildMesh(groundTex));
   const startZ = 70, startX = terrain.riverCenterX(startZ);
@@ -147,7 +151,7 @@ async function init() {
   for (const b of terrain.bars) exclusions.push({ x: b.x, z: b.z, r: b.r });
 
   // ---- vegetation ----
-  const veg = new Vegetation(terrain, exclusions);
+  const veg = new Vegetation(terrain, exclusions, { detail: startup.streamBudget.foliageDetail });
   // Cinematic keeps the full pre-title warm-up. Balanced installs the same clumps after play begins and retrofits
   // already-built near chunks one per frame; the two old-hardware tiers retain the procedural grass without ever
   // downloading or decoding these optional meshes.
@@ -309,6 +313,7 @@ async function init() {
     sky: sky.resourceStats(),
     graph: debugSceneGraphStats(),
     terrain: terrain.memoryStats(),
+    vegetation: veg.resourceStats(),
     minimap: minimap.memoryStats(),
     wildlife: {
       waders: debugTreeResources(waders.list.map(w => w.mesh)),

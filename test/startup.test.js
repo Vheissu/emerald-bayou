@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { OPTIONAL_MODEL_NAMES, startupPlan, startupTerrainReady } from '../src/startup.js';
-import { compareTerrainBuildPriority, shouldPreemptTerrainBuild, Terrain } from '../src/terrain.js';
+import { compareTerrainBuildPriority, normalizeTerrainStreamOptions, shouldPreemptTerrainBuild, Terrain } from '../src/terrain.js';
 
 test('cinematic hardware keeps the complete shader and model warm-up', () => {
   const plan = startupPlan('cinematic');
@@ -60,6 +60,27 @@ test('older-hardware profiles allocate smaller bounded weather and spray pools',
   }
   assert.deepEqual(cinematic, { spray: 12000, plume: 2600, rain: 2200, hail: 720 });
   assert.ok(Object.isFrozen(fallback));
+});
+
+test('streaming budgets preserve the map while shedding low-end foliage work', () => {
+  const fallback = startupPlan('fallback').streamBudget;
+  const performance = startupPlan('performance').streamBudget;
+  const balanced = startupPlan('balanced').streamBudget;
+  const cinematic = startupPlan('cinematic').streamBudget;
+
+  assert.deepEqual([fallback.foliageDetail, performance.foliageDetail, balanced.foliageDetail, cinematic.foliageDetail], [0.36, 0.56, 0.82, 1]);
+  assert.ok(fallback.terrainPrefetch < performance.terrainPrefetch);
+  assert.ok(performance.terrainPrefetch < balanced.terrainPrefetch);
+  assert.ok(balanced.terrainPrefetch < cinematic.terrainPrefetch);
+  assert.deepEqual([fallback.terrainWorkerLimit, performance.terrainWorkerLimit, balanced.terrainWorkerLimit, cinematic.terrainWorkerLimit], [1, 1, 2, 4]);
+  assert.deepEqual([fallback.terrainFinalizeBudgetMs, performance.terrainFinalizeBudgetMs, balanced.terrainFinalizeBudgetMs, cinematic.terrainFinalizeBudgetMs], [1.25, 2, 3, 4]);
+  for (const plan of [fallback, performance, balanced, cinematic]) assert.ok(Object.isFrozen(plan));
+});
+
+test('terrain stream options are bounded without changing world extent', () => {
+  assert.deepEqual(normalizeTerrainStreamOptions(), { prefetch: 1.35, finalizeBudgetMs: 4, workerLimit: 4 });
+  assert.deepEqual(normalizeTerrainStreamOptions({ prefetch: 0, finalizeBudgetMs: 99, workerLimit: 12 }), { prefetch: 1.05, finalizeBudgetMs: 6, workerLimit: 4 });
+  assert.deepEqual(normalizeTerrainStreamOptions({ prefetch: 1.2, finalizeBudgetMs: 2, workerLimit: 1 }), { prefetch: 1.2, finalizeBudgetMs: 2, workerLimit: 1 });
 });
 
 test('startup readiness distinguishes a usable local tile from a completely settled stream', () => {

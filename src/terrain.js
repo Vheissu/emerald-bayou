@@ -16,9 +16,19 @@ const ROOT = 3200, LEVELS = 6, FAR = 7200;
 const SEGS_BY_LEVEL = [64, 32, 32, 32, 16, 8];
 // how far (in multiples of its size) a node of each level keeps subdividing: the fine rings are tight, the far ones wide
 const SPLIT_K = [0, 2.2, 1.8, 1.4, 1.2, 1.0]; // full detail to 440 m, mid to 720 m, trees-only to 1.1 km, sparse to 1.9 km, crossed cards to 3.2 km
-const PREFETCH = 1.35; // children are built this far ahead of the ring reaching them
+const DEFAULT_PREFETCH = 1.35; // children are built this far ahead of the ring reaching them
+const DEFAULT_FINALIZE_BUDGET_MS = 4;
 const SIZE = (l) => ROOT / (1 << (LEVELS - 1 - l));
 const L0 = SIZE(0);
+
+export function normalizeTerrainStreamOptions(options = {}) {
+  const prefetch = Number(options.prefetch), finalizeBudgetMs = Number(options.finalizeBudgetMs), workerLimit = Number(options.workerLimit);
+  return {
+    prefetch: Math.max(1.05, Math.min(1.5, Number.isFinite(prefetch) ? prefetch : DEFAULT_PREFETCH)),
+    finalizeBudgetMs: Math.max(0.75, Math.min(6, Number.isFinite(finalizeBudgetMs) ? finalizeBudgetMs : DEFAULT_FINALIZE_BUDGET_MS)),
+    workerLimit: Math.max(1, Math.min(4, Math.trunc(Number.isFinite(workerLimit) ? workerLimit : 4))),
+  };
+}
 
 export function compareTerrainBuildPriority(a, b) {
   const ap = Number.isFinite(a?.prio) ? a.prio : Infinity, bp = Number.isFinite(b?.prio) ? b.prio : Infinity;
@@ -33,8 +43,8 @@ export function shouldPreemptTerrainBuild(active, next, paused = null) {
 }
 
 class WorkerPool {
-  constructor(seed) {
-    const n = Math.min(4, Math.max(1, (navigator.hardwareConcurrency || 4) - 2));
+  constructor(seed, workerLimit = 4) {
+    const n = Math.min(workerLimit, 4, Math.max(1, (navigator.hardwareConcurrency || 4) - 2));
     this.workers = []; this.pending = new Map(); this.id = 0; this.rr = 0; this.inFlight = 0;
     for (let i = 0; i < n; i++) {
       const w = new Worker(new URL('./terrain.worker.js', import.meta.url), { type: 'module' });
@@ -72,12 +82,16 @@ class Chunk {
 }
 
 export class Terrain {
-  constructor(seed = 7) {
+  constructor(seed = 7, options = {}) {
+    const stream = normalizeTerrainStreamOptions(options);
     this.hf = new WorldHeight(seed);
     this.bars = this.hf.bars;
     this.lagoon = new THREE.Vector2(this.hf.lagoon.x, this.hf.lagoon.y);
     this.island = new THREE.Vector2(this.hf.island.x, this.hf.island.y);
-    this.pool = new WorkerPool(seed);
+    this.pool = new WorkerPool(seed, stream.workerLimit);
+    this.prefetch = stream.prefetch;
+    this.finalizeBudgetMs = stream.finalizeBudgetMs;
+    this.workerLimit = stream.workerLimit;
     this.chunks = new Map();
     this.group = new THREE.Group(); this.group.name = 'terrain';
     this.hooks = { ready: null, done: null, dispose: null };
@@ -261,7 +275,8 @@ export class Terrain {
         if (level < LEVELS - 1) { const pc = this.ensure(level + 1, i >> 1, j >> 1); pc.used = now; if (!pc.ready) this.request(pc, d); }
       }
       // build the children before the ring reaches them, so the split never waits (and never needs a fallback)
-      if (level > 0 && d < size * SPLIT_K[level] * PREFETCH) for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) {
+      const prefetch = this.prefetch || DEFAULT_PREFETCH;
+      if (level > 0 && d < size * SPLIT_K[level] * prefetch) for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) {
         const cs = size / 2, cx0 = (i * 2 + a) * cs, cz0 = (j * 2 + b) * cs;
         if (cx0 >= WORLD_HALF || cz0 >= WORLD_HALF || cx0 + cs <= -WORLD_HALF || cz0 + cs <= -WORLD_HALF) continue;
         const cc = this.ensure(level - 1, i * 2 + a, j * 2 + b); cc.used = now; if (!cc.ready) this.request(cc, this.boxDist(cx0, cz0, cs) + size);
@@ -353,7 +368,7 @@ export class Terrain {
       this.pausedBuilding = this.building; this.building = null;
     }
     // finalize grids into meshes + vegetation, within a per-frame time budget
-    const budget = now + 4;
+    const budget = now + (this.finalizeBudgetMs || DEFAULT_FINALIZE_BUDGET_MS);
     while (performance.now() < budget) {
       if (!this.building) {
         let c = null;
@@ -397,7 +412,7 @@ export class Terrain {
       terrainGrid += grid; terrainGeometry += geometry; vegetation += veg; vegetationInstances += instances; vegetationMeshes += meshes; colliders += c.colliders.length;
       l.terrainGrid += grid; l.terrainGeometry += geometry; l.vegetation += veg; l.vegetationInstances += instances; l.vegetationMeshes += meshes; l.colliders += c.colliders.length;
     }
-    return { chunks: this.chunks.size, visible: this.visible.size, terrainGrid, terrainGeometry, vegetation, vegetationInstances, vegetationMeshes, colliders, finalization: { queued: this.finalize.length, building: this.building?.key || '', paused: this.pausedBuilding?.key || '' }, streamNodes: { active: this.streamNodeCount, capacity: this.streamNodes.length }, levels };
+    return { chunks: this.chunks.size, visible: this.visible.size, terrainGrid, terrainGeometry, vegetation, vegetationInstances, vegetationMeshes, colliders, streamBudget: { prefetch: this.prefetch || DEFAULT_PREFETCH, finalizeBudgetMs: this.finalizeBudgetMs || DEFAULT_FINALIZE_BUDGET_MS, workerLimit: this.workerLimit || 4, workerCapacity: this.pool.capacity }, finalization: { queued: this.finalize.length, building: this.building?.key || '', paused: this.pausedBuilding?.key || '' }, streamNodes: { active: this.streamNodeCount, capacity: this.streamNodes.length }, levels };
   }
   finish(c) {
     this.building = null; c.build = null; c.ready = true;
