@@ -18,6 +18,8 @@ test('bank firefly activity follows darkness, wet habitat and safe weather', () 
   assert.equal(fireflyActivity({ ...calmDusk, storm: 1 }), 0);
   assert.ok(fireflyActivity({ ...calmDusk, regionId: 'mangrove' }) > fireflyActivity({ ...calmDusk, regionId: 'broad' }) * 3);
   assert.ok(fireflyActivity({ ...calmDusk, hour: 23.5 }) < dusk * 0.25);
+  const moonlit = fireflyActivity({ ...calmDusk, moonlight: 1 });
+  assert.ok(moonlit > dusk * 0.5 && moonlit < dusk * 0.65);
 });
 
 test('engine wash and the bow spotlight disturb only nearby illuminated insects', () => {
@@ -35,7 +37,7 @@ test('the nocturnal display is deterministic and stays inside one fixed point re
     forward(out) { return out.set(-Math.sin(this.heading), -Math.cos(this.heading)); },
   };
   const environment = {
-    waterLevel: 0, hour: 20.15, gust: 1, restrictedVisibility: 0, spotOn: false,
+    waterLevel: 0, hour: 20.15, gust: 1, restrictedVisibility: 0, spotOn: false, moonlight: 0,
     windDir: new THREE.Vector3(1, 0, 0), values: { wind: 2, rain: 0, storm: 0, fog: 0.001 },
   };
   const wetland = new NocturnalWetland({

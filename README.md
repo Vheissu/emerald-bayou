@@ -94,7 +94,7 @@ A clearing squall can leave a rainbow opposite the low sun. The primary bow carr
 
 Clouds now move across the ground as well as the sky. In fair and overcast daylight, broad shadows cross the water, banks and trees with the wind. They thin through a squall and disappear under the solid dark deck of a hurricane. The mask takes one sample from the 256 px noise texture already used by mist, inside the existing colour-grade pass. Performance and Fallback skip the work. It adds no scene object or render target and reuses the existing shader program and texture.
 
-The Moon advances through a 29.531-day cycle. Its rise time, crescent or quarter terminator, moonlight and shadows all come from the same phase. New and full moons retain the strongest spring range; quarter moons soften the water and currents into a neap range. Clouds now hide the stars and Moon instead of letting either draw over the weather.
+The Moon advances through a 29.531-day cycle. Its rise time, crescent or quarter terminator, moonlight and shadows all come from the same phase. New and full moons retain the strongest spring range; quarter moons soften the water and currents into a neap range. Clouds now hide the stars and Moon instead of letting either draw over the weather. One retained brightness value follows the Moon above the horizon and through the cloud deck, then drives the scene light, firefly display and visible contrast of blue-fire wakes without another frame allocation.
 
 The renderer budgets its internal drawing buffer instead of blindly doubling every Retina dimension. Performance profiles release the full-size optional post targets, reduce reflection and shadow work, and defer optional GLB decoding until the dock scene is playable. The map, streaming distance and simulation stay unchanged while the largest HDR and depth attachments remain bounded.
 
@@ -116,9 +116,9 @@ Fishing owns one rod, one dynamic line buffer, one lure and one landing fish. Th
 
 Rare field signs depend on the place and the water rather than a mission marker. Roseate spoonbills settle in Rookery Lakes around first and last light, and a real player wake reaching the bank will flush them. A tagged smalltooth sawfish moves through Mangrove Reach on a rising tide; its receiver ping closes up as the boat approaches, but the fix only resolves while the hull stays at idle distance. Falling water in Cypress Reach can uncover a logging skiff long enough to copy its builder plate. Successful observations stay in the boat log and on the chart.
 
-On some calm nights, a plankton bloom reaches Mangrove Reach. The water stays black until something moves through it: hull wakes, fish, paddles and splashes leave blue fire behind them. The bloom runs through the existing wake and particle buffers, so it adds no extra scene assets.
+On some calm nights, a plankton bloom reaches Mangrove Reach. The water stays black until something moves through it: hull wakes, fish, paddles and splashes leave blue fire behind them. A bright Moon takes some contrast out of the glow without switching off the bloom; moonset and thick cloud bring the darker water back. The bloom runs through the existing wake and particle buffers, so it adds no extra scene assets.
 
-Calm banks now carry fireflies after sunset, with the thickest displays in cypress and mangrove water. Heavy rain and hard wind shut them down. A fast engine thins the flashes close to the hull, while the bow spotlight washes out the insects caught in its cone. Each bank is seeded from its world cell, so the same lights remain in place as the boat idles past. The display is one textureless point draw capped at 243 insects; Performance and Balanced draw smaller prefixes, and Fallback skips it.
+Calm banks now carry fireflies after sunset, with the thickest displays in cypress and mangrove water. Heavy rain and hard wind shut them down, while a high bright Moon makes the flashes harder to pick out. A fast engine thins the display close to the hull, and the bow spotlight washes out the insects caught in its cone. Each bank is seeded from its world cell, so the same lights remain in place as the boat idles past. The display is one textureless point draw capped at 243 insects; Performance and Balanced draw smaller prefixes, and Fallback skips it.
 
 The timing and wet-bank placement draw on [University of Florida field notes](https://entnemdept.ufl.edu/lloyd/firefly/ffcomp1-1.pdf). The mangrove bias follows the documented habitat of the [Florida intertidal firefly](https://xerces.org/press/first-conservation-status-assessments-published-for-north-american-fireflies), and the weather and light response follows [National Park Service viewing guidance](https://home.nps.gov/cong/fireflies.htm).
 
@@ -176,7 +176,7 @@ __dbg.mode = 'depth'                      // full | raw | nowater | depth | refl
 __dbg.phys.reset(x, z, heading)           // teleport
 __dbg.environment.minutesPerSecond = 0    // freeze the clock
 __dbg.environment.setHour(17.4)           // pick the light
-__dbg.environment.lunarSnapshot()         // phase, illumination, tide range, altitude
+__dbg.environment.lunarSnapshot()         // phase, illumination, tide range, altitude, live light
 __dbg.ecology.setBioluminescence(1, true) // force the disturbed-water glow
 __dbg.discoveries.start('roseate-roost', true, true) // force a nearby field sign
 __dbg.navigationAids.resourceStats()     // active aids, draw calls, faults and reports

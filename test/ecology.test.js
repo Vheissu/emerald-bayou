@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { feedingDisturbance, feedingEventPotential } from '../src/ecology.js';
+import { bioluminescenceContrast, feedingDisturbance, feedingEventPotential } from '../src/ecology.js';
 import { Birds } from '../src/wildlife.js';
 
 test('feeding activity follows light, moving tide and safe weather', () => {
@@ -26,6 +26,13 @@ test('only prop wash or a consequential wake scatters a feeding school', () => {
   assert.equal(feedingDisturbance({ distance: 34, speed: 2, wake: 0.08 }), 'wake');
   assert.equal(feedingDisturbance({ distance: 34, speed: 2, wake: 0.03 }), '');
   assert.equal(feedingDisturbance({ distance: 70, speed: 12, wake: 0.2 }), '');
+});
+
+test('moonlight changes perceived blue-fire contrast without erasing the bloom', () => {
+  const dark = bioluminescenceContrast(0), quarter = bioluminescenceContrast(0.5), bright = bioluminescenceContrast(1);
+  assert.equal(dark, 1);
+  assert.ok(quarter < dark && quarter > bright);
+  assert.ok(bright >= 0.55 && bright <= 0.57);
 });
 
 test('feeding activity redirects a fixed bird pool without adding scene resources', () => {

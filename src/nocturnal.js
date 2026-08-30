@@ -50,7 +50,8 @@ export function fireflyActivity(input = {}) {
   const wind = Math.max(0, Number(input.wind) || 0), rain = clamp(input.rain), storm = clamp(input.storm);
   const weather = (1 - smooth(5, 14, wind)) * (1 - smooth(0.24, 0.88, rain)) * (1 - smooth(0.28, 0.86, storm));
   const dampAir = 0.92 + smooth(0.00045, 0.0028, Math.max(0, Number(input.fog) || 0)) * 0.08;
-  return clamp(time * habitat * weather * dampAir);
+  const lunarDarkness = 1 - smooth(0.06, 0.9, clamp(input.moonlight)) * 0.42;
+  return clamp(time * habitat * weather * dampAir * lunarDarkness);
 }
 
 export function fireflyDisturbance(input = {}) {
@@ -163,7 +164,7 @@ export class NocturnalWetland {
     this.valid = 0; this.drawCount = 0; this.qualityLimit = 0; this.rebuilds = 0;
     this.cellX = Number.NaN; this.cellZ = Number.NaN; this.waterBand = Number.NaN;
     this.activity = 0; this.targetActivity = 0; this.activityOverride = null;
-    this.activityInput = { hour: 0, wind: 0, rain: 0, storm: 0, fog: 0, regionId: 'emerald' };
+    this.activityInput = { hour: 0, wind: 0, rain: 0, storm: 0, fog: 0, moonlight: 0, regionId: 'emerald' };
     this.setQuality(options.profile || {});
   }
 
@@ -235,7 +236,7 @@ export class NocturnalWetland {
     if (!enabled) { this.points.visible = false; this.audio?.nightLife?.(0); return; }
     const values = this.environment.values || {}, current = this.regions?.current || this.regionAtFn(this.phys.pos.x, this.phys.pos.y), input = this.activityInput;
     input.hour = this.environment.hour; input.wind = (values.wind || 0) * (this.environment.gust || 1);
-    input.rain = values.rain; input.storm = values.storm; input.fog = values.fog; input.regionId = current?.id;
+    input.rain = values.rain; input.storm = values.storm; input.fog = values.fog; input.moonlight = this.environment.moonlight; input.regionId = current?.id;
     const natural = fireflyActivity(input);
     this.targetActivity = this.activityOverride == null ? natural : this.activityOverride;
     const step = Math.max(0, Math.min(0.1, Number(dt) || 0));
@@ -256,7 +257,7 @@ export class NocturnalWetland {
   }
 
   snapshot() {
-    return { activity: this.activity, target: this.targetActivity, override: this.activityOverride, valid: this.valid, drawCount: this.drawCount, region: this.regions?.current?.id || this.regionAtFn(this.phys.pos.x, this.phys.pos.y)?.id || '' };
+    return { activity: this.activity, target: this.targetActivity, override: this.activityOverride, moonlight: clamp(this.environment.moonlight), valid: this.valid, drawCount: this.drawCount, region: this.regions?.current?.id || this.regionAtFn(this.phys.pos.x, this.phys.pos.y)?.id || '' };
   }
 
   resourceStats() {

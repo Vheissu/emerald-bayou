@@ -27,6 +27,10 @@ export function feedingDisturbance(input = {}, speedArg = 0, wakeArg = 0) {
   return '';
 }
 
+export function bioluminescenceContrast(moonlight = 0) {
+  return 1 - smooth(0.04, 0.9, clamp(Number(moonlight) || 0)) * 0.44;
+}
+
 // One director turns the clock and weather into behaviour budgets. Individual systems still own their movement;
 // this only answers the ecological questions: who is out, who has gone home, and what is willing to surface.
 export class Ecology {
@@ -34,7 +38,7 @@ export class Ecology {
     Object.assign(this, o); // environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio
     this.human = 1; this.traffic = 1; this.fish = 1; this.bird = 1; this.gator = 1; this.surface = 1;
     this.visibilityT = 0; this.frogT = 8 + Math.random() * 10;
-    this.bio = 0; this.bioPotential = 0; this.bioOverride = null; this.radio = null;
+    this.bio = 0; this.bioPotential = 0; this.bioContrast = 1; this.bioOverride = null; this.radio = null;
     this.nature = this.game ? (this.game.save.nature ||= {}) : {};
     this.feeding = { active: false, state: 'idle', x: 0, z: 0, age: 0, duration: 0, boilT: 0, safetyT: 0, seen: false, observed: false, quietT: 0, scatterT: 0, reason: '', potential: 0, intensity: 1, scatter: 0 };
     this.feedingCooldown = 48 + Math.random() * 58; this._feedingFlow = new THREE.Vector2();
@@ -61,8 +65,9 @@ export class Ecology {
     const cycle = ((E.day - 1) % 7 + 7) % 7, bloomNight = cycle < 3;
     const calm = (1 - smooth(5, 13, V.wind)) * (1 - V.storm * 0.94) * (1 - V.rain * 0.72);
     this.bioPotential = bloomNight ? clamp((1 - daylight) * calm) : 0;
+    this.bioContrast = bioluminescenceContrast(E.moonlight);
     const inReach = this.regions?.current?.id === 'mangrove';
-    const target = this.bioOverride == null ? (inReach ? this.bioPotential * 0.62 : 0) : this.bioOverride;
+    const target = this.bioOverride == null ? (inReach ? this.bioPotential * 0.62 * this.bioContrast : 0) : this.bioOverride;
     this.bio += (target - this.bio) * (1 - Math.exp(-dt * 0.55));
     if (this.bio < 0.0005 && target === 0) this.bio = 0;
     this.applyBioluminescence();
@@ -80,7 +85,7 @@ export class Ecology {
   }
 
   bioluminescenceSnapshot() {
-    return { intensity: this.bio, potential: this.bioPotential, override: this.bioOverride, region: this.regions?.current?.id || '', day: this.environment.day, hour: this.environment.hour };
+    return { intensity: this.bio, potential: this.bioPotential, contrast: this.bioContrast, moonlight: clamp(this.environment.moonlight), override: this.bioOverride, region: this.regions?.current?.id || '', day: this.environment.day, hour: this.environment.hour };
   }
 
   feedingSpot(nearby = false) {

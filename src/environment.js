@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { lunarAgeAt, lunarIllumination, lunarPhaseAt, lunarPhaseName, lunarTideRange } from './lunar.js';
+import { lunarAgeAt, lunarIllumination, lunarNightLight, lunarPhaseAt, lunarPhaseName, lunarTideRange } from './lunar.js';
 import { updateAttributePrefix } from './cache.js';
 import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
 import { applyAirboatWind } from './vesselwind.js';
@@ -387,7 +387,7 @@ export class Environment {
     this.localWindAngle = this.windAngle; this.hurricaneBlend = 0; this.surgeRate = 0;
     this.hurricane = { phase: '', progress: 0, eye: 0, eyewall: 0, windScale: 1, rainScale: 1, seaScale: 1, surgeScale: 1, surgeTrend: 0, windShift: 0, pressureHpa: 1004 };
     this.lastHurricanePhase = ''; this.updateHurricanePassage(false);
-    this.gust = 1; this.waterLevel = 0; this.astronomicalTideRate = 0; this.tideRate = 0; this.daylight = 0; this.night = 1; this.syncClockAndTide(); this.persistT = 10;
+    this.gust = 1; this.waterLevel = 0; this.astronomicalTideRate = 0; this.tideRate = 0; this.daylight = 0; this.night = 1; this.moonlight = 0; this.syncClockAndTide(); this.persistT = 10;
     this.rainbowMoisture = smooth(0.08, 0.72, this.values.rain); this.rainbow = 0; this.rainbowOverride = null;
     this.surfaceWetness = normalizeSurfaceWetness(saved.surfaceWetness, surfaceWetnessTarget(this.values.rain, this.values.hail, this.values.fog, this.daylight));
     this.navVisibility = { port: true, starboard: true, stern: true }; this.hornCooldown = 0;
@@ -487,7 +487,7 @@ export class Environment {
     const motion = Math.abs(this.tideRate) < 0.015 ? 'Slack' : this.tideRate > 0 ? 'Rising' : 'Falling';
     return `${motion} ${tideFt >= 0 ? '+' : ''}${tideFt.toFixed(1)} ft`;
   }
-  lunarSnapshot() { return { age: this.lunarAge, phase: this.lunarPhase, name: lunarPhaseName(this.lunarPhase), illumination: this.moonIllumination, tideRange: this.tideRange, altitude: this.moonDir?.y || 0 }; }
+  lunarSnapshot() { return { age: this.lunarAge, phase: this.lunarPhase, name: lunarPhaseName(this.lunarPhase), illumination: this.moonIllumination, tideRange: this.tideRange, altitude: this.moonDir?.y || 0, light: this.moonlight }; }
   persistState(write = true) {
     this.game.save.environment = {
       minutes: this.minutes,
@@ -759,7 +759,9 @@ export class Environment {
     setGlobalSurfaceWetness(this.surfaceWetness); this.terrain.setSurfaceWetness(this.surfaceWetness, this.waterLevel);
     const horizon = 1 - smooth(0.04, 0.52, Math.max(0, sunY));
     const stormShade = 1 - V.storm * 0.7;
-    const moonLight = night * smooth(0.01, 0.68, this.moonDir.y) * lerp(0, 0.14, Math.pow(this.moonIllumination, 0.72)) * lerp(1, 0.34, V.storm);
+    const moonTransmission = lerp(0.3, 1, smooth(0.19, 0.52, V.cloud)) * lerp(1, 0.45, V.storm);
+    this.moonlight = lunarNightLight(night, this.moonDir.y, this.moonIllumination, moonTransmission);
+    const moonLight = this.moonlight * 0.14;
     const cloudX = this.phys.pos.x + this.windDir.x * realTime * V.wind * 14;
     const cloudZ = this.phys.pos.y + this.windDir.z * realTime * V.wind * 14;
     const overheadCloud = clamp(0.5 + Math.sin(cloudX * 0.0017 + cloudZ * 0.0008) * 0.28 + Math.sin(cloudX * -0.0006 + cloudZ * 0.0021 + 1.7) * 0.18);
