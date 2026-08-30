@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
+import { downburstSurfaceState } from '../src/downburst.js';
 import { StormHazards, stormDebrisCanFly, stormDebrisFlightChance } from '../src/stormhazards.js';
 
 globalThis.document ??= { getElementById: () => null };
@@ -16,7 +17,7 @@ function makeHazards() {
   };
   const game = { save: {}, mapMarkers: [], shake: 0, toast() {}, persist() {} };
   const environment = {
-    key: 'hurricane', gust: 1, windDir: new THREE.Vector3(1, 0, 0), values: { wind: 36, storm: 1, rain: 1 },
+    key: 'thunderstorm', gust: 1, windDir: new THREE.Vector3(1, 0, 0), values: { wind: 18, storm: 0.92, rain: 1, hail: 0.08, lightning: 0.9 },
     alert() {}, triggerLightning() {}, camera: { position: new THREE.Vector3() },
   };
   const hazards = new StormHazards({
@@ -79,4 +80,28 @@ test('a waterspout publishes its cloud motion and one special marine warning', (
   hazards.radio = { waterspoutCall(spout) { reported = spout; } };
   assert.equal(hazards.spawnSpout(true, true), true);
   assert.equal(reported, hazards.spout); assert.ok(Math.hypot(hazards.spout.motionX, hazards.spout.motionZ) >= 5.15);
+});
+
+test('one retained downburst cell publishes radial wind without growing storm resources', () => {
+  const { hazards, phys, game } = makeHazards(); let reported = null;
+  hazards.radio = { downburstCall(cell) { reported = cell; } };
+  const ring = hazards.downburst.ring, geometry = ring.geometry, material = ring.material;
+  assert.equal(hazards.spawnDownburst(true, true), true);
+  assert.equal(reported, hazards.downburst);
+  hazards.downburst.age = 12;
+  const field = downburstSurfaceState(hazards.downburst, hazards.downburst.x, hazards.downburst.z, {});
+  phys.pos.set(hazards.downburst.x + field.radius, hazards.downburst.z); hazards.enabled = true;
+  const wind = hazards.surfaceWindAtPlayer();
+  assert.ok(wind.x > 20); assert.ok(Math.abs(wind.z) < wind.x); assert.ok(wind.intensity > 0.9);
+  hazards.updateDownburst(1 / 60, 1);
+  assert.ok(game.mapMarkers.includes(hazards.downburstMarker));
+  hazards.endDownburst();
+  assert.equal(hazards.spawnDownburst(true, true), true);
+  assert.equal(hazards.downburst.ring, ring); assert.equal(ring.geometry, geometry); assert.equal(ring.material, material);
+  assert.deepEqual(hazards.resourceStats().downburst, { active: true, cells: 1, geometries: 1, materials: 1, drawCalls: 1 });
+});
+
+test('downburst wind is zero while the storm director is disabled', () => {
+  const { hazards } = makeHazards(); hazards.spawnDownburst(true, true);
+  assert.deepEqual(hazards.surfaceWindAtPlayer(), { x: 0, z: 0, intensity: 0 });
 });

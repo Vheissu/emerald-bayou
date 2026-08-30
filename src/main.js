@@ -645,7 +645,7 @@ async function init() {
       phys.update(dt, input, playerWater, time, currentFlow);
     }
     else { phys.impact = 0; phys.hit = 0; phys.landedFrame = false; }
-    environment.applyPhysics(dt);
+    environment.applyPhysics(dt, hazards.surfaceWindAtPlayer());
     anchor.update(dt, time, started && !game.paused);
     phys.forward(fwd2); phys.right(rgt2);
     tricks.update(dt, time);

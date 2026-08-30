@@ -235,6 +235,14 @@ export class RadioDirector {
     });
   }
 
+  downburstCall() {
+    return this.transmit({
+      channel: 'WX-3', speaker: 'MARINE WX-3',
+      text: 'Special marine warning. Wet downburst over the backcountry. Damaging wind is spreading out from the rain core. Small craft clear the open crossings now.',
+      priority: 4, duration: 7.2, key: `weather:downburst:${Math.floor(this.clock / 30)}`, cooldown: 30,
+    });
+  }
+
   regionCall(region) {
     const text = REGION_ENTRY[region.id]; if (!text) return;
     this.transmit({ channel: 'CH 68', speaker: 'MARA KEENE · TOWER', text, priority: 1, key: `region:${region.id}`, cooldown: 150 });

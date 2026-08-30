@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { airboatWindLoad, applyAirboatWind, vesselLeeway, vesselWindHeel } from '../src/vesselwind.js';
+import { airboatWindLoad, applyAirboatWind, combinedSurfaceWind, vesselLeeway, vesselWindHeel } from '../src/vesselwind.js';
 import { AirboatPhysics } from '../src/airboat.js';
 
 const close = (actual, expected, tolerance = 1e-9) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not within ${tolerance} of ${expected}`);
@@ -43,6 +43,16 @@ test('applying wind reuses caller state and exposes the physical load for debugg
   assert.equal(hull.windHeel, result.heel);
   assert.equal(hull.apparentWind, result.apparentSpeed);
   assert.equal(hull.crosswind, result.crosswind);
+});
+
+test('local storm outflow combines with the ambient wind before vessel load is calculated', () => {
+  const out = {};
+  assert.equal(combinedSurfaceWind({ x: 1, z: 0 }, 18, { x: 0, z: 24 }, out), out);
+  close(out.speed, 30);
+  close(out.x, 0.6);
+  close(out.z, 0.8);
+  combinedSurfaceWind({ x: 1, z: 0 }, 18, { x: -18, z: 0 }, out);
+  assert.deepEqual(out, { x: 0, z: 0, speed: 0 });
 });
 
 test('airboat attitude follows the retained gust heel and reset clears it', () => {

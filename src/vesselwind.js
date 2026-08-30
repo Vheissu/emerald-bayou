@@ -10,6 +10,17 @@ function projectedCoefficient(x, z, lateralX, lateralZ) {
   return 0.00012 + Math.pow(clamp(side, 0, 1), 1.35) * 0.00016;
 }
 
+export function combinedSurfaceWind(baseDirection, baseSpeed = 0, localOutflow = null, out = {}) {
+  out.x = 0; out.z = 0; out.speed = 0;
+  const speed = clamp(finite(baseSpeed), 0, 60), bx0 = finite(baseDirection?.x), bz0 = finite(baseDirection?.z);
+  const baseLength = Math.hypot(bx0, bz0);
+  const baseX = baseLength > 1e-6 ? bx0 / baseLength * speed : 0, baseZ = baseLength > 1e-6 ? bz0 / baseLength * speed : 0;
+  const windX = baseX + finite(localOutflow?.x), windZ = baseZ + finite(localOutflow?.z), length = Math.hypot(windX, windZ);
+  if (length <= 1e-6) return out;
+  out.x = windX / length; out.z = windZ / length; out.speed = Math.min(60, length);
+  return out;
+}
+
 // NASA's drag equation makes aerodynamic force proportional to apparent-air-speed squared. Subtracting the
 // no-wind load preserves the boat's established calm-water handling; the remaining force is the weather load only.
 // Coefficients are kept in the USCG flat-bottom-skiff leeway range rather than turning hurricane wind into an arcade

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { sharedResource } from './cache.js';
+import { downburstCanForm, downburstSurfaceState } from './downburst.js';
 import { WORLD_HALF } from './heightfield.js';
 import { WakeStampPool } from './wakestamps.js';
 import { waterspoutCanForm, waterspoutDriftSpeed } from './waterspout.js';
@@ -136,6 +137,28 @@ function makeStrike(scene) {
   return { group, ring, light, life: 0, maxLife: 0.7 };
 }
 
+function makeDownburst() {
+  const group = new THREE.Group(); group.name = 'downburst rain foot'; group.visible = false;
+  const geometry = new THREE.TorusGeometry(1, 0.015, 6, 72), position = geometry.attributes.position;
+  const colors = new Float32Array(position.count * 3);
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i), y = position.getY(i), z = position.getZ(i), angle = Math.atan2(y, x);
+    const warp = 1 + Math.sin(angle * 3 + 0.7) * 0.032 + Math.sin(angle * 7 - 1.2) * 0.017 + Math.sin(angle * 13 + 2.1) * 0.009;
+    position.setXYZ(i, x * warp, y * warp, z);
+    const broken = clamp(0.48 + Math.sin(angle * 5 + 1.1) * 0.18 + Math.sin(angle * 11 - 0.4) * 0.12, 0.2, 0.82);
+    colors[i * 3] = broken * 0.78; colors[i * 3 + 1] = broken * 0.94; colors[i * 3 + 2] = broken;
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3)); geometry.computeBoundingSphere(); sharedResource(geometry);
+  const material = sharedResource(new THREE.MeshBasicMaterial({
+    color: 0xc7dcdd, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide,
+  }));
+  const ring = new THREE.Mesh(geometry, material); ring.rotation.x = Math.PI / 2; ring.frustumCulled = false; group.add(ring);
+  return {
+    group, ring, active: false, x: 0, z: 0, age: 0, duration: 1, startRadius: 12, maxRadius: 120, peakWind: 0,
+    biasX: 1, biasZ: 0, motionX: 0, motionZ: 0, emit: 0, hit: false,
+  };
+}
+
 export class StormHazards {
   constructor(o) {
     Object.assign(this, o); // scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray
@@ -151,23 +174,29 @@ export class StormHazards {
     });
     this.obstacles = []; this.phys.addObs('storm-hazards', this.obstacles);
     this.spout = makeSpout(); this.scene.add(this.spout.group);
+    this.downburst = makeDownburst(); this.scene.add(this.downburst.group);
     this.strikes = Array.from({ length: 4 }, () => makeStrike(this.scene));
-    this.spawnT = 6; this.spoutT = 28 + Math.random() * 32; this.noticeT = 0; this.noticeTitle = ''; this.noticeLine = ''; this.hudT = 0; this.airNoticeT = 0;
+    this.spawnT = 6; this.spoutT = 28 + Math.random() * 32; this.downburstT = 34 + Math.random() * 38;
+    this.noticeT = 0; this.noticeTitle = ''; this.noticeLine = ''; this.hudT = 0; this.airNoticeT = 0;
     this.enabled = false; this.debugIndex = 0; this._f = new THREE.Vector2(); this._r = new THREE.Vector2(); this._flow = new THREE.Vector2();
+    this._downburstField = {}; this._downburstWindField = {}; this._surfaceWind = { x: 0, z: 0, intensity: 0 };
     this.spoutMarker = { kind: 'hazard', x: 0, z: 0, color: '#d7f1f4', r: 6, clamp: false };
+    this.downburstMarker = { kind: 'hazard', x: 0, z: 0, color: '#b8e4e7', r: 5, clamp: false };
     this.stampPool = new WakeStampPool(17);
     this.el = document.getElementById('hazardState');
     this.stats = this.game.save.weatherHazards || { debrisHits: 0, nearStrikes: 0, spouts: 0 };
     this.stats.airborneSpawns = Math.max(0, Number(this.stats.airborneSpawns) || 0); this.stats.airborneHits = Math.max(0, Number(this.stats.airborneHits) || 0);
+    this.stats.downbursts = Math.max(0, Number(this.stats.downbursts) || 0); this.stats.downburstHits = Math.max(0, Number(this.stats.downburstHits) || 0);
     this.game.save.weatherHazards = this.stats;
     this.keyHandler = e => {
       if (!import.meta.env.DEV || e.code !== 'F3' || e.repeat || !this.enabled) return;
       e.preventDefault();
       if (e.shiftKey) this.spawnSpout(true, true);
       else {
-        const kind = this.debugIndex++ % 3;
+        const kind = this.debugIndex++ % 4;
         if (kind === 0) this.spawnDebris(true, true);
         else if (kind === 1) this.forceLightning();
+        else if (kind === 2) this.spawnDownburst(true, true);
         else this.spawnSpout(true, false);
       }
     };
@@ -302,6 +331,89 @@ export class StormHazards {
     }
   }
 
+  spawnDownburst(debug = false, close = false) {
+    if (this.downburst.active || this.spout.active) return false;
+    const at = close ? this.waterSpot(24, 34, 10, true) : debug ? this.waterSpot(82, 108, 42, true) : this.waterSpot(95, 205, 150);
+    if (!at) return false;
+    const V = this.environment.values, severity = smooth(0.62, 1, Number(V.storm) || 0), hail = clamp(Number(V.hail) || 0);
+    const duration = debug ? 46 : 38 + Math.random() * 18;
+    Object.assign(this.downburst, {
+      active: true, x: at.x, z: at.z, age: 0, duration, startRadius: 11 + Math.random() * 4,
+      maxRadius: debug ? 126 : 96 + severity * 34 + Math.random() * 18,
+      peakWind: debug ? 25 : 15 + severity * 9 + hail * 3,
+      biasX: this.environment.windDir.x, biasZ: this.environment.windDir.z,
+      motionX: this.environment.windDir.x * (1.1 + (Number(V.wind) || 0) * 0.045),
+      motionZ: this.environment.windDir.z * (1.1 + (Number(V.wind) || 0) * 0.045),
+      emit: 0, hit: false,
+    });
+    const D = this.downburst; D.group.visible = true; D.group.position.set(D.x, this.water.level + 0.11, D.z); D.group.scale.setScalar(D.startRadius); D.ring.material.opacity = 0;
+    this.downburstT = 125 + Math.random() * 145; this.stats.downbursts++; this.game.persist();
+    this.environment.alert('Wet downburst', 'A rain foot is spreading across the water.', 5.5); this.audio.warn(); this.radio?.downburstCall(D);
+    if (debug) this.game.toast('Downburst ahead', close ? 'The gust front is almost on the boat.' : 'Watch the wind spread out from the rain core.', 3);
+    return true;
+  }
+
+  endDownburst() {
+    this.downburst.active = false; this.downburst.group.visible = false; this.downburst.ring.material.opacity = 0;
+    this._surfaceWind.x = 0; this._surfaceWind.z = 0; this._surfaceWind.intensity = 0;
+  }
+
+  surfaceWindAtPlayer() {
+    const out = this._surfaceWind;
+    out.x = 0; out.z = 0; out.intensity = 0;
+    if (!this.enabled || !this.downburst.active) return out;
+    const state = downburstSurfaceState(this.downburst, this.phys.pos.x, this.phys.pos.y, this._downburstWindField);
+    out.x = state.windX; out.z = state.windZ; out.intensity = state.intensity;
+    return out;
+  }
+
+  updateDownburst(dt, t) {
+    const D = this.downburst, V = this.environment.values;
+    if (!D.active) {
+      this.downburstT -= dt;
+      if (this.downburstT <= 0) {
+        if (!this.spout.active && downburstCanForm(this.environment.key, V, Math.random())) {
+          if (!this.spawnDownburst(false, false)) this.downburstT = 8 + Math.random() * 10;
+        } else this.downburstT = 14 + Math.random() * 22;
+      }
+      return;
+    }
+
+    D.age += dt * (V.storm > 0.48 ? 1 : 2.8);
+    D.biasX += (this.environment.windDir.x - D.biasX) * (1 - Math.exp(-dt * 0.08));
+    D.biasZ += (this.environment.windDir.z - D.biasZ) * (1 - Math.exp(-dt * 0.08));
+    D.motionX += (this.environment.windDir.x * (1.1 + (Number(V.wind) || 0) * 0.045) - D.motionX) * (1 - Math.exp(-dt * 0.18));
+    D.motionZ += (this.environment.windDir.z * (1.1 + (Number(V.wind) || 0) * 0.045) - D.motionZ) * (1 - Math.exp(-dt * 0.18));
+    D.x = clamp(D.x + D.motionX * dt, -WORLD_HALF + 35, WORLD_HALF - 35); D.z = clamp(D.z + D.motionZ * dt, -WORLD_HALF + 35, WORLD_HALF - 35);
+    const state = downburstSurfaceState(D, this.phys.pos.x, this.phys.pos.y, this._downburstField);
+    const visible = state.lifecycle > 0.008;
+    D.group.visible = visible; D.group.position.set(D.x, this.water.level + 0.11, D.z); D.group.scale.setScalar(state.radius);
+    D.ring.material.opacity = visible ? clamp(0.045 + state.lifecycle * 0.17 + (Number(V.rain) || 0) * 0.028, 0, 0.25) : 0;
+
+    const near = state.distance < 460;
+    if (near) {
+      D.emit += dt * (18 + state.lifecycle * 38);
+      let emitted = 0;
+      while (D.emit >= 1 && emitted < 64) {
+        D.emit--; emitted++;
+        const a = Math.random() * Math.PI * 2, radialX = Math.cos(a), radialZ = Math.sin(a);
+        const radius = state.radius + (Math.random() - 0.5) * state.width * 0.72, x = D.x + radialX * radius, z = D.z + radialZ * radius;
+        const rush = 3.2 + Math.random() * 4.8 + state.lifecycle * 3.2;
+        this.plume.emit(x, this.water.level + 0.09, z, radialX * rush + D.motionX * 0.25, 0.5 + Math.random() * 1.7, radialZ * rush + D.motionZ * 0.25, 0.32 + Math.random() * 0.5, 1.05, 0.65 + Math.random() * 0.5, 0.28 + state.lifecycle * 0.14);
+        if (Math.random() < 0.72) this.spray.emit(x, this.water.level + 0.06, z, radialX * rush * 1.35, 0.8 + Math.random() * 2.7, radialZ * rush * 1.35, 0.018 + Math.random() * 0.028, 0.3 + Math.random() * 0.42, 0.58 + state.lifecycle * 0.18);
+      }
+    }
+
+    if (state.coreRain > 0.18) this.game.shake = Math.max(this.game.shake, state.coreRain * 0.055);
+    if (!D.hit && state.intensity > 0.5) {
+      D.hit = true; this.stats.downburstHits++; this.game.persist();
+      this.alert('Downburst outflow', 'The gust front is on the boat.', 3.8);
+      this.game.toast('Wind shift', 'Keep the bow into the outflow and clear the open crossing.', 2.8);
+    }
+    this.downburstMarker.x = D.x; this.downburstMarker.z = D.z; this.downburstMarker.clamp = state.distance < 560; this.game.mapMarkers.push(this.downburstMarker);
+    if (D.age >= D.duration || Math.hypot(D.x - this.phys.pos.x, D.z - this.phys.pos.y) > 640) this.endDownburst();
+  }
+
   forceLightning() {
     const at = this.waterSpot(20, 30, 8, true);
     this.environment.triggerLightning(this.environment.camera.position, at);
@@ -339,6 +451,7 @@ export class StormHazards {
   }
 
   spawnSpout(debug = false, close = false) {
+    if (this.downburst.active) return false;
     const at = close ? this.waterSpot(11, 15, 4, true) : debug ? this.waterSpot(72, 88, 22, true) : this.waterSpot(95, 190, 120);
     if (!at) return false;
     const speed = waterspoutDriftSpeed(this.environment.values.wind), wind = this.environment.windDir;
@@ -407,6 +520,10 @@ export class StormHazards {
       const d = Math.hypot(this.spout.x - this.phys.pos.x, this.spout.z - this.phys.pos.y);
       if (d < 430) { title = 'Waterspout'; line = `${fmtDist(d)} · ${d < 70 ? 'pulling the hull' : 'moving with the wind'}`; }
     }
+    if (!title && this.downburst.active) {
+      const state = downburstSurfaceState(this.downburst, this.phys.pos.x, this.phys.pos.y, this._downburstField);
+      if (state.distance < 470) { title = 'Downburst outflow'; line = `${fmtDist(state.distance)} · ${state.intensity > 0.42 ? 'gust front on the boat' : 'rain foot spreading outward'}`; }
+    }
     if (!title && this.noticeT > 0) { title = this.noticeTitle; line = this.noticeLine; }
     this.el.classList.toggle('on', Boolean(title)); this.el.innerHTML = title ? `<span>${title}</span><small>${line}</small>` : '';
   }
@@ -415,7 +532,7 @@ export class StormHazards {
     this.enabled = enabled;
     if (!enabled) { this.obstacles.length = 0; this.audio.waterspout?.(0); if (this.el) this.el.classList.remove('on'); return; }
     this.noticeT = Math.max(0, this.noticeT - dt); this.airNoticeT = Math.max(0, this.airNoticeT - dt);
-    this.updateDebris(dt, t); this.updateStrikes(dt); this.updateSpout(dt, t);
+    this.updateDebris(dt, t); this.updateStrikes(dt); this.updateSpout(dt, t); this.updateDownburst(dt, t);
     this.hudT -= dt; if (this.hudT <= 0) { this.hudT = 0.12; this.render(); }
   }
 
@@ -424,6 +541,13 @@ export class StormHazards {
     if (this.spout.active) {
       const S = this.spout; this.stampPool.emit(S.x, S.z, 7.8, -1.5, 3.6, 8.6);
       for (let i = 0; i < 4; i++) { const a = S.spin + i * Math.PI / 2; this.stampPool.emit(S.x + Math.cos(a) * 7, S.z + Math.sin(a) * 7, 2.2, 0.3, 1.1, 2.4); }
+    }
+    if (this.downburst.active) {
+      const state = downburstSurfaceState(this.downburst, this.phys.pos.x, this.phys.pos.y, this._downburstField);
+      for (let i = 0; i < 5; i++) {
+        const a = i * Math.PI * 2 / 5 + state.progress * 0.6;
+        this.stampPool.emit(this.downburst.x + Math.cos(a) * state.radius, this.downburst.z + Math.sin(a) * state.radius, 3.4, -0.24, 1.8, 4.2);
+      }
     }
     for (const d of this.debris) if (d.active && !d.airborne && Math.hypot(d.x - this.phys.pos.x, d.z - this.phys.pos.y) < 90) this.stampPool.emit(d.x, d.z, 0.65, -0.12, 0.12, 0.7);
     this.stampPool.appendTo(out);
@@ -440,6 +564,7 @@ export class StormHazards {
     }
     return {
       pool: this.debris.length, active, airborne, objects, meshes, geometries: geometries.size, materials: materials.size,
+      downburst: { active: this.downburst.active, cells: 1, geometries: 1, materials: 1, drawCalls: this.downburst.active ? 1 : 0 },
       wakeStamps: { active: this.stampPool.count, capacity: this.stampPool.capacity, droppedFrame: this.stampPool.droppedFrame, droppedTotal: this.stampPool.droppedTotal },
     };
   }

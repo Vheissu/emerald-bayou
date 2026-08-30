@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { lunarAgeAt, lunarIllumination, lunarNightLight, lunarPhaseAt, lunarPhaseName, lunarTideRange } from './lunar.js';
 import { updateAttributePrefix } from './cache.js';
 import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
-import { applyAirboatWind } from './vesselwind.js';
+import { applyAirboatWind, combinedSurfaceWind } from './vesselwind.js';
 import { LIGHTNING_LIFETIME, LIGHTNING_MAX_SEGMENTS, LIGHTNING_TRUNK_SEGMENTS, lightningSkyDirection, lightningStrokeEnvelope, writeLightningStroke } from './lightning.js';
 import {
   insertNearestSettlement, MAX_SETTLEMENT_LIGHTS, MAX_SETTLEMENT_OUTAGES, normalizeSettlementOutages,
@@ -458,6 +458,7 @@ export class Environment {
     this.settlementOutages = normalizeSettlementOutages(saved.powerOutages, this.minutes);
     this.settlementPowerFailures = Math.max(0, Math.trunc(Number(saved.powerFailures) || 0));
     this.windLoad = { ax: 0, az: 0, yaw: 0, heel: 0, apparentSpeed: 0, crosswind: 0 };
+    this.surfaceWind = { x: 0, z: 0, speed: 0 };
     this.makeLightning(); this.makeBoatLights(); this.makeSettlementLights();
     setGlobalSurfaceWetness(this.surfaceWetness); this.terrain.setSurfaceWetness(this.surfaceWetness, this.waterLevel);
     this.el = document.getElementById('worldState'); this.alertEl = document.getElementById('weatherAlert'); this.alertT = 0; this.hudT = 0;
@@ -799,9 +800,10 @@ export class Environment {
     return { ...this.settlementPowerStats, savedOutages: this.settlementOutages.size, maxOutages: MAX_SETTLEMENT_OUTAGES, bulbGeometries: 1, bulbMaterials: 1 };
   }
 
-  applyPhysics(dt) {
+  applyPhysics(dt, localOutflow = null) {
     if (!dt || this.game.paused) return;
-    applyAirboatWind(this.phys, this.windDir, this.values.wind * this.gust, dt, this.windLoad);
+    combinedSurfaceWind(this.windDir, this.values.wind * this.gust, localOutflow, this.surfaceWind);
+    applyAirboatWind(this.phys, this.surfaceWind, this.surfaceWind.speed, dt, this.windLoad);
     if (this.values.hail > 0.35) {
       this.hailKick -= dt; if (this.hailKick <= 0) { this.hailKick = lerp(0.16, 0.65, Math.random()); this.game.shake = Math.max(this.game.shake, 0.035 + this.values.hail * 0.04); }
     }
