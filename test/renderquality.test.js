@@ -66,6 +66,10 @@ test('scales the nocturnal point draw down to zero on fallback hardware', () => 
   assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).fireflyPoints), [0, 72, 153, 243]);
 });
 
+test('keeps the atmospheric spotlight off fallback hardware and scales one retained draw above it', () => {
+  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).spotlightVolume), [0, 0.42, 0.75, 1]);
+});
+
 test('passes rain and hail conditions into the existing water surface uniforms', () => {
   const water = Object.create(Water.prototype);
   Object.assign(water, { level: 0, seaState: 0, windAngle: 0, rain: 0, hail: 0, windSpeed: 0 });

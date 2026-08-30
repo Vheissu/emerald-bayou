@@ -102,6 +102,8 @@ Wildlife lives its own life. Alligators bask on banks and slide in when you get 
 
 At night, the boat spotlight can catch an alligator before the rest of it appears out of the black water. A surfaced animal facing the beam throws back a tight amber-red pair. Turn its head, let it dive, or bring in dense fog and the return goes. The eighteen gators share one fixed 36-eye instanced pool with one geometry and one material. The effect uses no point lights or textures, and their swimming height and preferred depth now move with the tide.
 
+The same spotlight now shows the wet air it is cutting through. Clear air holds only a faint shaft. Rain and fog thicken it and shorten the usable throw, with three nested shells breaking up the cone instead of drawing a solid tube. It is one textureless 432-vertex mesh. Fallback turns it off; the other graphics profiles reuse the same 8.6 KB geometry and material.
+
 On a moving tide, pelicans and the osprey can find a mullet school in open water. Hold 25–65 m off at idle and the bait stays up; drive through it or let your wake reach it and the birds lift while the school goes deep. The event redirects two existing bird flocks and borrows from the fixed fish and spray pools instead of creating another set of wildlife.
 
 Bring the airboat to idle and press `C` to cast. Florida bass, bluegill and bowfin hold in the freshwater backwaters; common snook, juvenile tarpon and red drum work the mangrove and broad-river water. Depth, murk, current, time of day, tide, weather and recent prop wash all change the wait and the species on the line. During the fight, hold `C` to reel and let go when a hard run pushes the tension into the red. Every fish is measured over the gunwale, released, and written into the boat log with its region and personal best.
@@ -182,6 +184,7 @@ __dbg.nocturnal.resourceStats()           // point count, draw count and geometr
 __dbg.gators.resourceStats()               // 18 animals and the fixed 36-eye instanced pool
 __dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
 __dbg.environment.settlementPowerSnapshot() // five-light pool, live grid stress and saved strike outages
+__dbg.environment.spotlightVolumeSnapshot() // one weather-scaled beam mesh and its fixed geometry budget
 __dbg.environment.surfaceWetnessSnapshot()  // live film target, shared material writes and terrain uniforms
 __dbg.encounters.pursuitSnapshot()        // surface units, shared visual and pooled aviation state
 __dbg.hazards.resourceStats()             // debris pool, shared resources and wake-stamp budget

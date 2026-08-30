@@ -27,6 +27,111 @@ export function surfaceMistEnvelope({ hour = 12, fog = 0, rain = 0, wind = 0, st
   return clamp(weatherFog + dawnCooling * calm * 0.58 + rainCooling);
 }
 
+export function spotlightVolumeState(out = {}, on = false, night = 0, restrictedVisibility = 0, rain = 0, storm = 0, quality = 1) {
+  const q = clamp(Number(quality) || 0), nightN = clamp(Number(night) || 0), restricted = clamp(Number(restrictedVisibility) || 0);
+  const rainN = clamp(Number(rain) || 0), stormN = clamp(Number(storm) || 0);
+  const scatter = clamp(0.055 + restricted * 0.76 + rainN * 0.24 + stormN * 0.08);
+  out.strength = on && q > 0 ? q * scatter * lerp(0.55, 1, nightN) : 0;
+  out.range = out.strength > 0.018 ? clamp(92 - restricted * 32 - rainN * 9 - stormN * 7, 44, 92) : 0;
+  out.visible = out.range > 0;
+  return out;
+}
+
+export function makeSpotlightVolumeGeometry(radialSegments = 24) {
+  const segments = Math.max(8, Math.min(64, Math.trunc(Number(radialSegments) || 24)));
+  const shellRadius = [0.43, 0.72, 1], shellDensity = [1, 0.52, 0.2], vertices = segments * 6 * shellRadius.length;
+  const positions = new Float32Array(vertices * 3), axial = new Float32Array(vertices), shell = new Float32Array(vertices);
+  const near = 0.012, cone = Math.tan(0.31); let vertex = 0;
+  const write = (angle, distance, radiusScale, density) => {
+    const radius = cone * distance * radiusScale, p = vertex * 3;
+    positions[p] = Math.cos(angle) * radius; positions[p + 1] = Math.sin(angle) * radius; positions[p + 2] = -distance;
+    axial[vertex] = distance; shell[vertex] = density; vertex++;
+  };
+  for (let layer = 0; layer < shellRadius.length; layer++) {
+    const radiusScale = shellRadius[layer], density = shellDensity[layer];
+    for (let segment = 0; segment < segments; segment++) {
+      const a0 = segment / segments * Math.PI * 2, a1 = (segment + 1) / segments * Math.PI * 2;
+      write(a0, near, radiusScale, density); write(a0, 1, radiusScale, density); write(a1, 1, radiusScale, density);
+      write(a0, near, radiusScale, density); write(a1, 1, radiusScale, density); write(a1, near, radiusScale, density);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('aAxial', new THREE.BufferAttribute(axial, 1));
+  geometry.setAttribute('aShell', new THREE.BufferAttribute(shell, 1));
+  geometry.computeBoundingSphere(); geometry.userData.byteLength = positions.byteLength + axial.byteLength + shell.byteLength;
+  return geometry;
+}
+
+export class BoatSpotlightVolume {
+  constructor(profile = {}) {
+    this.geometry = makeSpotlightVolumeGeometry();
+    this.uniforms = {
+      uColor: { value: new THREE.Color(1.12, 0.91, 0.68) }, uStrength: { value: 0 }, uTime: { value: 0 }, uRain: { value: 0 },
+    };
+    this.material = new THREE.ShaderMaterial({
+      uniforms: this.uniforms, transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, toneMapped: false,
+      vertexShader: `
+        attribute float aAxial, aShell;
+        varying float vAxial, vShell; varying vec3 vWorld;
+        void main() {
+          vAxial = aAxial; vShell = aShell;
+          vec4 world = modelMatrix * vec4(position, 1.0); vWorld = world.xyz;
+          gl_Position = projectionMatrix * viewMatrix * world;
+        }`,
+      fragmentShader: `
+        precision highp float;
+        uniform vec3 uColor; uniform float uStrength, uTime, uRain;
+        varying float vAxial, vShell; varying vec3 vWorld;
+        void main() {
+          float start = smoothstep(0.008, 0.065, vAxial);
+          float finish = 1.0 - smoothstep(0.48, 1.0, vAxial);
+          float broad = 0.84 + 0.16 * sin(vWorld.x * 0.11 + vWorld.z * 0.087 - uTime * 0.22 + sin(vWorld.y * 0.31));
+          float detail = 0.88 + 0.12 * sin(vWorld.x * 0.39 - vWorld.z * 0.27 + uTime * 0.61);
+          float streak = 0.82 + 0.18 * sin(vWorld.y * 1.7 - uTime * 13.0 + vWorld.x * 0.2);
+          float weather = broad * detail * mix(1.0, streak, uRain);
+          float alpha = uStrength * vShell * start * finish * weather * 0.052;
+          if (alpha < 0.0004) discard;
+          gl_FragColor = vec4(uColor * (0.68 + uStrength * 0.42), alpha);
+        }`,
+    });
+    this.mesh = new THREE.Mesh(this.geometry, this.material); this.mesh.name = 'player spotlight atmosphere';
+    this.mesh.position.set(0, 1.15, -1.45); this.mesh.rotation.x = -Math.atan2(1.05, 53.55);
+    this.mesh.visible = false; this.mesh.renderOrder = 39; this.mesh.layers.set(1);
+    this.state = { visible: false, strength: 0, range: 0 }; this.transformWrites = 0; this.uniformWrites = 0;
+    this.setQuality(profile);
+  }
+
+  setQuality(profile = {}) {
+    const value = typeof profile === 'number' ? profile : profile.spotlightVolume;
+    this.quality = clamp(Number.isFinite(Number(value)) ? Number(value) : 1);
+    if (this.quality <= 0) { this.state.visible = false; this.state.strength = 0; this.state.range = 0; this.mesh.visible = false; this.uniforms.uStrength.value = 0; }
+    return this.quality;
+  }
+
+  update(time, on, night, restrictedVisibility, rain, storm) {
+    spotlightVolumeState(this.state, on, night, restrictedVisibility, rain, storm, this.quality);
+    this.mesh.visible = this.state.visible;
+    if (!this.state.visible) return this.state;
+    if (Math.abs(this.mesh.scale.x - this.state.range) > 0.001) { this.mesh.scale.setScalar(this.state.range); this.transformWrites++; }
+    const seconds = Number(time);
+    this.uniforms.uStrength.value = this.state.strength; this.uniforms.uTime.value = Number.isFinite(seconds) ? seconds : 0; this.uniforms.uRain.value = clamp(Number(rain) || 0); this.uniformWrites += 3;
+    return this.state;
+  }
+
+  resourceStats() {
+    return {
+      visible: this.mesh.visible, strength: this.state.strength, range: this.state.range, quality: this.quality,
+      drawCalls: this.mesh.visible ? 1 : 0, geometries: 1, materials: 1, textures: 0, lights: 0,
+      vertices: this.geometry.attributes.position.count, geometryBytes: this.geometry.userData.byteLength,
+      transformWrites: this.transformWrites, uniformWrites: this.uniformWrites,
+    };
+  }
+
+  dispose() { this.geometry.dispose(); this.material.dispose(); }
+}
+
 // Local rain can stop before the retreating curtain has cleared the opposite horizon. Retaining a small amount of
 // atmospheric moisture lets a bow emerge during that clearing interval without inventing another weather state.
 export function rainbowMoistureStep(current = 0, rain = 0, dt = 0) {
@@ -307,8 +412,12 @@ export class Environment {
     this.cockpitLight = new THREE.PointLight(0xffd69a, 0, 13, 2); this.cockpitLight.position.set(0, 1.7, 0.8); g.add(this.cockpitLight);
     const spot = new THREE.SpotLight(0xfff3dc, 0, 110, 0.31, 0.58, 2); spot.position.set(0, 1.15, -1.45);
     const target = new THREE.Object3D(); target.position.set(0, 0.1, -55); spot.target = target; g.add(spot, target); this.spotlight = spot; this.spotOn = false;
+    this.spotlightVolume = new BoatSpotlightVolume(this.profile); g.add(this.spotlightVolume.mesh);
     this.boat.add(g); this.nav = g;
   }
+
+  setQuality(profile = {}) { return this.spotlightVolume?.setQuality(profile) ?? 0; }
+  spotlightVolumeSnapshot() { return this.spotlightVolume.resourceStats(); }
 
   makeSettlementLights() {
     this.settlementLights = [];
@@ -688,6 +797,7 @@ export class Environment {
       this.port.visible = visible.port; this.starboard.visible = visible.starboard; this.stern.visible = visible.stern;
     }
     this.cockpitLight.intensity = night * 15; this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) : 0;
+    this.spotlightVolume.update(realTime, this.spotOn, night, this.restrictedVisibility, V.rain, V.storm);
     this.updateSettlementLights(dt, realTime, night);
 
     if (this.alertT > 0) { this.alertT -= dt; if (this.alertT <= 0 && this.alertEl) this.alertEl.classList.remove('on'); }
