@@ -60,3 +60,16 @@ test('the player wet pass clones each unique material once and keeps textures sh
   first.geometry.dispose(); second.geometry.dispose(); excluded.geometry.dispose();
   material.dispose(); shared.dispose(); basic.dispose(); texture.dispose();
 });
+
+test('the marked player hull gets one independent wet material without splitting traffic materials', () => {
+  const shared = new THREE.MeshStandardMaterial({ color: 0xd8dcda, roughness: 1, metalness: 0.72 });
+  const group = new THREE.Group();
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(), shared), chine = new THREE.Mesh(new THREE.BoxGeometry(), shared);
+  hull.userData.hullDamageSurface = true; group.add(hull, chine);
+  const surfaces = prepareAirboatWetSurfaces(group);
+  assert.equal(surfaces.length, 2);
+  assert.notEqual(hull.material, chine.material);
+  assert.equal(surfaces.filter(surface => surface.damageSurface).length, 1);
+  assert.equal(hull.material.map, chine.material.map);
+  hull.geometry.dispose(); chine.geometry.dispose(); hull.material.dispose(); chine.material.dispose(); shared.dispose();
+});

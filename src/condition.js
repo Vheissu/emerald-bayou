@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MAX_HULL_SCARS, hullScarFromImpact, hullScarTarget, normalizeHullScars, repairHullScars, seededHullScar } from './hulldamage.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -12,6 +13,8 @@ export class BoatCondition {
       hull: clamp(Number(saved.hull ?? 100), 0, 100),
       engine: clamp(Number(saved.engine ?? 100), 0, 100),
       bilge: clamp(Number(saved.bilge ?? 0), 0, 1),
+      scars: normalizeHullScars(saved.scars),
+      scarSerial: Math.max(0, Math.min(1_000_000, Math.trunc(Number(saved.scarSerial) || 0))),
     };
     this.maxFuel = 18; this.enabled = false; this.serviceHere = null; this.towPending = false;
     this.towStage = ''; this.towT = 0; this.towHold = 0; this.traffic = null; this.radio = null;
@@ -22,6 +25,8 @@ export class BoatCondition {
     this.visualState = { engineSmoke: false, bilgePump: false, smokeRate: 0, pumpRate: 0, list: 0, trim: 0, vibration: 0 };
     this._fxLocal = new THREE.Vector3(); this._fxWorld = new THREE.Vector3();
     this._forward = new THREE.Vector2(); this._right = new THREE.Vector2();
+    this.hullScarRevision = 0; this.hullScarAppliedRevision = -1;
+    this.ensureHullScars(); this.syncHullScars(true);
     this.el = document.getElementById('boatState'); this.promptEl = document.getElementById('servicePrompt');
     this.keyHandler = e => this.onKey(e); window.addEventListener('keydown', this.keyHandler);
     this.render();
@@ -59,12 +64,12 @@ export class BoatCondition {
 
   service() {
     const at = this.serviceHere; if (!at) return;
-    const S = this.state, total = this.estimate(at);
+    const S = this.state, total = this.estimate(at), hullBefore = S.hull;
     if (total <= 1 && S.bilge < 0.01) { this.game.toast('Boat is ready', `${at.name} · tank full · bilge dry`, 2.4); return; }
 
     let budget = Math.max(0, this.game.save.cash), spent = 0;
     if (budget <= 0 && at.home && S.fuel < 2.5) {
-      S.fuel = 2.5; S.hull = Math.max(S.hull, 25); S.engine = Math.max(S.engine, 30); S.bilge = 0;
+      S.fuel = 2.5; S.hull = Math.max(S.hull, 25); S.engine = Math.max(S.engine, 30); S.bilge = 0; this.repairHullVisuals(hullBefore);
       this.game.persist(); this.audio.pickup(); this.game.toast('Dock fuel', 'Two and a half gallons. Enough to get working again.', 3); return;
     }
     if (budget <= 0 && !at.home && this.game.reputation && this.game.reputation.extendsCredit() && S.fuel < 2) {
@@ -81,6 +86,7 @@ export class BoatCondition {
     buy(100 - S.hull, 2.4 * at.factor, n => { S.hull += n; });
     buy(100 - S.engine, 3.5 * at.factor, n => { S.engine += n; });
     S.bilge = 0;
+    this.repairHullVisuals(hullBefore);
     const charge = Math.min(this.game.save.cash, Math.ceil(spent)); if (charge) this.game.addCash(-charge);
     this.game.persist(); this.warned = {}; this.audio.checkpoint();
     const complete = this.estimate(at) <= 2;
@@ -89,6 +95,51 @@ export class BoatCondition {
   }
 
   needsTow() { const S = this.state; return S.fuel <= 0.03 || S.engine <= 4 || S.bilge >= 0.96 || S.hull <= 2; }
+
+  ensureHullScars() {
+    const target = hullScarTarget(this.state.hull);
+    while (this.state.scars.length < target) {
+      this.state.scars.push(seededHullScar(this.state.scarSerial++, 0.48 + this.state.scars.length * 0.08));
+      this.hullScarRevision++;
+    }
+    if (this.state.scars.length > MAX_HULL_SCARS) {
+      this.state.scars.splice(0, this.state.scars.length - MAX_HULL_SCARS); this.hullScarRevision++;
+    }
+    if (this.state.scarSerial > 1_000_000) this.state.scarSerial %= 1_000_000;
+    return this.state.scars.length;
+  }
+
+  recordHullScar(severity = 1) {
+    const p = this.phys; p.forward(this._forward); p.right(this._right);
+    const scar = hullScarFromImpact({
+      normalX: p.hitNormal.x, normalZ: p.hitNormal.y,
+      forwardX: this._forward.x, forwardZ: this._forward.y, rightX: this._right.x, rightZ: this._right.y,
+      severity, serial: this.state.scarSerial++,
+    });
+    if (!scar) return false;
+    this.state.scars.push(scar); if (this.state.scars.length > MAX_HULL_SCARS) this.state.scars.shift();
+    this.hullScarRevision++; this.syncHullScars(); return true;
+  }
+
+  repairHullVisuals(previousHull = this.state.hull) {
+    if (this.state.hull <= previousHull + 0.01) return false;
+    const repaired = repairHullScars(this.state.scars, this.state.hull);
+    if (repaired.length === this.state.scars.length) return false;
+    this.state.scars = repaired; this.hullScarRevision++; this.syncHullScars(); return true;
+  }
+
+  syncHullScars(force = false) {
+    if (!force && this.hullScarAppliedRevision === this.hullScarRevision) return false;
+    this.hullDamage?.setScars(this.state.scars); this.hullScarAppliedRevision = this.hullScarRevision; return true;
+  }
+
+  setQuality(profile = {}) { return this.hullDamage?.setQuality(profile) ?? 0; }
+  hullDamageSnapshot() {
+    return this.hullDamage?.resourceStats() || {
+      scars: this.state.scars.length, capacity: MAX_HULL_SCARS, detail: 0, uniformBytes: 0, customPrograms: 0,
+      extraObjects: 0, extraGeometries: 0, extraMaterials: 0, extraTextures: 0, extraDrawCalls: 0, extraRenderTargets: 0,
+    };
+  }
 
   tow() {
     if (this.towPending || !this.needsTow()) return;
@@ -107,9 +158,9 @@ export class BoatCondition {
       this.radio?.transmit({ channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: 'Line is aboard and the tower boat is secure. We are taking the slow water home.', priority: 3, key: 'tow:line-aboard', cooldown: 0 });
     }
     this.game.fadeTo(() => {
-      const S = this.state, charge = Math.min(120, Math.max(0, this.game.save.cash));
+      const S = this.state, charge = Math.min(120, Math.max(0, this.game.save.cash)), hullBefore = S.hull;
       this.phys.reset(this.startX, this.startZ, 0); this.phys.y = this.water.waveHeight(this.startX, this.startZ, 0);
-      S.fuel = Math.max(S.fuel, 4); S.hull = Math.max(S.hull, 55); S.engine = Math.max(S.engine, 50); S.bilge = 0;
+      S.fuel = Math.max(S.fuel, 4); S.hull = Math.max(S.hull, 55); S.engine = Math.max(S.engine, 50); S.bilge = 0; this.repairHullVisuals(hullBefore);
       if (charge) this.game.addCash(-charge); this.game.persist(); this.towPending = false; this.towStage = ''; this.towT = 0; this.towHold = 0; this.warned = {};
       this.game.toast('Back at the tower', charge ? `Tow and emergency work · $${charge}` : 'They will settle up with you later.', 3.2);
     });
@@ -140,7 +191,7 @@ export class BoatCondition {
     const p = this.phys, S = this.state; this.damageCd = Math.max(0, this.damageCd - dt);
     if (p.hit > 3 && this.damageCd <= 0) {
       const hit = Math.pow(p.hit - 2.4, 1.28) * 0.48, prop = p.hitTag === 'log' || p.hitTag === 'snag' || p.hitTag === 'storm-debris';
-      this.damage(hit, prop ? hit * 0.46 : p.hitTag === 'boat' ? hit * 0.08 : 0); this.damageCd = 0.38;
+      this.damage(hit, prop ? hit * 0.46 : p.hitTag === 'boat' ? hit * 0.08 : 0); this.recordHullScar(hit); this.damageCd = 0.38;
       if (hit > 5.5) this.game.toast(prop ? 'Prop strike' : 'Hard strike', prop ? `Engine ${Math.round(S.engine)}% · hull ${Math.round(S.hull)}%` : `Hull ${Math.round(S.hull)}%`, 2.4);
     }
     if (p.impact > 4.5 && this.damageCd <= 0) {
@@ -251,6 +302,7 @@ export class BoatCondition {
       const gph = 0.55 + p.rpm * p.rpm * 13.2 + Math.max(0, p.throttle) * 1.1;
       S.fuel = Math.max(0, S.fuel - gph * dt / 3600);
       this.processDamage(dt);
+      this.ensureHullScars(); this.syncHullScars();
       const leak = p.wet > 0.2 && S.hull < 55 ? (55 - S.hull) / 55 * 0.0015 : 0;
       const pump = S.fuel > 0.03 && S.engine > 8 ? (S.hull > 70 ? 0.001 : 0.00048) : 0.00005;
       S.bilge = clamp(S.bilge + (leak - pump) * dt);

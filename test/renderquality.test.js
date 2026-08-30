@@ -63,6 +63,10 @@ test('scales distant storm-sky detail without changing world simulation', () => 
   assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).skyWeatherDetail), [0, 0.45, 0.75, 1]);
 });
 
+test('disables hull-scar shader work on fallback and scales it above that tier', () => {
+  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).hullDamageDetail), [0, 0.5, 0.78, 1]);
+});
+
 test('scales wake simulation cost without shrinking its world-space footprint', () => {
   const fallback = qualityProfile(0), performance = qualityProfile(1), balanced = qualityProfile(2), cinematic = qualityProfile(3);
   assert.deepEqual(

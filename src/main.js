@@ -160,7 +160,7 @@ async function init() {
   await new Promise(r => setTimeout(r, 10));
 
   // ---- boat ----
-  const boat = buildAirboat({ dynamicWetness: true });
+  const boat = buildAirboat({ dynamicWetness: true, profile: renderProfile });
   scene.add(boat.group);
   loadDriver(boat.group).catch(e => console.warn('driver model failed to load', e));
   const phys = new AirboatPhysics(terrain, startX, startZ, 0);
@@ -241,7 +241,7 @@ async function init() {
   const encounters = new EncounterDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, plume, spray, law, reputation });
   game.encounters = encounters;
   law.onAttention = attention => { encounters.requestPatrol(attention); };
-  const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
+  const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, hullDamage: boat.hullDamage, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   life.traffic.hazards = hazards;
   environment.onLightning = strike => hazards.lightning(strike);
@@ -332,6 +332,7 @@ async function init() {
       eyeAdaptation: environment.eyeAdaptationSnapshot(),
       lightning: environment.lightningSnapshot(),
       stormSky: environment.stormSkySnapshot(),
+      hullDamage: condition.hullDamageSnapshot(),
       spray: { active: spray.count, capacity: spray.max },
       plume: { active: plume.count, capacity: plume.max },
       rain: { active: environment.precip.rain.geo.drawRange.count / 2, capacity: environment.precip.rain.count },
@@ -439,7 +440,7 @@ async function init() {
   let renderFrameNo = 0;
   const applyRenderQuality = profile => {
     const oldEnvironmentSize = environmentReflections.targetSize;
-    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); sky.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile); environmentReflections.setProfile(profile);
+    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); sky.setQuality(profile); condition.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile); environmentReflections.setProfile(profile);
     if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
       sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
       if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
