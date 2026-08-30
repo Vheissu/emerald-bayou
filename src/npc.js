@@ -98,6 +98,24 @@ export function buildSkiff({ crew = true, driverModel = true } = {}) {
   return g;
 }
 
+const MODEL_BOAT_FALLBACKS = Object.freeze({
+  beau_boat: Object.freeze({ beam: 0.94, depth: 0.96, length: 0.98, console: 1.05 }),
+  sandbox_boat: Object.freeze({ beam: 0.9, depth: 0.92, length: 0.9, console: 0.92 }),
+  boat_dreams: Object.freeze({ beam: 1.24, depth: 1.08, length: 1.22, console: 1.7 }),
+});
+
+// Low-tier model replacements stay recognizable while sharing four resources already owned by the procedural
+// johnboat. The wrapper is removed when a GLB arrives; on old hardware it remains as a compact four-draw hull.
+export function buildModelBoatFallback(name = 'beau_boat') {
+  const shape = MODEL_BOAT_FALLBACKS[name] || MODEL_BOAT_FALLBACKS.beau_boat;
+  const g = new THREE.Group(); g.name = `${name} procedural hull`; g.userData.fallbackModel = name;
+  const hull = skiffPart(SKIFF_GEO.hull, SKIFF_MAT.hull); hull.scale.set(shape.beam, shape.depth, shape.length); g.add(hull);
+  const floor = skiffPart(SKIFF_GEO.floor, SKIFF_MAT.floor); floor.scale.set(shape.beam * 1.08, 1, shape.length); floor.position.set(0, 0.07, 0.16 * shape.length); g.add(floor);
+  const cowl = skiffPart(SKIFF_GEO.cowl, SKIFF_MAT.motor); cowl.scale.set(shape.console, 0.86 + shape.console * 0.18, 1.08 + shape.console * 0.32); cowl.position.set(0, 0.67, 0.72 * shape.length); g.add(cowl);
+  const leg = skiffPart(SKIFF_GEO.leg, SKIFF_MAT.motor); leg.scale.y = 0.82; leg.position.set(0, 0.08, 1.92 * shape.length); g.add(leg);
+  return g;
+}
+
 // A boat that runs a list of waypoints with a pure-pursuit steer and slows for the bends.
 export class SkiffAI {
   constructor(waveFn) {

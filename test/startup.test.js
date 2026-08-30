@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { startupPlan, startupTerrainReady } from '../src/startup.js';
+import { OPTIONAL_MODEL_NAMES, startupPlan, startupTerrainReady } from '../src/startup.js';
 import { compareTerrainBuildPriority, shouldPreemptTerrainBuild, Terrain } from '../src/terrain.js';
 
 test('cinematic hardware keeps the complete shader and model warm-up', () => {
@@ -39,9 +39,10 @@ test('older-hardware profiles do not block on optional models or the full shader
   assert.ok(performance.modelReleaseDelayMs > balanced.modelReleaseDelayMs);
   assert.ok(fallback.modelBatchDelayMs > performance.modelBatchDelayMs);
   assert.ok(performance.modelBatchDelayMs > balanced.modelBatchDelayMs);
-  assert.deepEqual(fallback.disabledModels, ['grass_a', 'grass_d', 'tree_c']);
+  assert.deepEqual(fallback.disabledModels, OPTIONAL_MODEL_NAMES);
   assert.deepEqual(performance.disabledModels, fallback.disabledModels);
   assert.deepEqual(balanced.disabledModels, []);
+  assert.equal(fallback.disabledModels.length, 10);
   assert.deepEqual([fallback.solidGrass, performance.solidGrass, balanced.solidGrass], ['off', 'off', 'deferred']);
   assert.deepEqual([fallback.modelPressureMaxWaitMs, performance.modelPressureMaxWaitMs, balanced.modelPressureMaxWaitMs], [12000, 8000, 4000]);
 });

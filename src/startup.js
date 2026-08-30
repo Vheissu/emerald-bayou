@@ -1,5 +1,8 @@
 const FULL_WARM_MODELS = Object.freeze(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a', 'driver']);
-const LOW_MEMORY_DISABLED_MODELS = Object.freeze(['grass_a', 'grass_d', 'tree_c']);
+export const OPTIONAL_MODEL_NAMES = Object.freeze([...FULL_WARM_MODELS, 'grass_a', 'grass_d', 'tree_c']);
+// Fallback and Performance keep the complete simulation with shared procedural stand-ins. Skipping every cosmetic
+// GLB removes their network, decode, texture and geometry cost; Balanced and Cinematic retain the authored models.
+const LOW_MEMORY_DISABLED_MODELS = OPTIONAL_MODEL_NAMES;
 const NO_DISABLED_MODELS = Object.freeze([]);
 
 const EFFECT_BUDGETS = Object.freeze({

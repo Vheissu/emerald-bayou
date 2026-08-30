@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './noise.js';
-import { buildSkiff } from './npc.js';
+import { buildModelBoatFallback, buildSkiff } from './npc.js';
 import { buildAirboat, loadDriver } from './airboat.js';
 import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
 import * as TEX from './textures.js';
@@ -38,6 +38,21 @@ function fishGeo() {
   const fin = new THREE.ConeGeometry(0.04, 0.07, 3); fin.scale(0.3, 1, 1); fin.translate(0, 0.07, 0.02);
   return mergeGeometries([body, tail, fin].map(g => g.toNonIndexed()), false);
 }
+
+const TURTLE_FALLBACK_GEO = sharedResource((() => {
+  const shell = new THREE.SphereGeometry(0.32, 10, 7); shell.scale(1.18, 0.48, 1.55); shell.translate(0, 0.08, 0);
+  const head = new THREE.SphereGeometry(0.1, 8, 6); head.scale(0.9, 0.75, 1.2); head.translate(0, 0.08, -0.5);
+  const parts = [shell, head];
+  for (const side of [-1, 1]) for (const z of [-0.24, 0.24]) {
+    const foot = new THREE.SphereGeometry(0.08, 6, 4); foot.scale(1.45, 0.34, 0.72); foot.translate(side * 0.32, 0.02, z); parts.push(foot);
+  }
+  return mergeGeometries(parts.map(geometry => geometry.toNonIndexed()), false);
+})());
+const TURTLE_FALLBACK_MAT = sharedResource(new THREE.MeshStandardMaterial({ color: 0x53664a, roughness: 0.9, metalness: 0.02 }));
+export function buildTurtleFallback() {
+  const mesh = new THREE.Mesh(TURTLE_FALLBACK_GEO, TURTLE_FALLBACK_MAT); mesh.name = 'procedural cooter'; mesh.castShadow = true; mesh.receiveShadow = true; return mesh;
+}
+
 export class Fish {
   constructor(terrain, scene, fx) {
     this.T = terrain; this.fx = fx; // fx: { plume, spray, audio, emitStamp }
@@ -191,7 +206,7 @@ export class Debris {
       const m = new THREE.Mesh(this.logGeos[d.v], this.logMats[d.m]); m.scale.set(d.r, d.r, d.len); m.castShadow = true; m.receiveShadow = true;
       const g = new THREE.Group(); g.add(m); g.position.set(d.x, -0.1, d.z); g.rotation.y = d.ang;
       // cooters sunning in a row on top, ready to drop off
-      if (d.nt) { const rr = mulberry32(d.ts); g.userData.turtles = []; for (let i = 0; i < d.nt; i++) { const side = rr() < 0.5 ? -1 : 1; const tt = spawn('turtle_boat'); tt.position.set(side * 0.05, d.r * 0.95, (i - (d.nt - 1) / 2) * 1.0 + (rr() - 0.5) * 0.3); tt.rotation.y = side * Math.PI / 2 + (rr() - 0.5) * 1.2; tt.scale.setScalar(0.8 + rr() * 0.5); g.add(tt); g.userData.turtles.push({ m: tt, home: tt.position.clone(), rot: tt.rotation.y, side, st: 0, t: 0 }); } }
+      if (d.nt) { const rr = mulberry32(d.ts); g.userData.turtles = []; for (let i = 0; i < d.nt; i++) { const side = rr() < 0.5 ? -1 : 1; const tt = spawn('turtle_boat', buildTurtleFallback()); tt.position.set(side * 0.05, d.r * 0.95, (i - (d.nt - 1) / 2) * 1.0 + (rr() - 0.5) * 0.3); tt.rotation.y = side * Math.PI / 2 + (rr() - 0.5) * 1.2; tt.scale.setScalar(0.8 + rr() * 0.5); g.add(tt); g.userData.turtles.push({ m: tt, home: tt.position.clone(), rot: tt.rotation.y, side, st: 0, t: 0 }); } }
       return g;
     }
     const g = new THREE.Group();
@@ -368,8 +383,8 @@ export class Traffic {
     this.state.operators ||= {}; fx.game.save.traffic = this.state;
     const john = (hull) => { const m = buildSkiff({ crew: true }); if (hull) recolor(m, 0x6f7570, hull); return { kind: 'john', mesh: m, crew: m.userData.crew, people: m.userData.people, max: 6.5 + this.rand() * 2.5 }; };
     const air = (hull) => { const b = buildAirboat(); recolor(b.group, 0xd8dcda, hull); loadDriver(b.group).catch(() => {}); return { kind: 'air', mesh: b.group, prop: b.prop, blur: b.blur, rudders: b.rudders, max: 10.5 + this.rand() * 2.5 }; };
-    const cruiser = () => { const m = spawn('boat_dreams'); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0.45, 0.95, 0.3); d.rotation.y = Math.PI; m.add(d); const pas = person(rr, { pose: 'sit', hat: false, vest: true }); pas.position.set(-0.45, 0.95, 0.3); pas.rotation.y = Math.PI; m.add(pas); pair(d, pas); return { kind: 'cruiser', mesh: m, max: 8.5 + rr() * 2, people: [d, pas] }; };
-    const skiff = () => { const m = spawn('beau_boat'); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0, 0.32, 0.7); d.rotation.y = Math.PI; m.add(d); return { kind: 'skiff', mesh: m, max: 5 + rr() * 1.5, people: [d] }; };
+    const cruiser = () => { const m = spawn('boat_dreams', buildModelBoatFallback('boat_dreams')); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0.45, 0.95, 0.3); d.rotation.y = Math.PI; m.add(d); const pas = person(rr, { pose: 'sit', hat: false, vest: true }); pas.position.set(-0.45, 0.95, 0.3); pas.rotation.y = Math.PI; m.add(pas); pair(d, pas); return { kind: 'cruiser', mesh: m, max: 8.5 + rr() * 2, people: [d, pas] }; };
+    const skiff = () => { const m = spawn('beau_boat', buildModelBoatFallback('beau_boat')); const rr = this.rand; const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(0, 0.32, 0.7); d.rotation.y = Math.PI; m.add(d); return { kind: 'skiff', mesh: m, max: 5 + rr() * 1.5, people: [d] }; };
     const paddlers = () => ({ kind: 'canoe', mesh: canoe(this.rand), max: 1.3 + this.rand() * 0.4 });
     const hulls = [john(0), john(0x4c6b4a), cruiser(), skiff(), air(0x315e50), air(0x4b3527), paddlers()];
     for (let i = 0; i < hulls.length; i++) {

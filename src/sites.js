@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise.js';
 import { buildDock } from './tower.js';
-import { buildSkiff } from './npc.js';
+import { buildModelBoatFallback, buildSkiff } from './npc.js';
 import * as TEX from './textures.js';
 import { person, animatePerson, wave, aim, fishingUpdate, cooler, chair, bucket, fishingLine } from './folk.js';
 import { spawn, SPEC } from './models.js';
@@ -85,7 +85,7 @@ function trailBoat(rr) {
   const r = rr();
   if (r < 0.45) { const g = buildSkiff({ crew: true }); recolor(g, 0x6f7570, [0x6f7570, 0x4c6b4a, 0xb8b4a8][Math.floor(rr() * 3)]); g.userData.len = 4.6; return g; }
   const name = r < 0.7 ? 'beau_boat' : r < 0.85 ? 'sandbox_boat' : 'boat_dreams';
-  const g = spawn(name); g.userData.len = SPEC[name].len;
+  const g = spawn(name, buildModelBoatFallback(name)); g.userData.len = SPEC[name].len;
   const d = person(rr, { pose: 'sit', hat: true, drive: true }); d.position.set(name === 'boat_dreams' ? 0.45 : 0, SPEC[name].y + (name === 'boat_dreams' ? 0.35 : 0.05), name === 'boat_dreams' ? 0.4 : 0.5); d.rotation.y = Math.PI; g.add(d); g.userData.people = [d];
   return g;
 }

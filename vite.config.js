@@ -2,16 +2,14 @@ import { copyFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { defineConfig } from 'vite';
+import { OPTIONAL_MODEL_NAMES } from './src/startup.js';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const publicRoot = join(root, 'public');
 const outputRoot = join(root, 'dist');
 const modelRoot = join(publicRoot, 'models');
 const modelSources = join(publicRoot, 'models', 'src');
-const runtimeModels = new Set([
-  'beau_boat.glb', 'boat_dreams.glb', 'driver.glb', 'fish_a.glb', 'grass_a.glb', 'grass_d.glb',
-  'realistic_alligator.glb', 'sandbox_boat.glb', 'tree_c.glb', 'turtle_boat.glb',
-]);
+const runtimeModels = new Set(OPTIONAL_MODEL_NAMES.map(name => `${name}.glb`));
 
 function copyRuntimeAssets(from, to) {
   if (from === modelSources) return;
