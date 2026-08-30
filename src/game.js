@@ -43,7 +43,7 @@ export class Game {
     // Campaign races borrow the one mission johnboat already retained for the poacher chase. Its collider is a
     // permanent one-slot array, emptied between races, so rematches do not create new physics records.
     this.missionRivalObstacles = [];
-    this.missionRivalObstacle = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'racing johnboat', onHit: into => this.hitMissionRival(into) };
+    this.missionRivalObstacle = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'racing johnboat', onHit: (into, nx, nz) => this.hitMissionRival(into, nx, nz) };
     this.phys.addObs?.('mission-rival', this.missionRivalObstacles);
     this.missions = buildMissions(this);
     this.jobs = this.buildJobs();
@@ -161,10 +161,13 @@ export class Game {
     obstacle.bx = skiff.pos.x - fx * 2; obstacle.bz = skiff.pos.y - fz * 2;
   }
   endMissionRival() { this.missionRivalObstacles.length = 0; }
-  hitMissionRival(into) {
+  hitMissionRival(into, nx, nz) {
     const s = this.state;
     if (!s?.rivalRace || s.rivalHitCd > 0 || into < 2.2) return;
     s.rivalHitCd = 1.8; s.rivalRams++; this.skiff.speed *= Math.max(0.68, Math.min(0.92, 1 - into * 0.025));
+    const fx = -Math.sin(this.skiff.heading), fz = -Math.cos(this.skiff.heading);
+    const contactAlong = (this.phys.pos.x - this.skiff.pos.x) * fx + (this.phys.pos.y - this.skiff.pos.y) * fz;
+    this.skiff.applyImpact?.(into, nx, nz, contactAlong);
     this.shake = Math.max(this.shake, Math.min(0.3, into * 0.032)); this.audio.warn();
     this.toast('Rub rails hit', s.rivalRams > 1 ? 'That is not a clean race anymore.' : 'The johnboat crew is keeping count.', 2.4);
   }

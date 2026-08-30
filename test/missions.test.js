@@ -69,9 +69,11 @@ test('campaign sprint and grand tour reuse one physical rival and fail when it c
 });
 
 test('mission rival contact slows the johnboat once per cooldown and leaves a retained collider record', () => {
+  const impacts = [];
   const game = Object.assign(Object.create(Game.prototype), {
     state: { rivalRace: true, rivalHitCd: 0, rivalRams: 0 },
-    skiff: { active: true, pos: new THREE.Vector2(8, 12), heading: 0, speed: 10 },
+    skiff: { active: true, pos: new THREE.Vector2(8, 12), heading: 0, speed: 10, applyImpact(...args) { impacts.push(args); } },
+    phys: { pos: new THREE.Vector2(7, 9) },
     missionRivalObstacles: [], missionRivalObstacle: { ax: 0, az: 0, bx: 0, bz: 0 },
     shake: 0, audio: { warn() {} }, toast() {},
   });
@@ -79,12 +81,14 @@ test('mission rival contact slows the johnboat once per cooldown and leaves a re
   assert.equal(game.missionRivalObstacles[0], game.missionRivalObstacle);
   assert.deepEqual([game.missionRivalObstacle.ax, game.missionRivalObstacle.az, game.missionRivalObstacle.bx, game.missionRivalObstacle.bz], [8, 10, 8, 14]);
 
-  game.hitMissionRival(4);
+  game.hitMissionRival(4, -1, 0);
   assert.equal(game.state.rivalRams, 1);
   assert.ok(game.skiff.speed < 10);
-  const speed = game.skiff.speed; game.hitMissionRival(8);
+  assert.deepEqual(impacts, [[4, -1, 0, 3]]);
+  const speed = game.skiff.speed; game.hitMissionRival(8, 1, 0);
   assert.equal(game.state.rivalRams, 1);
   assert.equal(game.skiff.speed, speed);
+  assert.equal(impacts.length, 1);
   game.endMissionRival();
   assert.equal(game.missionRivalObstacles.length, 0);
 });

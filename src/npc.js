@@ -124,17 +124,38 @@ export class SkiffAI {
     this.pos = new THREE.Vector2(); this.vel = new THREE.Vector2(); this.heading = 0; this.speed = 0;
     this.maxSpeed = 11.6; this.path = []; this.i = 0; this.active = false; this.done = false; this.waveFn = waveFn;
     this.roll = 0; this.pitch = 0; this.dist = 0;
+    this.shoveX = 0; this.shoveZ = 0; this.yawKick = 0; this.heelKick = 0;
     this.lookAhead = 14; this._flow = new THREE.Vector2(); this._forward = new THREE.Vector2();
   }
   start(path, speed, lookAhead = 14) {
     this.path = path; this.i = 0; this.maxSpeed = speed || 11.6; this.lookAhead = Math.max(4, Number(lookAhead) || 14);
     this.pos.set(path[0].x, path[0].z); this.heading = Math.atan2(-(path[1].x - path[0].x), -(path[1].z - path[0].z));
     this.vel.set(0, 0); this.speed = 0; this.active = true; this.done = false; this.dist = 0; this.roll = 0; this.pitch = 0;
+    this.shoveX = 0; this.shoveZ = 0; this.yawKick = 0; this.heelKick = 0;
     this.mesh.position.set(this.pos.x, this.waveFn(this.pos.x, this.pos.y, 0) - 0.05, this.pos.y);
     this.mesh.rotation.set(0, this.heading, 0); this.mesh.userData.motor.rotation.y = 0; this.mesh.visible = true;
   }
-  stop() { this.active = false; this.mesh.visible = false; }
+  stop() { this.active = false; this.mesh.visible = false; this.shoveX = 0; this.shoveZ = 0; this.yawKick = 0; this.heelKick = 0; }
   forward(out = new THREE.Vector2()) { return out.set(-Math.sin(this.heading), -Math.cos(this.heading)); }
+  // Retain a short hydrodynamic slide and attitude kick after another hull strikes this one. The normal points from
+  // the skiff toward the other boat, so the reciprocal impulse travels in the opposite direction. Contact distance
+  // along the centreline provides the torque arm: the same side hit yaws opposite ways at the bow and stern.
+  applyImpact(into, nx, nz, contactAlong = 0) {
+    const hit = Math.max(0, Math.min(12, Number(into) || 0)), normalLength = Math.hypot(nx, nz);
+    if (hit <= 0 || !Number.isFinite(normalLength) || normalLength < 1e-5) return false;
+    nx /= normalLength; nz /= normalLength;
+    const impulse = Math.min(4.8, hit * 0.48);
+    this.shoveX -= nx * impulse; this.shoveZ -= nz * impulse;
+    const shoveSpeed = Math.hypot(this.shoveX, this.shoveZ), maxShove = 5.4;
+    if (shoveSpeed > maxShove) { const scale = maxShove / shoveSpeed; this.shoveX *= scale; this.shoveZ *= scale; }
+    const along = Math.max(-2, Math.min(2, Number(contactAlong) || 0));
+    const fx = -Math.sin(this.heading), fz = -Math.cos(this.heading), forceX = -nx * impulse, forceZ = -nz * impulse;
+    const torque = (fz * along) * forceX - (fx * along) * forceZ;
+    this.yawKick = Math.max(-1.1, Math.min(1.1, this.yawKick + Math.max(-0.85, Math.min(0.85, torque * 0.1))));
+    const rightX = -Math.cos(this.heading), rightZ = Math.sin(this.heading), contactSide = nx * rightX + nz * rightZ;
+    this.heelKick = Math.max(-0.22, Math.min(0.22, this.heelKick + contactSide * hit * 0.022));
+    return true;
+  }
   update(dt, t, hold = 0) {
     if (!this.active) return;
     // advance the target index past waypoints we are within reach of, then steer at a point a little ahead
@@ -144,17 +165,19 @@ export class SkiffAI {
     let dh = want - this.heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
     const turnRate = 1.6;
     const turn = Math.max(-turnRate, Math.min(turnRate, dh * 3.0));
-    this.heading += turn * dt;
+    this.heading += (turn + this.yawKick) * dt;
     // slow for the bends, and if told to (a boat alongside)
     const bend = Math.min(1, Math.abs(dh) / 0.8);
     const tgtSpeed = this.maxSpeed * (1 - bend * 0.3) * (1 - hold * 0.8);
     this.speed += (tgtSpeed - this.speed) * (1 - Math.exp(-dt * (tgtSpeed > this.speed ? 0.6 : 2.0)));
     const f = this.forward(this._forward);
-    this.vel.set(f.x * this.speed, f.y * this.speed);
+    this.vel.set(f.x * this.speed + this.shoveX, f.y * this.speed + this.shoveZ);
     if (this.currents) this.vel.add(this.currents.flowAt(this.pos.x, this.pos.y, this._flow));
     this.pos.addScaledVector(this.vel, dt); this.dist += this.speed * dt;
-    this.roll += ((-turn * this.speed * 0.02) - this.roll) * (1 - Math.exp(-dt * 4));
+    this.roll += ((-turn * this.speed * 0.02 + this.heelKick) - this.roll) * (1 - Math.exp(-dt * 6));
     this.pitch += ((this.speed * 0.006) - this.pitch) * (1 - Math.exp(-dt * 3));
+    const shoveDecay = Math.exp(-dt * 1.9); this.shoveX *= shoveDecay; this.shoveZ *= shoveDecay;
+    this.yawKick *= Math.exp(-dt * 3.2); this.heelKick *= Math.exp(-dt * 2.8);
     const y = this.waveFn(this.pos.x, this.pos.y, t);
     this.mesh.position.set(this.pos.x, y - 0.05, this.pos.y);
     this.mesh.rotation.set(this.pitch, this.heading, this.roll, 'YXZ');
