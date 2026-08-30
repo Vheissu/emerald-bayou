@@ -189,6 +189,28 @@ export function pursuitSearchPlan(role, attention, lostFor = 0, lastHeading = 0,
   return out;
 }
 
+export function pursuitSearchlightPlan(active, hour = 12, restrictedVisibility = 0, storm = 0, visual = true, role = 0, unitX = 0, unitZ = 0, unitHeading = 0, targetX = 0, targetZ = 0, elapsed = 0, out = {}) {
+  const h = ((Number(hour) || 0) % 24 + 24) % 24, restricted = clamp(Number(restrictedVisibility) || 0, 0, 1), weather = clamp(Number(storm) || 0, 0, 1);
+  const unit = clamp(Math.floor(Number(role) || 0), 0, 2), night = h < 6.15 || h > 19.1;
+  const on = Boolean(active) && (night || restricted > 0.58 || weather > 0.68);
+  const x = Number.isFinite(unitX) ? unitX : 0, z = Number.isFinite(unitZ) ? unitZ : 0;
+  const tx = Number.isFinite(targetX) ? targetX : x, tz = Number.isFinite(targetZ) ? targetZ : z;
+  const heading = Number.isFinite(unitHeading) ? unitHeading : 0, dx = tx - x, dz = tz - z;
+  const desired = Math.hypot(dx, dz) > 0.01 ? Math.atan2(-dx, -dz) : heading;
+  const phase = Math.max(0, Number(elapsed) || 0);
+  const scan = visual
+    ? (unit === 1 ? 0.035 : unit === 2 ? -0.035 : 0)
+    : Math.sin(phase * (0.41 + unit * 0.035) + unit * 2.1) * (0.12 + restricted * 0.055) + Math.sin(phase * 0.17 + unit * 0.9) * 0.045;
+  const worldHeading = Math.atan2(Math.sin(desired + scan), Math.cos(desired + scan));
+  const baseLength = unit === 0 ? 44 : unit === 1 ? 40 : 38;
+
+  out.active = on; out.night = night; out.role = unit; out.targeted = Boolean(visual); out.worldLight = on && unit === 0;
+  out.worldHeading = worldHeading; out.relativeHeading = Math.atan2(Math.sin(worldHeading - heading), Math.cos(worldHeading - heading));
+  out.length = clamp(baseLength * (1 - restricted * 0.19 - weather * 0.1), 28, 46); out.width = unit === 0 ? 7 : 6;
+  out.intensity = out.worldLight ? 760 * clamp(1 - weather * 0.22 - restricted * 0.12, 0.55, 1) : 0;
+  return out;
+}
+
 export function pursuitLostDistance(attention, restrictedVisibility = 0, storm = 0) {
   const stars = wantedLevel(attention), concealment = clamp(restrictedVisibility, 0, 1) * 58 + clamp(storm, 0, 1) * 24;
   return clamp(165 + stars * 24 - concealment, 105, 275);

@@ -132,6 +132,31 @@ test('a patrol backup consumes its retained perimeter assignment when visual is 
   assert.ok(agent.search.radius <= agent.search.areaRadius);
 });
 
+test('the retained pursuit spotlight follows a visual target and shuts down in clear daylight', () => {
+  const director = Object.create(EncounterDirector.prototype), transforms = {};
+  director.environment = { hour: 23, restrictedVisibility: 0.1, values: { storm: 0.15 } };
+  director.water = { waveHeight: () => 0.4 };
+  const searchlight = {
+    active: false, plan: {}, rig: { visible: false, rotation: { y: 0 } }, light: { intensity: 0 },
+    beam: {
+      visible: false,
+      scale: { set: (...values) => { transforms.scale = values; } },
+      position: { set: (...values) => { transforms.position = values; } },
+      rotation: { set: (...values) => { transforms.rotation = values; } },
+    },
+  };
+  const R = { role: 0, agent: { active: true, x: 10, z: 20, heading: 0 }, searchlight };
+  const e = { state: 'pursuit', pursuit: 8 };
+  assert.equal(director.updatePatrolSearchlight(e, R, 4, true, 30, 20), true);
+  assert.equal(searchlight.active, true); assert.equal(searchlight.rig.visible, true); assert.equal(searchlight.beam.visible, true); assert.ok(searchlight.light.intensity > 0);
+  assert.deepEqual(transforms.scale, [searchlight.plan.width, searchlight.plan.length, 1]); assert.equal(transforms.position[1], 0.455);
+  assert.equal(transforms.rotation[0], -Math.PI / 2); assert.equal(transforms.rotation[3], 'YXZ');
+
+  director.environment.hour = 12; director.environment.restrictedVisibility = 0; director.environment.values.storm = 0;
+  assert.equal(director.updatePatrolSearchlight(e, R, 5, true, 30, 20), false);
+  assert.equal(searchlight.active, false); assert.equal(searchlight.rig.visible, false); assert.equal(searchlight.beam.visible, false); assert.equal(searchlight.light.intensity, 0);
+});
+
 test('backup rams use one shared contact window and damage the player craft', () => {
   const director = Object.create(EncounterDirector.prototype), damage = [];
   director.phys = {

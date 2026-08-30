@@ -19,6 +19,7 @@ import {
 import { waterspoutAvoidanceStrength, waterspoutProbeScore, waterspoutReactionReady } from './waterspout.js';
 import { sampleTrafficWake, wakeSampleAt } from './wakefield.js';
 import { vesselLeeway, vesselWindHeel } from './vesselwind.js';
+import { makeSurfaceSearchBeam } from './surface-searchlight.js';
 
 // The bayou's small life: mullet jumping, bait boiling away from the bow, deadhead logs and dead snags in the still
 // water (with an anhinga drying its wings), other boats running the channels, and anglers anchored in the pools who
@@ -316,14 +317,6 @@ const GEAR_MATS = {
   red: new THREE.MeshBasicMaterial({ color: 0xff3028, toneMapped: false }), green: new THREE.MeshBasicMaterial({ color: 0x35ff86, toneMapped: false }),
   blue: new THREE.MeshBasicMaterial({ color: 0x2d82ff, toneMapped: false }), warm: new THREE.MeshBasicMaterial({ color: 0xffe7b3, toneMapped: false }),
 };
-const SEARCH_BEAM_GEO = new THREE.PlaneGeometry(1, 1);
-const searchBeamMaterial = color => new THREE.ShaderMaterial({
-  uniforms: { color: { value: new THREE.Color(color) } },
-  vertexShader: 'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-  fragmentShader: 'uniform vec3 color; varying vec2 vUv; void main(){float v=vUv.y;float width=mix(0.06,0.7,v);float side=1.0-smoothstep(width*0.54,width,abs(vUv.x-0.5)*2.0);float fade=smoothstep(0.0,0.09,v)*(1.0-smoothstep(0.68,1.0,v));gl_FragColor=vec4(color,side*fade*0.075);}',
-  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
-});
-const SEARCH_BEAM_MATS = { patrol: searchBeamMaterial(0xd9efff), courier: searchBeamMaterial(0xffe1b5) };
 const shiftOn = (hour, duty) => duty[0] < duty[1] ? hour >= duty[0] && hour < duty[1] : hour >= duty[0] || hour < duty[1];
 const RECOLOR_MATERIALS = new Map();
 function recolor(group, from, to) {
@@ -461,7 +454,7 @@ export class Traffic {
       const patrol = b.profile.id === 'fwc-27', rig = new THREE.Group(); rig.name = `searchlight:${b.profile.id}`; rig.position.set(0, deck + 0.72, -0.65);
       const target = new THREE.Object3D(); target.position.set(0, -0.5, -70);
       const light = new THREE.SpotLight(patrol ? 0xd9efff : 0xffe1b5, 0, patrol ? 135 : 95, patrol ? 0.13 : 0.11, 0.52, 1.65); light.target = target;
-      const length = patrol ? 36 : 28, width = patrol ? 5.5 : 3.8, beam = new THREE.Mesh(SEARCH_BEAM_GEO, patrol ? SEARCH_BEAM_MATS.patrol : SEARCH_BEAM_MATS.courier); beam.rotation.x = -Math.PI / 2; beam.scale.set(width, length, 1); beam.renderOrder = 34; beam.visible = false;
+      const length = patrol ? 36 : 28, width = patrol ? 5.5 : 3.8, beam = makeSurfaceSearchBeam(patrol ? 0xd9efff : 0xffe1b5, `surface searchlight beam:${b.profile.id}`); beam.scale.set(width, length, 1);
       rig.add(light, target); rig.visible = false; b.mesh.add(rig); (this.fx.waterScene || this.scene).add(beam); b.searchRig = rig; b.searchLight = light; b.searchBeam = beam; b.searchLength = length; b.searchWidth = width;
     }
     if (b.profile.id === 'fwc-27') {

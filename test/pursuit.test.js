@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitAviationVisualRange,
   pursuitBackupDelay, pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance,
-  pursuitLostProgress, pursuitLostTime, pursuitSearchPlan, pursuitSearchRadius, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
+  pursuitLostProgress, pursuitLostTime, pursuitSearchPlan, pursuitSearchlightPlan, pursuitSearchRadius, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
   pursuitSirenLevel, pursuitSurfaceLineOfSight, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
 
@@ -153,6 +153,27 @@ test('surface units divide the visible search area into retained inner, route, a
     assert.ok(innerSweep.radius < routeSweep.radius && routeSweep.radius < perimeterSweep.radius);
     assert.ok(perimeterSweep.radius <= perimeterSweep.areaRadius);
   }
+});
+
+test('pursuit searchlights lock visual targets and sweep assigned sectors only when conditions need them', () => {
+  assert.equal(pursuitSearchlightPlan(true, 12, 0, 0, true, 0, 0, 0, 0, 10, 0, 4).active, false);
+  assert.equal(pursuitSearchlightPlan(false, 23, 1, 1, true, 0, 0, 0, 0, 10, 0, 4).active, false);
+
+  const night = pursuitSearchlightPlan(true, 23, 0, 0, true, 0, 0, 0, 0, 10, 0, 4);
+  assert.equal(night.active, true); assert.equal(night.worldLight, true); assert.ok(Math.abs(night.worldHeading + Math.PI / 2) < 1e-9); assert.ok(night.intensity > 0);
+  const backup = pursuitSearchlightPlan(true, 23, 0, 0, true, 1, 0, 0, 0, 10, 0, 4);
+  assert.equal(backup.active, true); assert.equal(backup.worldLight, false); assert.equal(backup.intensity, 0);
+
+  const clearSearch = pursuitSearchlightPlan(true, 23, 0, 0, false, 1, 0, 0, 0, 0, -50, 14);
+  const outerSearch = pursuitSearchlightPlan(true, 23, 0, 0, false, 2, 0, 0, 0, 0, -50, 14);
+  assert.notEqual(clearSearch.worldHeading, outerSearch.worldHeading);
+  assert.ok(Math.abs(clearSearch.relativeHeading) <= Math.PI && Math.abs(outerSearch.relativeHeading) <= Math.PI);
+
+  const fog = pursuitSearchlightPlan(true, 12, 0.8, 0.2, false, 0, 0, 0, 0, 0, -50, 14);
+  const storm = pursuitSearchlightPlan(true, 12, 0.8, 0.9, false, 0, 0, 0, 0, 0, -50, 14);
+  assert.equal(fog.active, true); assert.equal(storm.active, true); assert.ok(storm.length < fog.length); assert.ok(storm.intensity < fog.intensity);
+  const retained = {}; assert.equal(pursuitSearchlightPlan(true, 23, 0, 0, true, 0, 0, 0, -Math.PI / 2, 10, 0, 4, retained), retained);
+  assert.ok(Math.abs(retained.relativeHeading) < 1e-9);
 });
 
 test('patrol siren is distance driven, heat aware, and silent outside pursuit', () => {

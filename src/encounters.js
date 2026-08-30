@@ -13,10 +13,11 @@ import { emitMapMarker } from './mapmarkers.js';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitBackupDelay,
   pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance, pursuitLostProgress, pursuitSightSampleCount,
-  pursuitSearchPlan, pursuitSearchRadius, pursuitSirenLevel, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed, pursuitSurfaceLineOfSight, pursuitTactic,
+  pursuitSearchPlan, pursuitSearchlightPlan, pursuitSearchRadius, pursuitSirenLevel, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed, pursuitSurfaceLineOfSight, pursuitTactic,
   pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from './pursuit.js';
 import { emitWakeStamp } from './wakestamps.js';
+import { makeSurfaceSearchBeam, surfaceSearchlightResourceStats } from './surface-searchlight.js';
 import {
   pickStormEvacuationCamp, stormEvacuationLeadSeconds, stormEvacuationWindow,
 } from './stormevacuation.js';
@@ -85,6 +86,20 @@ function signalBulb(parent, color, x, y, z) {
   let material = SIGNAL_MATERIALS.get(color);
   if (!material) { material = new THREE.MeshBasicMaterial({ color, toneMapped: false }); SIGNAL_MATERIALS.set(color, material); }
   const bulb = new THREE.Mesh(SIGNAL_GEOMETRY, material); bulb.position.set(x, y, z); bulb.scale.setScalar(1.35); parent.add(bulb); return bulb;
+}
+
+function makePatrolSearchlight(boat, scene, role) {
+  const rig = new THREE.Group(); rig.name = `FWC searchlight ${role}`; rig.position.set(0, 1.08, -0.72); rig.visible = false;
+  let material = SIGNAL_MATERIALS.get(0xd9efff);
+  if (!material) { material = new THREE.MeshBasicMaterial({ color: 0xd9efff, toneMapped: false }); SIGNAL_MATERIALS.set(0xd9efff, material); }
+  const bulb = new THREE.Mesh(SIGNAL_GEOMETRY, material); bulb.scale.setScalar(1.18); rig.add(bulb);
+  let light = null;
+  if (role === 0) {
+    const target = new THREE.Object3D(); target.position.set(0, -0.55, -90);
+    light = new THREE.SpotLight(0xd9efff, 0, 145, 0.13, 0.56, 1.7); light.target = target; light.castShadow = false; rig.add(light, target);
+  }
+  const beam = makeSurfaceSearchBeam(0xd9efff, `FWC pursuit beam ${role}`); scene.add(beam); boat.add(rig);
+  return { active: false, role, rig, bulb, light, beam, plan: { active: false, night: false, role, targeted: false, worldLight: false, worldHeading: 0, relativeHeading: 0, length: 0, width: 0, intensity: 0 } };
 }
 
 function makePackage() {
@@ -310,12 +325,12 @@ export class EncounterDirector {
 
     const patrolBoat = buildSkiff({ crew: true }); recolor(patrolBoat, 0x2d5c4b); patrolBoat.visible = false; this.scene.add(patrolBoat);
     const blue = signalLight(patrolBoat, 0x267cff, -0.25, 1.35, -0.2), red = signalLight(patrolBoat, 0xff2f25, 0.25, 1.35, -0.2);
-    const patrol = { boat: patrolBoat, blue, red, agent: boatAgent(patrolBoat, 0) };
+    const patrol = { boat: patrolBoat, blue, red, agent: boatAgent(patrolBoat, 0), role: 0, searchlight: makePatrolSearchlight(patrolBoat, this.water.scene || this.scene, 0) };
     const patrolBackups = [0, 1].map(index => {
       const boat = buildSkiff({ crew: true, driverModel: false }); recolor(boat, index ? 0x35614f : 0x315848); boat.name = index ? 'FWC Shallow Water 4' : 'FWC Marine 12'; boat.visible = false; this.scene.add(boat);
       const blueBulb = signalBulb(boat, 0x267cff, -0.25, 1.35, -0.2), redBulb = signalBulb(boat, 0xff2f25, 0.25, 1.35, -0.2);
       const closure = { active: false, holding: false, announced: false, x: 0, z: 0, courseX: 0, courseZ: -1, heading: 0, remaining: 0, cooldown: index ? 1.8 : 0, plan: { eligible: false, lead: 0, duration: 0, cooldown: 0, approachSpeed: 0, setupTimeout: 0 } };
-      return { boat, blueBulb, redBulb, agent: boatAgent(boat, index + 1), closure, index, role: index + 1 };
+      return { boat, blueBulb, redBulb, agent: boatAgent(boat, index + 1), closure, index, role: index + 1, searchlight: makePatrolSearchlight(boat, this.water.scene || this.scene, index + 1) };
     });
 
     const smugglerBoat = buildSkiff({ crew: true }); recolor(smugglerBoat, 0x4b3527); smugglerBoat.visible = false; this.scene.add(smugglerBoat);
@@ -838,7 +853,7 @@ export class EncounterDirector {
   startManatee(at) {
     const R = this.rigs.manatee, heading = at.heading + (Math.random() - 0.5) * 0.7;
     R.animal.visible = true; R.buoy.visible = true; R.rope.visible = true; R.rope.material.opacity = 0.86;
-    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0; this.resetPatrolBackups();
+    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0; this.hidePatrolSearchlight(this.rigs.patrol); this.resetPatrolBackups();
     this.active = {
       type: 'manatee', x: at.x, z: at.z, heading, navHeading: heading, speed: 0.46, state: 'waiting', t: 0, known: false,
       navT: 0, ph: Math.random() * Math.PI * 2, surfaced: false, spook: 0, warnT: 0, hitCd: 0, lineHitCd: 0,
@@ -977,7 +992,7 @@ export class EncounterDirector {
     Object.assign(A, { x: at.x, z: at.z, heading, speed: 0.18, want: 0, turn: 0, decisionT: 0, active: true });
     A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.set(0, heading, 0); A.mesh.visible = true;
     this.rigs.smuggler.pack.visible = false; S.gunner.visible = true; S.gator.visible = true; S.eyes.visible = false;
-    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0; this.resetPatrolBackups();
+    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0; this.hidePatrolSearchlight(this.rigs.patrol); this.resetPatrolBackups();
     this.active = {
       type: 'spotlight', state: 'waiting', x: A.x, z: A.z, heading, t: 0, known: false, ph: Math.random() * Math.PI * 2,
       gatorX, gatorZ, takeT: 27 + Math.random() * 7, resolveT: 0, chaseT: 0, visualT: 0, lostT: 0,
@@ -1242,9 +1257,30 @@ export class EncounterDirector {
   resetPatrolBackups() {
     if (!this.rigs?.patrolBackups) return;
     for (const R of this.rigs.patrolBackups) {
-      R.agent.active = false; if (R.agent.search) R.agent.search.active = false; R.boat.visible = false; R.blueBulb.visible = false; R.redBulb.visible = false;
+      R.agent.active = false; if (R.agent.search) R.agent.search.active = false; this.hidePatrolSearchlight(R); R.boat.visible = false; R.blueBulb.visible = false; R.redBulb.visible = false;
       if (R.closure) Object.assign(R.closure, { active: false, holding: false, announced: false, remaining: 0, cooldown: R.index ? 1.8 : 0 });
     }
+  }
+
+  hidePatrolSearchlight(R) {
+    const S = R?.searchlight; if (!S) return;
+    S.active = false; S.plan.active = false; S.rig.visible = false; S.beam.visible = false; if (S.light) S.light.intensity = 0;
+  }
+
+  updatePatrolSearchlight(e, R, t, visual, targetX, targetZ) {
+    const S = R?.searchlight, A = R?.agent; if (!S || !A) return false;
+    const values = this.environment?.values || {};
+    const plan = pursuitSearchlightPlan(
+      e?.state === 'pursuit' && A.active, this.environment?.hour, this.environment?.restrictedVisibility,
+      values.storm, visual, R.role, A.x, A.z, A.heading, targetX, targetZ, e?.pursuit, S.plan,
+    );
+    S.active = plan.active; S.rig.visible = plan.active; S.beam.visible = plan.active; if (S.light) S.light.intensity = plan.intensity;
+    if (!plan.active) return false;
+    S.rig.rotation.y = plan.relativeHeading; S.beam.scale.set(plan.width, plan.length, 1);
+    const fx = -Math.sin(plan.worldHeading), fz = -Math.cos(plan.worldHeading);
+    const x = A.x + fx * plan.length * 0.5, z = A.z + fz * plan.length * 0.5;
+    S.beam.position.set(x, this.water.waveHeight(x, z, t) + 0.055, z); S.beam.rotation.set(-Math.PI / 2, plan.worldHeading, 0, 'YXZ');
+    return true;
   }
 
   resetPatrolAviation() {
@@ -1365,7 +1401,7 @@ export class EncounterDirector {
   startPatrol(at, options = {}) {
     this.resetPatrolBackups(); this.resetPatrolAviation(); this.resetPatrolSight(); this.resetPatrolSound(); this.resetPatrolSearch();
     const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: Number(options.speed) || 4, want: 8, turn: 0, active: true });
-    if (A.search) A.search.active = false;
+    if (A.search) A.search.active = false; this.hidePatrolSearchlight(this.rigs.patrol);
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading;
     A.mesh.visible = true;
     const goodwill = Number(this.game.save.goodwill) || 0, fwcStanding = this.reputation ? this.reputation.score('fwc') : 0;
@@ -1480,7 +1516,7 @@ export class EncounterDirector {
   startNetline(at) {
     const R = this.rigs.netline, rx = Math.cos(at.heading), rz = -Math.sin(at.heading), half = 11;
     R.visible = true; R.position.set(at.x, this.water.waveHeight(at.x, at.z, 0) + 0.02, at.z); R.rotation.set(0, at.heading, 0); R.scale.set(1, 1, 1);
-    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false;
+    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.hidePatrolSearchlight(this.rigs.patrol);
     this.rigs.smuggler.boat.visible = false; this.rigs.smuggler.agent.active = false; this.rigs.smuggler.pack.visible = false;
     this.active = {
       type: 'netline', x: at.x, z: at.z, heading: at.heading, state: 'waiting', t: 0, known: false, choice: '',
@@ -1587,7 +1623,7 @@ export class EncounterDirector {
     if (e.type === 'distress') { if (!(success && this.beginDistressEcho(e))) this.clearDistressEcho(); }
     else if (!this.distressEcho) this.rigs.distress.boat.visible = false;
     this.rigs.distress.passenger.visible = false;
-    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0; this.resetPatrolBackups();
+    this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0; this.hidePatrolSearchlight(this.rigs.patrol); this.resetPatrolBackups();
     this.rigs.smuggler.boat.visible = false; this.rigs.smuggler.agent.active = false; this.rigs.smuggler.pack.visible = false;
     this.rigs.salvage.wreck.visible = false; for (const d of this.rigs.salvage.drums) d.visible = false;
     this.rigs.netline.visible = false; this.rigs.netline.scale.set(1, 1, 1); this.rigs.netline.rotation.z = 0;
@@ -2350,6 +2386,8 @@ export class EncounterDirector {
   pursuitSnapshot() {
     const e = this.active?.type === 'patrol' && this.active.state === 'pursuit' ? this.active : null;
     const closure = this.rigs.patrolBackups[1]?.closure;
+    const mainLight = this.rigs.patrol.searchlight, marineLight = this.rigs.patrolBackups[0]?.searchlight, shallowLight = this.rigs.patrolBackups[1]?.searchlight;
+    const lightResources = surfaceSearchlightResourceStats();
     const finite = value => Number.isFinite(value) ? Math.round(value * 10) / 10 : null;
     return {
       active: Boolean(e), wantedLevel: wantedLevel(this.law?.attention || 0), surfaceUnits: e ? e.units : 0,
@@ -2365,6 +2403,11 @@ export class EncounterDirector {
         { callSign: 'FWC 27', active: Boolean(e && this.rigs.patrol.agent.search?.active), sector: this.rigs.patrol.agent.search?.sector || '', targetX: finite(this.rigs.patrol.agent.search?.targetX), targetZ: finite(this.rigs.patrol.agent.search?.targetZ), radius: finite(this.rigs.patrol.agent.search?.radius), areaRadius: finite(this.rigs.patrol.agent.search?.areaRadius) },
         ...this.rigs.patrolBackups.map((unit, index) => ({ callSign: index ? 'Shallow Water 4' : 'Marine 12', active: Boolean(e && unit.agent.search?.active), sector: unit.agent.search?.sector || '', targetX: finite(unit.agent.search?.targetX), targetZ: finite(unit.agent.search?.targetZ), radius: finite(unit.agent.search?.radius), areaRadius: finite(unit.agent.search?.areaRadius) })),
       ],
+      searchlights: {
+        activeBeams: e ? Number(Boolean(mainLight?.active)) + Number(Boolean(marineLight?.active)) + Number(Boolean(shallowLight?.active)) : 0,
+        worldLights: e && mainLight?.plan.worldLight ? 1 : 0, sharedGeometries: lightResources.geometries,
+        sharedMaterials: lightResources.materials, textures: lightResources.textures, geometryBytes: lightResources.geometryBytes,
+      },
       channelClosure: { active: Boolean(e && closure?.active), holding: Boolean(e && closure?.holding), cooldown: e && closure ? finite(closure.cooldown) : null },
       aviation: {
         requested: Boolean(e?.aviationRequested), active: Boolean(e?.aviationActive), directVisual: Boolean(e?.aviationVisual), beamActive: Boolean(e?.aviationBeamActive),
@@ -2394,7 +2437,7 @@ export class EncounterDirector {
   }
 
   updatePatrolBackup(e, R, dt, t, heat, stars, visual) {
-    const A = R.agent, p = this.phys; if (!A.active) return Infinity;
+    const A = R.agent, p = this.phys; if (!A.active) { this.hidePatrolSearchlight(R); return Infinity; }
     if (visual && A.search) A.search.active = false;
     const C = R.closure; if (C) C.cooldown = Math.max(0, C.cooldown - dt);
     let d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y), tx, tz, maxSpeed, holdRadius = 0;
@@ -2415,6 +2458,7 @@ export class EncounterDirector {
           if (!C.announced) { C.announced = true; this.audio.horn(0.24); this.game.toast('FWC roadblock ahead', 'Shallow Water Four is broadside on your line. Change cut or stop.', 3); }
         }
       }
+      this.updatePatrolSearchlight(e, R, t, visual, p.pos.x, p.pos.y);
       d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y); this.addPatrolBackupObstacle(A, R.index); this.markPatrolBackup(A, R.index);
       const blink = Math.floor((t + R.index * 0.11) * 5.2) % 2; R.blueBulb.visible = Boolean(blink); R.redBulb.visible = !blink;
       if (!C.holding) this.attemptPatrolRam(e, R, R.role, d, heat, stars);
@@ -2439,7 +2483,9 @@ export class EncounterDirector {
       const sx = A.x - other.x, sz = A.z - other.z, separation = Math.hypot(sx, sz);
       if (separation < 16) { const n = separation || 1, push = (16 - separation) * 1.4; tx += sx / n * push; tz += sz / n * push; }
     }
-    this.updateAgent(A, dt, t, tx, tz, maxSpeed, holdRadius); d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y); this.addPatrolBackupObstacle(A, R.index); this.markPatrolBackup(A, R.index);
+    this.updateAgent(A, dt, t, tx, tz, maxSpeed, holdRadius);
+    this.updatePatrolSearchlight(e, R, t, visual, visual ? p.pos.x : A.search?.targetX ?? tx, visual ? p.pos.y : A.search?.targetZ ?? tz);
+    d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y); this.addPatrolBackupObstacle(A, R.index); this.markPatrolBackup(A, R.index);
     const blink = Math.floor((t + R.index * 0.11) * 5.2) % 2; R.blueBulb.visible = Boolean(blink); R.redBulb.visible = !blink;
     this.attemptPatrolRam(e, R, R.role, d, heat, stars); return d;
   }
@@ -2469,7 +2515,9 @@ export class EncounterDirector {
       }
       e.visual = visual;
     }
-    this.updateAgent(A, dt, t, tx, tz, maxSpeed, holdRadius); d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y); this.addPatrolObstacle(A);
+    this.updateAgent(A, dt, t, tx, tz, maxSpeed, holdRadius);
+    this.updatePatrolSearchlight(e, this.rigs.patrol, t, Boolean(e.visual), e.visual ? p.pos.x : A.search?.targetX ?? tx, e.visual ? p.pos.y : A.search?.targetZ ?? tz);
+    d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y); this.addPatrolObstacle(A);
     const blink = Math.floor(t * 5) % 2; this.rigs.patrol.blue.light.intensity = blink ? 80 : 5; this.rigs.patrol.red.light.intensity = blink ? 5 : 80;
     if (d < 150) this.known(e, e.wanted ? 'FWC intercept' : 'FWC patrol', e.wanted ? 'They matched the hull. Idle and let them come alongside.' : 'Blue lights. They want the prop at idle.');
     if (e.known) this.point(A.x, A.z, 'FWC patrol', '#5aa7ff');
