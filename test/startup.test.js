@@ -78,7 +78,11 @@ test('terrain workers are primed before the synchronous environment convolution'
   assert.deepEqual(result, { queued: 2, inFlight: 2 });
 
   const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  assert.ok(source.indexOf('terrain.prime(startX, startZ)') < source.indexOf('pmrem.fromScene('));
+  const managerSource = readFileSync(new URL('../src/environmentmap.js', import.meta.url), 'utf8');
+  const primeAt = source.indexOf('terrain.prime(startX, startZ)');
+  const captureAt = source.indexOf("environmentReflections.capture(initialReflectionState, 'initial'");
+  assert.ok(primeAt >= 0 && captureAt >= 0 && primeAt < captureAt);
+  assert.ok(managerSource.includes('generator.fromScene('));
 });
 
 test('local startup only opens on terrain that is actually visible under the dock', () => {

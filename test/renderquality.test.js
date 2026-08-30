@@ -53,6 +53,12 @@ test('scales startup environment convolution while preserving the cinematic map'
   assert.ok(fallback.peakTargetBytes < cinematic.peakTargetBytes * 0.055);
 });
 
+test('keeps dynamic sky convolution off old hardware and infrequent on high-end tiers', () => {
+  const refresh = [0, 1, 2, 3].map(level => qualityProfile(level).environmentMapRefreshSeconds);
+  assert.deepEqual(refresh, [0, 0, 75, 45]);
+  assert.ok(refresh[2] > refresh[3]);
+});
+
 test('scales wake simulation cost without shrinking its world-space footprint', () => {
   const fallback = qualityProfile(0), performance = qualityProfile(1), balanced = qualityProfile(2), cinematic = qualityProfile(3);
   assert.deepEqual(

@@ -35,7 +35,7 @@ import { RadioDirector } from './radio.js';
 import { WorldIncidents } from './incidents.js';
 import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
-import { AdaptiveQualityController, MAX_DRAW_PIXELS, environmentMapBudget, initialQualityLevel, pixelRatioFor, webglRendererName } from './renderquality.js';
+import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor, webglRendererName } from './renderquality.js';
 import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel, readQualityPreference, writeQualityPreference } from './displaysettings.js';
 import { startupPlan, startupTerrainReady } from './startup.js';
 import { FieldDiscoveryDirector } from './discoveries.js';
@@ -46,6 +46,7 @@ import { NocturnalWetland } from './nocturnal.js';
 import { WakeStampPool } from './wakestamps.js';
 import { bindPageLifecycle } from './pagelifecycle.js';
 import { CHASE_CAMERA_SAMPLES, chaseCameraBoomLimit, chaseCameraBoomStep } from './chasecamera.js';
+import { SkyEnvironmentMap } from './environmentmap.js';
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
@@ -111,17 +112,11 @@ async function init() {
   const terrainPrime = terrain.prime(startX, startZ);
   startupTiming.terrainPrimedMs = performance.now() - startupStartedAt;
 
-  // Environment map from the sky for PBR reflections on the boat and wet mud. Cinematic keeps the original 256 px
-  // convolution; lower profiles reduce both its synchronous startup work and its retained half-float/depth target.
-  const pmrem = new THREE.PMREMGenerator(renderer);
+  // The capture scene shares the real sky geometry, material and uniforms. It adds no duplicate GPU resources and
+  // can therefore follow broad day/night/weather changes without retaining a bank of environment maps.
   const skyScene = new THREE.Scene(); const skyClone = sky.mesh.clone(); skyScene.add(skyClone);
-  const environmentMapStartedAt = performance.now();
-  const environmentTarget = pmrem.fromScene(skyScene, 0, 0.1, 4000, { size: renderProfile.environmentMapSize });
-  startupTiming.environmentMapMs = performance.now() - environmentMapStartedAt;
-  const environmentMapMemory = environmentMapBudget(renderProfile.environmentMapSize);
-  scene.environment = environmentTarget.texture;
   scene.environmentIntensity = 0.4;
-  pmrem.dispose();
+  const environmentReflections = new SkyEnvironmentMap({ renderer, scene, skyScene, skyUniforms: sky.uniforms, profile: renderProfile });
 
   await new Promise(r => setTimeout(r, 30));
 
@@ -269,6 +264,13 @@ async function init() {
   const fishing = new Fishing({ scene, boat: boat.group, terrain, world, water, phys, game, audio, environment, currents, regions, life });
   game.fishing = fishing;
   const nocturnal = new NocturnalWetland({ scene, terrain, world, phys, environment, regions, audio, profile: renderProfile });
+  // Apply the saved clock and weather before the first capture. Previously a saved night or hurricane still received
+  // the default daytime PMREM for the whole session, even though the visible sky and direct lighting were correct.
+  environment.update(0, 0, camera.position, true);
+  const initialReflectionState = { hour: environment.hour, sunAltitude: environment.sunDir.y, storm: environment.values.storm, cover: environment.values.cloud };
+  const environmentMapStartedAt = performance.now();
+  if (!environmentReflections.capture(initialReflectionState, 'initial', environmentMapStartedAt)) console.warn('environment reflection capture failed', environmentReflections.lastError);
+  startupTiming.environmentMapMs = performance.now() - environmentMapStartedAt;
   let pageHibernated = false;
   const pageLifecycle = { hibernated: false, hiddenAt: 0, resumedAt: 0, releasedAttachmentBytes: 0, releasedCanvasBytes: 0, activations: 0 };
   const debugSceneGraphStats = import.meta.env.DEV ? () => {
@@ -294,7 +296,7 @@ async function init() {
   } : null;
   const debugResourceSnapshot = import.meta.env.DEV ? () => ({
     renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs.length },
-    startup: { ...startupTiming, terrainPrime, environmentMap: environmentMapMemory },
+    startup: { ...startupTiming, terrainPrime, environmentMap: environmentReflections.resourceStats() },
     audio: audio.spatialStats(),
     proceduralSurfaces: TEX.sharedSurfaceTextureStats(),
     sky: sky.resourceStats(),
@@ -342,7 +344,7 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, environmentMap: { ...environmentMapMemory } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, nocturnal, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
@@ -350,6 +352,39 @@ async function init() {
   // ---- input ----
   const keys = {};
   let started = false;
+  const reflectionState = { hour: environment.hour, sunAltitude: environment.sunDir.y, storm: environment.values.storm, cover: environment.values.cloud };
+  let reflectionCheckT = 2, reflectionIdleJob = 0, reflectionIdleKind = '';
+  const syncReflectionState = () => {
+    reflectionState.hour = environment.hour; reflectionState.sunAltitude = environment.sunDir.y;
+    reflectionState.storm = environment.values.storm; reflectionState.cover = environment.values.cloud;
+    return reflectionState;
+  };
+  const captureEnvironmentReflections = reason => {
+    const captured = environmentReflections.capture(syncReflectionState(), reason);
+    if (!captured) console.warn('environment reflection capture failed', environmentReflections.lastError);
+    return captured;
+  };
+  const scheduleEnvironmentReflections = (reason = 'atmosphere') => {
+    if (reflectionIdleJob) return false;
+    const run = deadline => {
+      reflectionIdleJob = 0; reflectionIdleKind = '';
+      if (document.hidden || pageHibernated || (!game.paused && deadline && !deadline.didTimeout && deadline.timeRemaining() < 4)) return false;
+      if (!environmentReflections.needsRefresh(syncReflectionState())) return false;
+      return captureEnvironmentReflections(reason);
+    };
+    if (typeof requestIdleCallback === 'function') {
+      reflectionIdleKind = 'idle'; reflectionIdleJob = requestIdleCallback(run, { timeout: 8000 });
+    } else {
+      reflectionIdleKind = 'timeout'; reflectionIdleJob = window.setTimeout(() => run(null), 0);
+    }
+    return true;
+  };
+  const cancelEnvironmentReflectionJob = () => {
+    if (!reflectionIdleJob) return false;
+    if (reflectionIdleKind === 'idle' && typeof cancelIdleCallback === 'function') cancelIdleCallback(reflectionIdleJob);
+    else clearTimeout(reflectionIdleJob);
+    reflectionIdleJob = 0; reflectionIdleKind = ''; return true;
+  };
   let encounterStressRunning = false;
   window.addEventListener('keydown', e => {
     keys[e.code] = true;
@@ -402,11 +437,19 @@ async function init() {
   };
   let renderFrameNo = 0;
   const applyRenderQuality = profile => {
-    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile);
+    const oldEnvironmentSize = environmentReflections.targetSize;
+    renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile); environmentReflections.setProfile(profile);
     if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
       sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
       if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
       water.uniforms.shadowOn.value = 0;
+    }
+    if (environmentReflections.targetSize !== profile.environmentMapSize) {
+      cancelEnvironmentReflectionJob();
+      // A downgrade releases the larger target before doing the cheaper convolution. Upgrades at the title are safe
+      // to apply immediately; an in-play promotion waits for browser idle time.
+      if (profile.environmentMapSize < oldEnvironmentSize || game.paused) captureEnvironmentReflections('quality');
+      else scheduleEnvironmentReflections('quality');
     }
     renderFrameNo = 0; resize();
   };
@@ -669,6 +712,11 @@ async function init() {
 
     // world updates
     sky.update(time, camera.position);
+    reflectionCheckT -= dtRaw;
+    if (reflectionCheckT <= 0) {
+      reflectionCheckT = 2;
+      if (frameDelta < 1 / 28 && environmentReflections.needsRefresh(syncReflectionState())) scheduleEnvironmentReflections();
+    }
     terrain.update(time, camera.position);
     veg.update(time, environment.lightDir, wind);
     birds.update(time, camera.position, dt);
@@ -789,10 +837,11 @@ async function init() {
     renderFrameNo++;
   }
   renderer.setAnimationLoop(frame);
-  const attachmentBytes = () => pipeline.memoryStats().estimatedAttachmentBytes + water.memoryStats().estimatedAttachmentBytes + (sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0);
+  const attachmentBytes = () => pipeline.memoryStats().estimatedAttachmentBytes + water.memoryStats().estimatedAttachmentBytes + environmentReflections.resourceStats().retainedBytes + (sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0);
   const hibernatePage = () => {
     if (pageHibernated) return false;
     const before = attachmentBytes(), canvasBefore = minimap.memoryStats().estimatedBackingBytes + worldMap.memoryStats().estimatedBackingBytes; pageHibernated = true; renderer.setAnimationLoop(null);
+    cancelEnvironmentReflectionJob(); environmentReflections.dispose();
     pipeline.hibernate(); water.hibernate();
     minimap.releaseTiles(); worldMap.hibernate();
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; water.uniforms.shadowOn.value = 0; }
@@ -803,7 +852,7 @@ async function init() {
   };
   const resumePage = () => {
     if (!pageHibernated || document.hidden) return false;
-    pageHibernated = false; pipeline.resume(); water.resume(); resize(); worldMap.resume(); clock.reset(); renderFrameNo = 0; void audio.resume(); renderer.setAnimationLoop(frame);
+    pageHibernated = false; pipeline.resume(); water.resume(); resize(); worldMap.resume(); clock.reset(); renderFrameNo = 0; void audio.resume(); renderer.setAnimationLoop(frame); scheduleEnvironmentReflections('resume');
     pageLifecycle.hibernated = false; pageLifecycle.resumedAt = Date.now();
     return true;
   };
