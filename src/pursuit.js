@@ -211,9 +211,23 @@ export function pursuitSearchlightPlan(active, hour = 12, restrictedVisibility =
   return out;
 }
 
-export function pursuitLostDistance(attention, restrictedVisibility = 0, storm = 0) {
-  const stars = wantedLevel(attention), concealment = clamp(restrictedVisibility, 0, 1) * 58 + clamp(storm, 0, 1) * 24;
-  return clamp(165 + stars * 24 - concealment, 105, 275);
+// Searchlights can extend a low-heat patrol's moonless visual range, but remain a narrow, weather-limited cone.
+// The caller supplies the signed bearing error so this helper stays independent of scene objects and allocation-free.
+export function pursuitSearchlightVisualHeld(distance, bearingError, restrictedVisibility = 0, storm = 0, active = true) {
+  if (!active) return false;
+  const d = Number(distance), angle = Number(bearingError);
+  if (!Number.isFinite(d) || d < 0 || !Number.isFinite(angle)) return false;
+  const restricted = clamp(Number(restrictedVisibility) || 0, 0, 1), weather = clamp(Number(storm) || 0, 0, 1);
+  const reach = clamp(145 - restricted * 56 - weather * 26, 72, 145);
+  const halfAngle = clamp(0.13 + restricted * 0.012 + weather * 0.008, 0.13, 0.15);
+  const wrapped = Math.atan2(Math.sin(angle), Math.cos(angle));
+  return d <= reach && Math.abs(wrapped) <= halfAngle;
+}
+
+export function pursuitLostDistance(attention, restrictedVisibility = 0, storm = 0, night = 0, moonlight = 0) {
+  const stars = wantedLevel(attention), darkness = clamp(Number(night) || 0, 0, 1) * (1 - clamp(Number(moonlight) || 0, 0, 1) * 0.52);
+  const concealment = clamp(restrictedVisibility, 0, 1) * 58 + clamp(storm, 0, 1) * 24 + darkness * 80;
+  return clamp(165 + stars * 24 - concealment, 78, 275);
 }
 
 export function pursuitLostTime(attention, restrictedVisibility = 0) {

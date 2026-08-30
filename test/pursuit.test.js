@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitAviationVisualRange,
   pursuitBackupDelay, pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance,
-  pursuitLostProgress, pursuitLostTime, pursuitSearchPlan, pursuitSearchlightPlan, pursuitSearchRadius, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
+  pursuitLostProgress, pursuitLostTime, pursuitSearchPlan, pursuitSearchlightPlan, pursuitSearchlightVisualHeld, pursuitSearchRadius, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
   pursuitSirenLevel, pursuitSurfaceLineOfSight, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
 
@@ -66,9 +66,12 @@ test('the third patrol boat forms a bounded high-wanted channel closure with cou
   assert.equal(pursuitChannelClosurePlan(2, 5, 120, 12, false).eligible, false);
 });
 
-test('fog and storms shorten visual range while higher heat widens the search', () => {
+test('fog, storms, and darkness shorten visual range while moonlight restores some detail', () => {
   assert.ok(pursuitLostDistance(4, 0, 0) > pursuitLostDistance(1, 0, 0));
   assert.ok(pursuitLostDistance(3, 0.9, 0.8) < pursuitLostDistance(3, 0, 0));
+  const daylight = pursuitLostDistance(1, 0, 0, 0, 0), moonlit = pursuitLostDistance(1, 0, 0, 1, 1), moonless = pursuitLostDistance(1, 0, 0, 1, 0);
+  assert.ok(daylight > moonlit); assert.ok(moonlit > moonless);
+  assert.ok(pursuitLostDistance(1, 0.8, 0.7, 1, 0) < moonless);
   assert.ok(pursuitLostTime(3, 0.9) < pursuitLostTime(3, 0));
 });
 
@@ -174,6 +177,16 @@ test('pursuit searchlights lock visual targets and sweep assigned sectors only w
   assert.equal(fog.active, true); assert.equal(storm.active, true); assert.ok(storm.length < fog.length); assert.ok(storm.intensity < fog.intensity);
   const retained = {}; assert.equal(pursuitSearchlightPlan(true, 23, 0, 0, true, 0, 0, 0, -Math.PI / 2, 10, 0, 4, retained), retained);
   assert.ok(Math.abs(retained.relativeHeading) < 1e-9);
+});
+
+test('surface searchlights reacquire only inside their weather-limited cone', () => {
+  assert.equal(pursuitSearchlightVisualHeld(120, 0.08, 0, 0, true), true);
+  assert.equal(pursuitSearchlightVisualHeld(146, 0, 0, 0, true), false);
+  assert.equal(pursuitSearchlightVisualHeld(120, 0.2, 0, 0, true), false);
+  assert.equal(pursuitSearchlightVisualHeld(120, Math.PI * 2 + 0.08, 0, 0, true), true);
+  assert.equal(pursuitSearchlightVisualHeld(120, 0, 0.8, 0.9, true), false);
+  assert.equal(pursuitSearchlightVisualHeld(20, 0, 0, 0, false), false);
+  assert.equal(pursuitSearchlightVisualHeld(-1, 0, 0, 0, true), false);
 });
 
 test('patrol siren is distance driven, heat aware, and silent outside pursuit', () => {

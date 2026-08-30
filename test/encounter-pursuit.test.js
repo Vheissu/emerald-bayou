@@ -71,6 +71,32 @@ test('surface pursuit perception checks banks at AI cadence and any clear unit c
   assert.equal(director.patrolSurfaceVisual(0.06, 180), true);
 });
 
+test('an aligned patrol searchlight can reacquire beyond unaided night range but not through a bank', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 130, y: 0 } };
+  director.environment = { waterLevel: 0, restrictedVisibility: 0, values: { storm: 0 } };
+  director.terrain = { heightAt: () => -2 };
+  const searchlight = { plan: { active: true, worldHeading: -Math.PI / 2 } };
+  director.rigs = {
+    patrol: { agent: { active: true, x: 0, z: 0 }, searchlight },
+    patrolBackups: [{ agent: { active: false } }, { agent: { active: false } }],
+  };
+
+  director.resetPatrolSight();
+  assert.equal(director.patrolSurfaceVisual(0.2, 100), true);
+  assert.equal(director._patrolSight.directHeld, false); assert.equal(director._patrolSight.beamHeld, true);
+
+  director.terrain.heightAt = x => x > 42 && x < 58 ? 0.2 : -2; director._patrolSight.timer = 0;
+  assert.equal(director.patrolSurfaceVisual(0.2, 100), true);
+  assert.equal(director.patrolSurfaceVisual(0.2, 100), false);
+  assert.equal(director._patrolSight.occluded, true); assert.equal(director._patrolSight.beamHeld, false);
+
+  director.terrain.heightAt = () => -2; searchlight.plan.worldHeading = 0; director.resetPatrolSight();
+  assert.equal(director.patrolSurfaceVisual(0.2, 100), true);
+  assert.equal(director.patrolSurfaceVisual(0.2, 100), false);
+  assert.equal(director._patrolSight.occluded, false); assert.equal(director._patrolSight.beamUnits, 0);
+});
+
 test('engine noise behind a bank gives patrols an uncertain search fix without granting visual', () => {
   const director = Object.create(EncounterDirector.prototype), toasts = [], calls = [];
   director.phys = { pos: { x: 100, y: 0 }, rpm: 1, speed: 13, throttle: 1, wet: 1 };

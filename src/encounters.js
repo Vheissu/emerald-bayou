@@ -13,8 +13,8 @@ import { emitMapMarker } from './mapmarkers.js';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitBackupDelay,
   pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance, pursuitLostProgress, pursuitSightSampleCount,
-  pursuitSearchPlan, pursuitSearchlightPlan, pursuitSearchRadius, pursuitSirenLevel, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed, pursuitSurfaceLineOfSight, pursuitTactic,
-  pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
+  pursuitSearchPlan, pursuitSearchlightPlan, pursuitSearchlightVisualHeld, pursuitSearchRadius, pursuitSirenLevel, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed, pursuitSurfaceLineOfSight, pursuitTactic,
+  pursuitUnitCanRam, pursuitUnitCount, wantedLevel,
 } from './pursuit.js';
 import { emitWakeStamp } from './wakestamps.js';
 import { makeSurfaceSearchBeam, surfaceSearchlightResourceStats } from './surface-searchlight.js';
@@ -2252,7 +2252,7 @@ export class EncounterDirector {
 
   resetPatrolSight() {
     const sight = this._patrolSight || (this._patrolSight = {});
-    Object.assign(sight, { timer: 0, clear: true, held: true, inRange: true, blockedFor: 0, clearFor: 0, occluded: false, checkedUnits: 0, samples: 0 });
+    Object.assign(sight, { timer: 0, clear: true, held: true, inRange: true, directHeld: true, beamHeld: false, beamUnits: 0, blockedFor: 0, clearFor: 0, occluded: false, checkedUnits: 0, samples: 0 });
   }
 
   resetPatrolSound() {
@@ -2331,27 +2331,46 @@ export class EncounterDirector {
     return contact;
   }
 
-  patrolAgentHasVisual(agent, lostDistance, sight) {
+  patrolAgentWithinVisualRange(agent, lostDistance, searchlight) {
     if (!agent?.active) return false;
     const player = this.phys.pos, distance = Math.hypot(agent.x - player.x, agent.z - player.y);
-    if (!Number.isFinite(distance) || distance > lostDistance) return false;
+    if (!Number.isFinite(distance)) return false;
+    if (distance <= lostDistance) return true;
+    const values = this.environment?.values || {};
+    return pursuitSearchlightVisualHeld(distance, 0, this.environment?.restrictedVisibility, values.storm, searchlight?.plan?.active);
+  }
+
+  patrolAgentHasVisual(agent, lostDistance, sight, searchlight) {
+    if (!agent?.active) return false;
+    const player = this.phys.pos, distance = Math.hypot(agent.x - player.x, agent.z - player.y);
+    if (!Number.isFinite(distance)) return false;
+    const direct = distance <= lostDistance, plan = searchlight?.plan, values = this.environment?.values || {};
+    const playerBearing = Math.atan2(-(player.x - agent.x), -(player.y - agent.z));
+    const bearingError = plan ? Math.atan2(Math.sin(playerBearing - plan.worldHeading), Math.cos(playerBearing - plan.worldHeading)) : Infinity;
+    const beam = pursuitSearchlightVisualHeld(distance, bearingError, this.environment?.restrictedVisibility, values.storm, plan?.active);
+    if (!direct && !beam) return false;
     sight.checkedUnits++; sight.samples += Math.max(0, pursuitSightSampleCount(distance) - 1);
-    return pursuitSurfaceLineOfSight(this.terrain, agent.x, agent.z, player.x, player.y, this.environment.waterLevel);
+    if (beam) sight.beamUnits++;
+    const clear = pursuitSurfaceLineOfSight(this.terrain, agent.x, agent.z, player.x, player.y, this.environment.waterLevel);
+    if (clear && direct) sight.directHeld = true;
+    if (clear && beam) sight.beamHeld = true;
+    return clear;
   }
 
   patrolSurfaceVisual(dt, lostDistance) {
-    const sight = this._patrolSight || (this._patrolSight = {}), nearest = this.patrolNearestDistance();
-    const inRange = pursuitVisualHeld(nearest, lostDistance, true);
+    const sight = this._patrolSight || (this._patrolSight = {}), main = this.rigs.patrol;
+    let inRange = this.patrolAgentWithinVisualRange(main.agent, lostDistance, main.searchlight);
+    if (!inRange) for (const unit of this.rigs.patrolBackups) if (this.patrolAgentWithinVisualRange(unit.agent, lostDistance, unit.searchlight)) { inRange = true; break; }
     if (!inRange) {
-      sight.inRange = false; sight.held = false; sight.blockedFor = 0; sight.clearFor = 0; sight.occluded = false;
+      sight.inRange = false; sight.held = false; sight.directHeld = false; sight.beamHeld = false; sight.beamUnits = 0; sight.blockedFor = 0; sight.clearFor = 0; sight.occluded = false;
       return false;
     }
     if (!sight.inRange) sight.timer = 0;
     sight.inRange = true; sight.timer = Math.max(-0.2, (Number(sight.timer) || 0) - Math.max(0, dt));
     if (sight.timer <= 0) {
-      sight.checkedUnits = 0; sight.samples = 0;
-      sight.clear = this.patrolAgentHasVisual(this.rigs.patrol.agent, lostDistance, sight);
-      if (!sight.clear) for (const unit of this.rigs.patrolBackups) if (this.patrolAgentHasVisual(unit.agent, lostDistance, sight)) { sight.clear = true; break; }
+      sight.checkedUnits = 0; sight.samples = 0; sight.directHeld = false; sight.beamHeld = false; sight.beamUnits = 0;
+      sight.clear = this.patrolAgentHasVisual(main.agent, lostDistance, sight, main.searchlight);
+      if (!sight.clear) for (const unit of this.rigs.patrolBackups) if (this.patrolAgentHasVisual(unit.agent, lostDistance, sight, unit.searchlight)) { sight.clear = true; break; }
       sight.occluded = sight.checkedUnits > 0 && !sight.clear; sight.timer = 0.2;
     }
     if (sight.clear) {
@@ -2361,7 +2380,7 @@ export class EncounterDirector {
       sight.clearFor = 0; sight.blockedFor = (Number(sight.blockedFor) || 0) + dt;
       if (sight.blockedFor >= 0.32) sight.held = false;
     }
-    return pursuitVisualHeld(nearest, lostDistance, sight.held);
+    return Boolean(sight.held);
   }
 
   reportPatrolVisualTransition(e, previous, current) {
@@ -2372,8 +2391,9 @@ export class EncounterDirector {
       this.game.toast('FWC visual broken', detail, 3);
       this.radio?.transmit({ channel: 'FWC TAC', speaker: 'FWC 27 · WARDEN SOTO', text: bank ? 'Visual broken behind the bank. Hold the last cut and work from Tower Boat’s last fix.' : 'Visual broken. Surface units hold the last fix and search the adjoining cuts.', priority: 3, key: 'patrol-visual-broken', cooldown: 10 });
     } else if (e.lostT > 0.35) {
-      this.game.toast('FWC visual reacquired', 'A surface unit has the hull again.', 2.4);
-      this.radio?.transmit({ channel: 'FWC TAC', speaker: 'FWC 27 · WARDEN SOTO', text: 'Tower Boat reacquired. Surface line is back on the hull.', priority: 3, key: 'patrol-visual-reacquired', cooldown: 8 });
+      const beam = Boolean(e.surfaceVisual && this._patrolSight.beamHeld);
+      this.game.toast('FWC visual reacquired', beam ? 'A searchlight found the hull again.' : 'A surface unit has the hull again.', 2.4);
+      this.radio?.transmit({ channel: 'FWC TAC', speaker: 'FWC 27 · WARDEN SOTO', text: beam ? 'Searchlight has the hull. Move on the beam.' : 'Tower Boat reacquired. Surface line is back on the hull.', priority: 3, key: 'patrol-visual-reacquired', cooldown: 8 });
     }
   }
 
@@ -2392,7 +2412,7 @@ export class EncounterDirector {
     return {
       active: Boolean(e), wantedLevel: wantedLevel(this.law?.attention || 0), surfaceUnits: e ? e.units : 0,
       sharedVisual: Boolean(e?.visual), surfaceVisual: Boolean(e?.surfaceVisual), surfaceOccluded: Boolean(e?.surfaceOccluded), lostFor: finite(e?.lostT),
-      surfaceSight: { held: Boolean(this._patrolSight.held), checkedUnits: this._patrolSight.checkedUnits, terrainSamples: this._patrolSight.samples },
+      surfaceSight: { held: Boolean(this._patrolSight.held), directHeld: Boolean(this._patrolSight.directHeld), beamHeld: Boolean(this._patrolSight.beamHeld), beamUnits: this._patrolSight.beamUnits, checkedUnits: this._patrolSight.checkedUnits, terrainSamples: this._patrolSight.samples },
       soundContact: {
         active: Boolean(e?.soundContact), source: e ? this._patrolSound.source : '', engineNoise: e ? finite(this._patrolSound.engineNoise) : null,
         range: e ? finite(this._patrolSound.range) : null, distance: e ? finite(this._patrolSound.distance) : null,
@@ -2499,7 +2519,7 @@ export class EncounterDirector {
     if (e.state === 'pursuit') {
       e.pursuit += dt; e.tacticT -= dt; this.schedulePatrolBackups(e, heat, t);
       if (e.tacticT <= 0) { e.tacticT = 4.5 + Math.random() * 3.5; e.tacticSide *= -1; }
-      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0);
+      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0, this.environment.night || 0, this.environment.moonlight || 0);
       const surfaceVisual = this.patrolSurfaceVisual(0, lostDistance), visual = this.updatePatrolAviation(e, dt, t, surfaceVisual, heat);
       e.surfaceVisual = surfaceVisual; e.surfaceOccluded = Boolean(this._patrolSight.occluded);
       e.soundContact = this.patrolSurfaceSound(e, dt, heat, visual);
@@ -2549,7 +2569,7 @@ export class EncounterDirector {
         if (unitDistance < nearest) { nearest = unitDistance; sirenX = R.agent.x; sirenZ = R.agent.z; }
       }
       this.audio.patrolSiren(pursuitSirenLevel(nearest, heat, true), heat, sirenX, sirenZ);
-      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0), surfaceVisual = this.patrolSurfaceVisual(dt, lostDistance), visual = surfaceVisual || Boolean(e.aviationVisual);
+      const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0, this.environment.night || 0, this.environment.moonlight || 0), surfaceVisual = this.patrolSurfaceVisual(dt, lostDistance), visual = surfaceVisual || Boolean(e.aviationVisual);
       e.surfaceVisual = surfaceVisual; e.surfaceOccluded = Boolean(this._patrolSight.occluded);
       e.visual = visual; e.soundContact = !visual && Boolean(e.soundContact);
       if (visual) {
