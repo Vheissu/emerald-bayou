@@ -78,6 +78,17 @@ export function pursuitTactic(role, attention, distance, side = 1, out = {}) {
   return out;
 }
 
+export function pursuitChannelClosurePlan(role, attention, distance, playerSpeed, visual = true, out = {}) {
+  const stars = wantedLevel(attention), d = Math.max(0, Number(distance) || 0), speed = Math.max(0, Number(playerSpeed) || 0);
+  out.eligible = role === 2 && stars >= 4 && Boolean(visual) && d >= 34 && d <= 250 && speed >= 4.5;
+  out.lead = clamp(74 + speed * 2.1 + Math.max(0, stars - 4) * 8, 84, 124);
+  out.duration = stars >= 5 ? 8.2 : 6.8;
+  out.cooldown = stars >= 5 ? 10.5 : 13.5;
+  out.approachSpeed = clamp(pursuitSpeed(attention, speed) * 1.04, 15.4, 19.5);
+  out.setupTimeout = clamp(d / out.approachSpeed * 1.65 + 3, 10, 22);
+  return out;
+}
+
 export function pursuitUnitCanRam(role, attention) {
   return role === 0 ? wantedLevel(attention) >= 2 : wantedLevel(attention) >= 3;
 }

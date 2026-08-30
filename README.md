@@ -72,6 +72,8 @@ Between jobs, you can come across dead motors, FWC stops, watched packages, stor
 
 The seven resident crews keep their own schedules, jobs and operator records. They run for shelter when the weather exceeds what their boat can carry, complain about wake over working gear and remember collisions. FWC 27 can break from patrol to answer an emergency tow call when there is a safe approach.
 
+At four wanted stars, Shallow Water 4 reads the player's current course, checks a predicted intercept for depth and obstructions, then runs ahead and turns broadside. The point stays fixed, so an early turn beats the roadblock. Hold course and its hull becomes a real collision obstacle while FWC 27 and Marine 12 keep pressing and ramming. The tactic uses the third pooled patrol boat and adds no scene resources.
+
 At five wanted stars, a sustained pursuit can bring FWC Air 2 if the wind and storm conditions are flyable. It works from positions called by surface units and its own finite view. Lose both under canopy or in fog and the helicopter circles the last fix while its searchlight sweeps; the chase can still be escaped. The response reuses the Coast Guard helicopter rig, searchlight and rotor audio, so it adds no second aircraft pool. This is based on FWC's description of its [Aviation Unit](https://myfwc.com/law-enforcement/special-programs/) patrolling large areas of land and water as an "Eye in the Sky," and its account of coordinating [air, land and sea assets](https://myfwc.com/about/inside-fwc/le/what-we-do/).
 
 On clear, low-wind nights, dense fog can settle over the backcountry before dawn and burn off after sunrise. Visibility drops to a few hundred metres. Powerboats slow down, show their navigation lights and sound a prolonged blast while making way; every crew keeps its own signal clock.
@@ -199,7 +201,7 @@ __dbg.environment.lightningSnapshot()       // fixed branched channel, return st
 __dbg.environment.eyeAdaptationSnapshot()   // current exposure target and zero-extra-GPU-resource budget
 __dbg.environment.cloudShadowSnapshot()   // live mask, drift and zero-extra-resource budget
 __dbg.environment.surfaceWetnessSnapshot()  // live film target, shared material writes and terrain uniforms
-__dbg.encounters.pursuitSnapshot()        // surface units, shared visual and pooled aviation state
+__dbg.encounters.pursuitSnapshot()        // surface units, channel closure, shared visual and pooled aviation state
 __dbg.hazards.resourceStats()             // debris pool, shared resources and wake-stamp budget
 __dbg.audio.spatialStats()                 // listener direction and spatial-node allocation totals
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera

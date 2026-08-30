@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitAviationVisualRange,
-  pursuitBackupDelay, pursuitLostDistance, pursuitLostTime, pursuitSpeed, pursuitSirenLevel, pursuitTactic,
+  pursuitBackupDelay, pursuitChannelClosurePlan, pursuitLostDistance, pursuitLostTime, pursuitSpeed, pursuitSirenLevel, pursuitTactic,
   pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
 
@@ -52,6 +52,17 @@ test('backup patrols intercept from opposing sides without all ramming at low he
   const right = pursuitTactic(1, 4, 80, 1), left = pursuitTactic(2, 4, 80, 1);
   assert.ok(right.fore > 20 && right.side > 0); assert.ok(left.fore > 10 && left.side < 0);
   assert.equal(pursuitUnitCanRam(0, 2), true); assert.equal(pursuitUnitCanRam(1, 2), false); assert.equal(pursuitUnitCanRam(1, 3), true);
+});
+
+test('the third patrol boat forms a bounded high-wanted channel closure with counterplay', () => {
+  const four = pursuitChannelClosurePlan(2, 4, 120, 12, true), five = pursuitChannelClosurePlan(2, 5, 120, 18, true);
+  assert.equal(four.eligible, true); assert.ok(four.lead >= 84 && four.lead <= 124); assert.ok(four.approachSpeed <= 19.5); assert.ok(four.setupTimeout >= 10 && four.setupTimeout <= 22);
+  assert.ok(five.lead > four.lead); assert.ok(five.duration > four.duration); assert.ok(five.cooldown < four.cooldown);
+  assert.equal(pursuitChannelClosurePlan(1, 5, 120, 12, true).eligible, false);
+  assert.equal(pursuitChannelClosurePlan(2, 3, 120, 12, true).eligible, false);
+  assert.equal(pursuitChannelClosurePlan(2, 5, 20, 12, true).eligible, false);
+  assert.equal(pursuitChannelClosurePlan(2, 5, 120, 3, true).eligible, false);
+  assert.equal(pursuitChannelClosurePlan(2, 5, 120, 12, false).eligible, false);
 });
 
 test('fog and storms shorten visual range while higher heat widens the search', () => {

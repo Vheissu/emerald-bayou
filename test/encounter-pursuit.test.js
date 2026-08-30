@@ -64,3 +64,38 @@ test('backup rams use one shared contact window and damage the player craft', ()
   assert.equal(damage.length, 1); assert.equal(director.law.stats.backupContacts, 1);
   assert.equal(director.attemptPatrolRam(e, R, 2, 5, 4, 4), false); assert.equal(damage.length, 1);
 });
+
+test('a high-wanted shallow-water unit places its closure ahead and broadside in clear water', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 10, y: 20 }, vel: { x: 0, y: -12 }, heading: 0, speed: 12 };
+  director.environment = { waterLevel: 0 }; director.terrain = { heightAt: () => -2 }; director.world = { blockedAt: () => false };
+  director.law = { stats: {} };
+  const closure = { active: false, holding: false, announced: false, x: 0, z: 0, courseX: 0, courseZ: -1, heading: 0, remaining: 0, cooldown: 0, plan: {} };
+  const R = { role: 2, agent: { active: true, x: 130, z: 60, heading: 0 }, closure };
+
+  assert.equal(director.beginPatrolChannelClosure({ tacticSide: 1 }, R, 4, true), true);
+  assert.equal(closure.active, true); assert.ok(closure.z < director.phys.pos.y - 80);
+  const patrolForwardX = -Math.sin(closure.heading), patrolForwardZ = -Math.cos(closure.heading);
+  assert.ok(Math.abs(patrolForwardX * closure.courseX + patrolForwardZ * closure.courseZ) < 1e-9);
+  assert.equal(director.law.stats.channelClosures, 1);
+});
+
+test('the channel-closing backup deploys farther ahead and closer to the working cut', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 0, y: 0 }, vel: { x: 0, y: -12 }, heading: 0 };
+  director.environment = { waterLevel: 0 }; director.terrain = { heightAt: () => -2 }; director.world = { blockedAt: () => false };
+  const intercept = director.patrolBackupSpot(0, { tacticSide: 1 }), closure = director.patrolBackupSpot(1, { tacticSide: 1 });
+  assert.ok(-intercept.z >= 52 && -intercept.z <= 67); assert.ok(Math.abs(intercept.x) >= 118 && Math.abs(intercept.x) <= 130);
+  assert.ok(-closure.z >= 132 && -closure.z <= 152); assert.ok(Math.abs(closure.x) >= 78 && Math.abs(closure.x) <= 88);
+});
+
+test('a channel closure is deferred when the predicted line is shallow or obstructed', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 0, y: 0 }, vel: { x: 0, y: -10 }, heading: 0, speed: 10 };
+  director.environment = { waterLevel: 0 }; director.terrain = { heightAt: () => -0.2 }; director.world = { blockedAt: () => false };
+  const closure = { active: false, holding: false, cooldown: 0, plan: {} };
+  const R = { role: 2, agent: { active: true, x: 100, z: 40, heading: 0 }, closure };
+
+  assert.equal(director.beginPatrolChannelClosure({ tacticSide: -1 }, R, 5, true), false);
+  assert.equal(closure.active, false); assert.equal(closure.cooldown, 2.5);
+});

@@ -11,7 +11,7 @@ import { WORLD_HALF } from './heightfield.js';
 import { buildRaceCourse } from './racecourse.js';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitBackupDelay,
-  pursuitLostDistance, pursuitSirenLevel, pursuitSpeed, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount,
+  pursuitChannelClosurePlan, pursuitLostDistance, pursuitSirenLevel, pursuitSpeed, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount,
   pursuitVisualHeld, wantedLevel,
 } from './pursuit.js';
 import { emitWakeStamp } from './wakestamps.js';
@@ -24,6 +24,8 @@ const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
+const CHANNEL_CLOSURE_LATERAL_PROBES = [0, 8, -8, 16, -16];
+const CHANNEL_CLOSURE_CLEARANCE_PROBES = [[0, 0], [4.2, 0], [-4.2, 0], [0, 7], [0, -7]];
 const MANATEE_PROBES = [0, -0.42, 0.42, -0.86, 0.86, -1.32, 1.32];
 const DEBUG_ORDER = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'race', 'patrol', 'smuggler', 'salvage', 'netline'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
@@ -305,7 +307,8 @@ export class EncounterDirector {
     const patrolBackups = [0, 1].map(index => {
       const boat = buildSkiff({ crew: true, driverModel: false }); recolor(boat, index ? 0x35614f : 0x315848); boat.name = index ? 'FWC Shallow Water 4' : 'FWC Marine 12'; boat.visible = false; this.scene.add(boat);
       const blueBulb = signalBulb(boat, 0x267cff, -0.25, 1.35, -0.2), redBulb = signalBulb(boat, 0xff2f25, 0.25, 1.35, -0.2);
-      return { boat, blueBulb, redBulb, agent: boatAgent(boat), index, role: index + 1 };
+      const closure = { active: false, holding: false, announced: false, x: 0, z: 0, courseX: 0, courseZ: -1, heading: 0, remaining: 0, cooldown: index ? 1.8 : 0, plan: { eligible: false, lead: 0, duration: 0, cooldown: 0, approachSpeed: 0, setupTimeout: 0 } };
+      return { boat, blueBulb, redBulb, agent: boatAgent(boat), closure, index, role: index + 1 };
     });
 
     const smugglerBoat = buildSkiff({ crew: true }); recolor(smugglerBoat, 0x4b3527); smugglerBoat.visible = false; this.scene.add(smugglerBoat);
@@ -1228,7 +1231,10 @@ export class EncounterDirector {
 
   resetPatrolBackups() {
     if (!this.rigs?.patrolBackups) return;
-    for (const R of this.rigs.patrolBackups) { R.agent.active = false; R.boat.visible = false; R.blueBulb.visible = false; R.redBulb.visible = false; }
+    for (const R of this.rigs.patrolBackups) {
+      R.agent.active = false; R.boat.visible = false; R.blueBulb.visible = false; R.redBulb.visible = false;
+      if (R.closure) Object.assign(R.closure, { active: false, holding: false, announced: false, remaining: 0, cooldown: R.index ? 1.8 : 0 });
+    }
   }
 
   resetPatrolAviation() {
@@ -1242,7 +1248,8 @@ export class EncounterDirector {
   patrolBackupSpot(index, e) {
     const p = this.phys, fx = -Math.sin(p.heading), fz = -Math.cos(p.heading), rx = Math.cos(p.heading), rz = -Math.sin(p.heading), baseSide = (index ? -1 : 1) * e.tacticSide;
     for (let i = 0; i < 48; i++) {
-      const side = baseSide * (i >= 30 ? -1 : 1), ahead = 52 + (i % 5) * 13 + Math.random() * 15, across = 118 + (i % 6) * 11 + Math.random() * 12;
+      const side = baseSide * (i >= 30 ? -1 : 1), ahead = index ? 132 + (i % 5) * 18 + Math.random() * 20 : 52 + (i % 5) * 13 + Math.random() * 15;
+      const across = index ? 78 + (i % 6) * 9 + Math.random() * 10 : 118 + (i % 6) * 11 + Math.random() * 12;
       const x = p.pos.x + fx * ahead + rx * side * across, z = p.pos.y + fz * ahead + rz * side * across;
       if (Math.abs(x) > WORLD_HALF - 90 || Math.abs(z) > WORLD_HALF - 90) continue;
       const depth = this.environment.waterLevel - this.terrain.heightAt(x, z); if (depth < 0.68 || depth > 6.8 || this.world?.blockedAt(x, z)) continue;
@@ -1256,6 +1263,7 @@ export class EncounterDirector {
     const R = this.rigs.patrolBackups[index], at = this.patrolBackupSpot(index, e); if (!R || R.agent.active) return true;
     if (!at) { e.backupDue[index] = e.pursuit + 1.5; return false; }
     const A = R.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: 5.8, want: 10, turn: 0, targetX: this.phys.pos.x, targetZ: this.phys.pos.y, decisionT: 0, active: true });
+    if (R.closure) Object.assign(R.closure, { active: false, holding: false, announced: false, remaining: 0, cooldown: index ? 1.8 : 0 });
     A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, t) - 0.05, A.z); A.mesh.rotation.set(0, A.heading, 0); A.mesh.visible = true; R.blueBulb.visible = true; R.redBulb.visible = false;
     e.backupCount++; e.units = 1 + e.backupCount;
     if (this.law) this.law.stats.backupDeployments = (this.law.stats.backupDeployments || 0) + 1;
@@ -1608,6 +1616,49 @@ export class EncounterDirector {
     A.speed += (want - A.speed) * (1 - Math.exp(-dt * (want > A.speed ? 0.7 : 2.4))); A.heading += turn * dt;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading);
     const flow = this.currents ? this.currents.flowAt(A.x, A.z, this._flow) : null;
+    A.x += (fx * A.speed + (flow ? flow.x : 0)) * dt; A.z += (fz * A.speed + (flow ? flow.y : 0)) * dt;
+    const y = this.water.waveHeight(A.x, A.z, t); A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -turn * A.speed * 0.018, 'YXZ');
+    if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
+  }
+
+  patrolChannelClosureClear(x, z, courseX, courseZ) {
+    const sideX = -courseZ, sideZ = courseX;
+    for (const probe of CHANNEL_CLOSURE_CLEARANCE_PROBES) {
+      const px = x + sideX * probe[0] + courseX * probe[1], pz = z + sideZ * probe[0] + courseZ * probe[1];
+      if (Math.abs(px) > WORLD_HALF - 90 || Math.abs(pz) > WORLD_HALF - 90 || this.world?.blockedAt(px, pz)) return false;
+      const depth = this.environment.waterLevel - this.terrain.heightAt(px, pz); if (depth < 0.72 || depth > 6.8) return false;
+    }
+    return true;
+  }
+
+  beginPatrolChannelClosure(e, R, heat, visual) {
+    const A = R.agent, C = R.closure, p = this.phys; if (!A.active || !C || C.active || C.cooldown > 0) return false;
+    const distance = Math.hypot(A.x - p.pos.x, A.z - p.pos.y), plan = pursuitChannelClosurePlan(R.role, heat, distance, p.speed, visual, C.plan);
+    if (!plan.eligible) { C.cooldown = 0.75; return false; }
+    const velocity = Math.hypot(p.vel.x, p.vel.y), courseX = velocity > 2.5 ? p.vel.x / velocity : -Math.sin(p.heading), courseZ = velocity > 2.5 ? p.vel.y / velocity : -Math.cos(p.heading);
+    const sideX = -courseZ, sideZ = courseX;
+    for (const offset of CHANNEL_CLOSURE_LATERAL_PROBES) {
+      const lateral = offset * (e.tacticSide < 0 ? -1 : 1), x = p.pos.x + courseX * plan.lead + sideX * lateral, z = p.pos.y + courseZ * plan.lead + sideZ * lateral;
+      if (!this.patrolChannelClosureClear(x, z, courseX, courseZ)) continue;
+      let heading = Math.atan2(-sideX, -sideZ), opposite = heading + Math.PI;
+      if (Math.abs(Math.atan2(Math.sin(opposite - A.heading), Math.cos(opposite - A.heading))) < Math.abs(Math.atan2(Math.sin(heading - A.heading), Math.cos(heading - A.heading)))) heading = opposite;
+      heading = Math.atan2(Math.sin(heading), Math.cos(heading));
+      Object.assign(C, { active: true, holding: false, announced: false, x, z, courseX, courseZ, heading, remaining: plan.setupTimeout, cooldown: 0 });
+      if (this.law) this.law.stats.channelClosures = (this.law.stats.channelClosures || 0) + 1;
+      return true;
+    }
+    C.cooldown = 2.5; return false;
+  }
+
+  endPatrolChannelClosure(R) {
+    const C = R.closure; if (!C) return;
+    C.active = false; C.holding = false; C.announced = false; C.remaining = 0; C.cooldown = Math.max(C.cooldown, C.plan.cooldown || 12);
+  }
+
+  holdPatrolChannel(A, C, dt, t) {
+    const dh = Math.atan2(Math.sin(C.heading - A.heading), Math.cos(C.heading - A.heading)), turn = clamp(dh * 2.2, -1.1, 1.1), want = 0.35;
+    A.targetX = C.x; A.targetZ = C.z; A.decisionT = 0.1; A.speed += (want - A.speed) * (1 - Math.exp(-dt * 3.2)); A.heading += turn * dt;
+    const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), flow = this.currents ? this.currents.flowAt(A.x, A.z, this._flow) : null;
     A.x += (fx * A.speed + (flow ? flow.x : 0)) * dt; A.z += (fz * A.speed + (flow ? flow.y : 0)) * dt;
     const y = this.water.waveHeight(A.x, A.z, t); A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -turn * A.speed * 0.018, 'YXZ');
     if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
@@ -2159,10 +2210,12 @@ export class EncounterDirector {
 
   pursuitSnapshot() {
     const e = this.active?.type === 'patrol' && this.active.state === 'pursuit' ? this.active : null;
+    const closure = this.rigs.patrolBackups[1]?.closure;
     const finite = value => Number.isFinite(value) ? Math.round(value * 10) / 10 : null;
     return {
       active: Boolean(e), wantedLevel: wantedLevel(this.law?.attention || 0), surfaceUnits: e ? e.units : 0,
       sharedVisual: Boolean(e?.visual), surfaceVisual: Boolean(e?.surfaceVisual), lostFor: finite(e?.lostT),
+      channelClosure: { active: Boolean(e && closure?.active), holding: Boolean(e && closure?.holding), cooldown: e && closure ? finite(closure.cooldown) : null },
       aviation: {
         requested: Boolean(e?.aviationRequested), active: Boolean(e?.aviationActive), directVisual: Boolean(e?.aviationVisual), beamActive: Boolean(e?.aviationBeamActive),
         dueIn: e?.aviationRequested && !e.aviationActive ? finite(Math.max(0, e.aviationDue - e.pursuit)) : null,
@@ -2192,7 +2245,30 @@ export class EncounterDirector {
 
   updatePatrolBackup(e, R, dt, t, heat, stars, visual) {
     const A = R.agent, p = this.phys; if (!A.active) return Infinity;
+    const C = R.closure; if (C) C.cooldown = Math.max(0, C.cooldown - dt);
     let d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y), tx, tz, maxSpeed, holdRadius = 0;
+    if (C?.active) {
+      C.remaining -= dt;
+      const toX = C.x - p.pos.x, toZ = C.z - p.pos.y, along = toX * C.courseX + toZ * C.courseZ, lateral = Math.abs(toX * -C.courseZ + toZ * C.courseX);
+      if (!visual || stars < 4 || C.remaining <= 0 || along < -11 || (along < 35 && lateral > 68)) this.endPatrolChannelClosure(R);
+    }
+    if (R.role === 2 && !C?.active && C?.cooldown <= 0 && stars >= 4 && visual) this.beginPatrolChannelClosure(e, R, heat, visual);
+    if (C?.active) {
+      let targetDistance = Math.hypot(C.x - A.x, C.z - A.z);
+      if (C.holding && targetDistance > 14) C.holding = false;
+      if (C.holding) this.holdPatrolChannel(A, C, dt, t);
+      else {
+        this.updateAgent(A, dt, t, C.x, C.z, C.plan.approachSpeed, 18); targetDistance = Math.hypot(C.x - A.x, C.z - A.z);
+        if (targetDistance < 7.5) {
+          C.holding = true; C.remaining = C.plan.duration;
+          if (!C.announced) { C.announced = true; this.audio.horn(0.24); this.game.toast('FWC roadblock ahead', 'Shallow Water Four is broadside on your line. Change cut or stop.', 3); }
+        }
+      }
+      d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y); this.addPatrolBackupObstacle(A, R.index); this.markPatrolBackup(A, R.index);
+      const blink = Math.floor((t + R.index * 0.11) * 5.2) % 2; R.blueBulb.visible = Boolean(blink); R.redBulb.visible = !blink;
+      if (!C.holding) this.attemptPatrolRam(e, R, R.role, d, heat, stars);
+      return d;
+    }
     if (visual) {
       const tactic = pursuitTactic(R.role, heat, d, e.tacticSide, A.tactic), pfx = -Math.sin(p.heading), pfz = -Math.cos(p.heading), prx = Math.cos(p.heading), prz = -Math.sin(p.heading);
       tx = p.pos.x + p.vel.x * tactic.lead + pfx * tactic.fore + prx * tactic.side; tz = p.pos.y + p.vel.y * tactic.lead + pfz * tactic.fore + prz * tactic.side;
