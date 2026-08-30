@@ -54,7 +54,9 @@ export function gpuQualityCeiling(rendererName = '') {
   const geforce = name.match(/geforce\s+(gtx|gt)\s*(\d{3,4})/);
   if (geforce) {
     const model = Number(geforce[2]);
-    if (geforce[1] === 'gt' || model <= 750) return 1;
+    // Maxwell GTX 950-980 cards are now over a decade old. Their model number once looked high enough for
+    // Balanced, which also admitted a 6.4 MiB authored-model batch; start them on the procedural Performance path.
+    if (geforce[1] === 'gt' || model <= 980) return 1;
     // Pascal GTX 1060-1080 cards are now decade-old hardware. Balanced is the safe first frame budget; Auto can
     // still promote one after four clean windows instead of making the title prove itself with Cinematic work.
     if (model <= 1080) return 2;

@@ -26,17 +26,31 @@ const STREAM_BUDGETS = Object.freeze({
 });
 
 const PLANS = Object.freeze({
-  fallback: Object.freeze({ id: 'fallback', effectBudget: EFFECT_BUDGETS.fallback, streamBudget: STREAM_BUDGETS.fallback, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: LOW_MEMORY_DISABLED_MODELS, solidGrass: 'off', deferOptionalModels: true, releaseModelsAtTitle: false, titleModelReleaseDelayMs: 0, modelConcurrency: 1, modelReleaseDelayMs: 1800, modelBatchDelayMs: 1200, modelIdleTimeoutMs: 2500, modelPressureMaxWaitMs: 12000, terrainReadiness: 'local', minWaitMs: 250, maxWaitMs: 3000, compileDelayMs: 0 }),
-  performance: Object.freeze({ id: 'performance', effectBudget: EFFECT_BUDGETS.performance, streamBudget: STREAM_BUDGETS.performance, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: LOW_MEMORY_DISABLED_MODELS, solidGrass: 'off', deferOptionalModels: true, releaseModelsAtTitle: false, titleModelReleaseDelayMs: 0, modelConcurrency: 1, modelReleaseDelayMs: 1200, modelBatchDelayMs: 650, modelIdleTimeoutMs: 1800, modelPressureMaxWaitMs: 8000, terrainReadiness: 'local', minWaitMs: 350, maxWaitMs: 4000, compileDelayMs: 0 }),
-  balanced: Object.freeze({ id: 'balanced', effectBudget: EFFECT_BUDGETS.balanced, streamBudget: STREAM_BUDGETS.balanced, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: BALANCED_DISABLED_MODELS, solidGrass: 'deferred', deferOptionalModels: true, releaseModelsAtTitle: false, titleModelReleaseDelayMs: 0, modelConcurrency: 1, modelReleaseDelayMs: 700, modelBatchDelayMs: 420, modelIdleTimeoutMs: 1600, modelPressureMaxWaitMs: 6000, terrainReadiness: 'local', minWaitMs: 500, maxWaitMs: 6000, compileDelayMs: 0 }),
+  fallback: Object.freeze({ id: 'fallback', constrainedTransfer: false, effectBudget: EFFECT_BUDGETS.fallback, streamBudget: STREAM_BUDGETS.fallback, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: LOW_MEMORY_DISABLED_MODELS, solidGrass: 'off', deferOptionalModels: true, releaseModelsAtTitle: false, titleModelReleaseDelayMs: 0, modelConcurrency: 1, modelReleaseDelayMs: 1800, modelBatchDelayMs: 1200, modelIdleTimeoutMs: 2500, modelPressureMaxWaitMs: 12000, terrainReadiness: 'local', minWaitMs: 250, maxWaitMs: 3000, compileDelayMs: 0 }),
+  performance: Object.freeze({ id: 'performance', constrainedTransfer: false, effectBudget: EFFECT_BUDGETS.performance, streamBudget: STREAM_BUDGETS.performance, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: LOW_MEMORY_DISABLED_MODELS, solidGrass: 'off', deferOptionalModels: true, releaseModelsAtTitle: false, titleModelReleaseDelayMs: 0, modelConcurrency: 1, modelReleaseDelayMs: 1200, modelBatchDelayMs: 650, modelIdleTimeoutMs: 1800, modelPressureMaxWaitMs: 8000, terrainReadiness: 'local', minWaitMs: 350, maxWaitMs: 4000, compileDelayMs: 0 }),
+  balanced: Object.freeze({ id: 'balanced', constrainedTransfer: false, effectBudget: EFFECT_BUDGETS.balanced, streamBudget: STREAM_BUDGETS.balanced, warmShaders: false, blockingModels: Object.freeze([]), disabledModels: BALANCED_DISABLED_MODELS, solidGrass: 'deferred', deferOptionalModels: true, releaseModelsAtTitle: false, titleModelReleaseDelayMs: 0, modelConcurrency: 1, modelReleaseDelayMs: 700, modelBatchDelayMs: 420, modelIdleTimeoutMs: 1600, modelPressureMaxWaitMs: 6000, terrainReadiness: 'local', minWaitMs: 500, maxWaitMs: 6000, compileDelayMs: 0 }),
   // Cinematic still warms the complete procedural presentation, but authored GLBs upgrade their visible stand-ins
   // progressively after the title opens. The title therefore never waits on an 8 MiB transfer or a settled 250 sq mi
   // terrain stream, while gameplay frame pressure can still pause each two-model decode batch.
-  cinematic: Object.freeze({ id: 'cinematic', effectBudget: EFFECT_BUDGETS.cinematic, streamBudget: STREAM_BUDGETS.cinematic, warmShaders: true, blockingModels: Object.freeze([]), disabledModels: NO_DISABLED_MODELS, solidGrass: 'deferred', deferOptionalModels: true, releaseModelsAtTitle: true, titleModelReleaseDelayMs: 1200, modelConcurrency: 2, modelReleaseDelayMs: 700, modelBatchDelayMs: 250, modelIdleTimeoutMs: 1200, modelPressureMaxWaitMs: 6000, terrainReadiness: 'local', minWaitMs: 800, maxWaitMs: 6000, compileDelayMs: 0 }),
+  cinematic: Object.freeze({ id: 'cinematic', constrainedTransfer: false, effectBudget: EFFECT_BUDGETS.cinematic, streamBudget: STREAM_BUDGETS.cinematic, warmShaders: true, blockingModels: Object.freeze([]), disabledModels: NO_DISABLED_MODELS, solidGrass: 'deferred', deferOptionalModels: true, releaseModelsAtTitle: true, titleModelReleaseDelayMs: 1200, modelConcurrency: 2, modelReleaseDelayMs: 700, modelBatchDelayMs: 250, modelIdleTimeoutMs: 1200, modelPressureMaxWaitMs: 6000, terrainReadiness: 'local', minWaitMs: 800, maxWaitMs: 6000, compileDelayMs: 0 }),
 });
 
-export function startupPlan(profileId) {
-  return PLANS[profileId] || PLANS.performance;
+const CONSTRAINED_TRANSFER_PLANS = Object.freeze(Object.fromEntries(Object.entries(PLANS).map(([id, plan]) => [id, Object.freeze({
+  ...plan, constrainedTransfer: true, disabledModels: LOW_MEMORY_DISABLED_MODELS, solidGrass: 'off', releaseModelsAtTitle: false,
+  titleModelReleaseDelayMs: 0, modelConcurrency: 1, modelReleaseDelayMs: Math.max(plan.modelReleaseDelayMs, 1200),
+  modelBatchDelayMs: Math.max(plan.modelBatchDelayMs, 650), modelIdleTimeoutMs: Math.max(plan.modelIdleTimeoutMs, 1800),
+  modelPressureMaxWaitMs: Math.max(plan.modelPressureMaxWaitMs, 8000),
+})])));
+
+export function constrainedAssetTransfer(connection = {}) {
+  const effectiveType = String(connection?.effectiveType || '').trim().toLowerCase(), downlink = Number(connection?.downlink);
+  return connection?.saveData === true || effectiveType === 'slow-2g' || effectiveType === '2g' || effectiveType === '3g'
+    || (Number.isFinite(downlink) && downlink > 0 && downlink <= 2.5);
+}
+
+export function startupPlan(profileId, { constrainedTransfer = false } = {}) {
+  const id = PLANS[profileId] ? profileId : 'performance';
+  return constrainedTransfer ? CONSTRAINED_TRANSFER_PLANS[id] : PLANS[id];
 }
 
 export function startupTerrainReady(mode, { settled = false, localVisible = false } = {}) {

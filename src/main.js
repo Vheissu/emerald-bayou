@@ -39,7 +39,7 @@ import { StoryDirector } from './story.js';
 import { StormRecovery } from './aftermath.js';
 import { AdaptiveQualityController, MAX_DRAW_PIXELS, initialQualityLevel, pixelRatioFor, webglRendererName } from './renderquality.js';
 import { nextQualityPreference, qualityControllerConfig, qualityPreferenceLabel, readQualityPreference, writeQualityPreference } from './displaysettings.js';
-import { startupPlan, startupTerrainReady } from './startup.js';
+import { constrainedAssetTransfer, startupPlan, startupTerrainReady } from './startup.js';
 import { FieldDiscoveryDirector } from './discoveries.js';
 import { NavigationAids } from './navigationaids.js';
 import { DolphinPod } from './dolphins.js';
@@ -86,7 +86,7 @@ const SUN_DIR = new THREE.Vector3(-0.42, 0.72, -0.55).normalize();
 async function init() {
   const startupStartedAt = performance.now();
   const startupTiming = { terrainPrimedMs: 0, environmentMapMs: 0, localTerrainReadyMs: 0, titleReadyMs: 0 };
-  const startup = startupPlan(renderProfile.id);
+  const startup = startupPlan(renderProfile.id, { constrainedTransfer: constrainedAssetTransfer(navigator.connection) });
   configureModelLoading({
     deferOptional: startup.deferOptionalModels,
     concurrency: startup.modelConcurrency,

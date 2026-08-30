@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { OPTIONAL_MODEL_NAMES, startupPlan, startupTerrainReady } from '../src/startup.js';
+import { constrainedAssetTransfer, OPTIONAL_MODEL_NAMES, startupPlan, startupTerrainReady } from '../src/startup.js';
 import { compareTerrainBuildPriority, normalizeTerrainStreamOptions, shouldPreemptTerrainBuild, Terrain } from '../src/terrain.js';
 
 test('cinematic hardware warms shaders without blocking the title on authored models', () => {
@@ -50,6 +50,23 @@ test('older-hardware profiles do not block on optional models or the full shader
   assert.deepEqual([fallback.solidGrass, performance.solidGrass, balanced.solidGrass], ['off', 'off', 'deferred']);
   assert.deepEqual([fallback.modelPressureMaxWaitMs, performance.modelPressureMaxWaitMs, balanced.modelPressureMaxWaitMs], [12000, 8000, 6000]);
   assert.deepEqual(['fallback', 'performance', 'balanced', 'cinematic'].map(id => startupPlan(id).blockingModels), [[], [], [], []]);
+});
+
+test('constrained transfers keep the full world budget while skipping optional model traffic', () => {
+  assert.equal(constrainedAssetTransfer(), false);
+  assert.equal(constrainedAssetTransfer({ saveData: true, effectiveType: '4g', downlink: 50 }), true);
+  assert.equal(constrainedAssetTransfer({ effectiveType: '3g', downlink: 10 }), true);
+  assert.equal(constrainedAssetTransfer({ effectiveType: '4g', downlink: 2.5 }), true);
+  assert.equal(constrainedAssetTransfer({ effectiveType: '4g', downlink: 2.6 }), false);
+
+  for (const id of ['balanced', 'cinematic']) {
+    const regular = startupPlan(id), constrained = startupPlan(id, { constrainedTransfer: true });
+    assert.equal(constrained.constrainedTransfer, true); assert.equal(Object.isFrozen(constrained), true);
+    assert.deepEqual(constrained.disabledModels, OPTIONAL_MODEL_NAMES); assert.equal(constrained.solidGrass, 'off');
+    assert.equal(constrained.releaseModelsAtTitle, false); assert.equal(constrained.modelConcurrency, 1);
+    assert.equal(constrained.effectBudget, regular.effectBudget); assert.equal(constrained.streamBudget, regular.streamBudget);
+    assert.equal(constrained.warmShaders, regular.warmShaders); assert.equal(constrained.terrainReadiness, regular.terrainReadiness);
+  }
 });
 
 test('older-hardware profiles allocate smaller bounded weather and spray pools', () => {
@@ -113,6 +130,7 @@ test('terrain workers are primed before the synchronous environment convolution'
 
 test('cinematic model upgrades start behind the title without retaining the disposed warm-up tree', () => {
   const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.ok(source.includes('constrainedAssetTransfer(navigator.connection)'));
   assert.ok(source.includes('if (startup.releaseModelsAtTitle) scheduleDeferredModels(startup.titleModelReleaseDelayMs)'));
   assert.ok(source.includes('scheduleDeferredModels(startup.modelReleaseDelayMs, true)'));
   assert.ok(source.includes('if (!startup.deferOptionalModels) for (const [k, name]'));

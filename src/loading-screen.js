@@ -1,4 +1,5 @@
 import { LOADING_SCENES, initialLoadingSceneIndex, loadingAssetUrl, shuffledLoadingSceneIndices } from './loading-scenes.js';
+import { constrainedAssetTransfer } from './startup.js';
 
 const root = document.getElementById('loading');
 
@@ -13,9 +14,9 @@ if (root) {
   const track = document.getElementById('loadtrack');
   const fill = track.querySelector('i');
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const saveData = navigator.connection?.saveData === true;
+  const constrainedTransfer = constrainedAssetTransfer(navigator.connection);
   const requested = new URLSearchParams(window.location.search).get('loading') || '';
-  const initialIndex = initialLoadingSceneIndex({ requested, saveData });
+  const initialIndex = initialLoadingSceneIndex({ requested, saveData: constrainedTransfer });
 
   let activeLayer = 0;
   let currentIndex = initialIndex;
@@ -50,7 +51,7 @@ if (root) {
 
   const scheduleNext = () => {
     window.clearTimeout(cycleTimer);
-    if (reducedMotion || saveData || stopped || document.hidden) return;
+    if (reducedMotion || constrainedTransfer || stopped || document.hidden) return;
     cycleTimer = window.setTimeout(() => {
       if (!sceneBag.length) refillSceneBag();
       showScene(sceneBag.shift());

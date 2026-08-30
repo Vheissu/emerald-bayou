@@ -78,7 +78,8 @@ test('the loader retains only its two crossfade images and releases them after u
   assert(loader.includes("outgoing.removeAttribute('src')"));
   assert(loader.includes("for (const layer of layers) layer.removeAttribute('src')"));
   assert(loader.includes('window.__loadingScreen = null'));
-  assert(loader.includes("navigator.connection?.saveData"));
+  assert(loader.includes('constrainedAssetTransfer(navigator.connection)'));
+  assert(loader.includes('reducedMotion || constrainedTransfer'));
   assert(loader.includes("visibilitychange"));
   assert(css.includes('@media (prefers-reduced-motion: reduce)'));
   assert(css.includes('100dvh'));

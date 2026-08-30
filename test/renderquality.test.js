@@ -22,11 +22,13 @@ test('starts conservatively only when hardware signals justify it', () => {
 test('caps known old and software GPUs without penalizing modern discrete renderers', () => {
   assert.equal(gpuQualityCeiling('ANGLE (Intel, Intel(R) HD Graphics 5000 OpenGL Engine)'), 1);
   assert.equal(gpuQualityCeiling('Intel(R) UHD Graphics 630'), 2);
-  assert.equal(gpuQualityCeiling('ANGLE (NVIDIA, GeForce GTX 960 Direct3D11)'), 2);
+  assert.equal(gpuQualityCeiling('ANGLE (NVIDIA, GeForce GTX 960 Direct3D11)'), 1);
+  assert.equal(gpuQualityCeiling('ANGLE (NVIDIA, GeForce GTX 980 Ti Direct3D11)'), 1);
   assert.equal(gpuQualityCeiling('ANGLE (NVIDIA, GeForce GTX 1060 Direct3D11)'), 2);
   assert.equal(gpuQualityCeiling('ANGLE (NVIDIA, GeForce GTX 1080 Direct3D11)'), 2);
   assert.equal(gpuQualityCeiling('ANGLE (NVIDIA, GeForce RTX 4070 Direct3D11)'), 3);
   assert.equal(gpuQualityCeiling('Google SwiftShader'), 0);
+  assert.equal(initialQualityLevel({ deviceMemory: 16, hardwareConcurrency: 12, maxTextureSize: 16384, gpuRenderer: 'NVIDIA GeForce GTX 960' }), 1);
   assert.equal(initialQualityLevel({ deviceMemory: 16, hardwareConcurrency: 12, maxTextureSize: 16384, gpuRenderer: 'NVIDIA GeForce GTX 1060' }), 2);
   assert.equal(initialQualityLevel({ deviceMemory: 16, hardwareConcurrency: 12, maxTextureSize: 16384, gpuRenderer: 'Intel Iris Pro 5200' }), 1);
 });
