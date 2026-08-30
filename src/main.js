@@ -4,7 +4,7 @@ import { Sky } from './sky.js';
 import { MAX_WAKE_STAMPS, Water } from './water.js';
 import { Vegetation } from './vegetation.js';
 import { buildTower, buildDock } from './tower.js';
-import { airboatSprayExposure, buildAirboat, AirboatPhysics, loadDriver, updateAirboatWetness } from './airboat.js';
+import { airboatSprayExposure, buildAirboat, AirboatPhysics, loadDriver, updateAirboatWetness, updateSeatedDriverPose } from './airboat.js';
 import { Birds, Waders, Manatees, Gators } from './wildlife.js';
 import { SkiffAI } from './npc.js';
 import { Spray, Plume } from './particles.js';
@@ -180,7 +180,8 @@ async function init() {
   // ---- boat ----
   const boat = buildAirboat({ dynamicWetness: true, profile: renderProfile });
   scene.add(boat.group);
-  loadDriver(boat.group).catch(e => console.warn('driver model failed to load', e));
+  let playerDriver = null;
+  loadDriver(boat.group).then(driver => { playerDriver = driver; }).catch(e => console.warn('driver model failed to load', e));
   const phys = new AirboatPhysics(terrain, startX, startZ, 0);
   // streamed chunks: vegetation is built per chunk as its ground arrives; tree trunks register as colliders
   terrain.onReady(c => veg.buildChunk(c));
@@ -747,6 +748,7 @@ async function init() {
     if (phys.rpm > 0.01) boat.prop.rotation.z += dt * (8 + phys.rpm * 95);
     boat.blur.material.opacity = Math.min(0.35, phys.rpm * 0.4);
     for (const r of boat.rudders) r.rotation.y = -phys.steer * 0.55;
+    if (playerDriver && started && !game.paused) updateSeatedDriverPose(playerDriver, phys, dt, time);
     condition.updateEffects(dt, time, started && !game.paused);
     fishing.update(dtRaw, time, started && !game.paused);
 

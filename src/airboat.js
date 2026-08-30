@@ -302,10 +302,90 @@ function driverTemplate() {
   });
   return driverTemplatePromise;
 }
-export function loadDriver(group, { scale = 0.65, position = [0, 1.7, 0.4], yaw = Math.PI } = {}) {
+export function createSeatedDriverMount(root, { scale = 0.65, position = [0, 1.7, 0.4], yaw = Math.PI } = {}) {
+  // Keep the authored yaw/scale below a boat-local mount. The source is a single static mesh, so this retained
+  // mount gives the player a convincing seated-body response without another model, material, draw call or mixer.
+  const mount = new THREE.Group(); mount.name = 'seated driver'; mount.position.fromArray(position); mount.userData.baseYaw = 0;
+  const model = root.clone(true); model.name = 'seated driver model'; model.scale.setScalar(scale); model.rotation.y = yaw;
+  mount.userData.model = model; mount.add(model); return mount;
+}
+export function loadDriver(group, options = {}) {
   return driverTemplate().then(root => {
-    const m = root.clone(true); m.name = 'seated driver'; m.scale.setScalar(scale); m.rotation.y = yaw; m.position.fromArray(position); m.userData.baseYaw = yaw; group.add(m); return m;
+    const mount = createSeatedDriverMount(root, options); group.add(mount); return mount;
   });
+}
+
+const poseNumber = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+const poseClamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
+
+// Boat-local targets: +pitch braces aft under acceleration, +roll leans to port, and +yaw looks into a port turn.
+// `out` is caller-owned because the player pose is evaluated every active frame.
+export function seatedDriverPoseTargets(physics = {}, acceleration = 0, out = {}) {
+  const steer = poseClamp(poseNumber(physics.steer), -1, 1);
+  const turn = poseClamp(steer * 0.34 + poseNumber(physics.angVel) * 0.46, -1, 1);
+  const apparentWind = poseClamp(poseNumber(physics.apparentWind) / 50, 0, 1);
+  const wipeout = poseClamp(poseNumber(physics.wipeT) / 1.4, 0, 1);
+  out.pitch = poseClamp(poseNumber(acceleration) * 0.009 - poseNumber(physics.pitch) * 0.2 - apparentWind * 0.022 - wipeout * 0.035, -0.12, 0.12);
+  out.roll = poseClamp(turn * 0.085 - poseNumber(physics.roll) * 0.3, -0.13, 0.13);
+  out.yaw = poseClamp(turn * 0.052 + steer * 0.024, -0.08, 0.08);
+  out.height = physics.airborne ? -poseClamp(poseNumber(physics.airTime) * 0.008, 0, 0.014) : 0;
+  return out;
+}
+
+function seatedDriverPoseState(driver, physics) {
+  const state = {
+    baseX: driver.position.x, baseY: driver.position.y, baseZ: driver.position.z,
+    basePitch: driver.rotation.x, baseYaw: driver.rotation.y, baseRoll: driver.rotation.z,
+    pitch: 0, roll: 0, yaw: 0, height: 0,
+    pitchVelocity: 0, rollVelocity: 0, yawVelocity: 0, heightVelocity: 0,
+    acceleration: 0, previousSpeed: poseNumber(physics?.speed), target: { pitch: 0, roll: 0, yaw: 0, height: 0 },
+  };
+  driver.rotation.order = 'YXZ'; driver.userData.seatedDriverPose = state; return state;
+}
+
+function seatedDriverSpring(state, valueKey, velocityKey, target, stiffness, damping, dt, limit) {
+  state[velocityKey] += ((target - state[valueKey]) * stiffness - state[velocityKey] * damping) * dt;
+  state[valueKey] = poseClamp(state[valueKey] + state[velocityKey] * dt, -limit, limit);
+}
+
+// One retained state object and one retained target record are reused for the life of the player model. NPC drivers
+// stay static, so ambient traffic pays no pose update cost at all.
+export function updateSeatedDriverPose(driver, physics = {}, dt = 0, time = 0) {
+  if (!driver) return null;
+  const step = poseClamp(poseNumber(dt), 0, 0.05);
+  const state = driver.userData.seatedDriverPose || seatedDriverPoseState(driver, physics);
+  if (!step) return state;
+
+  const speed = Math.max(0, poseNumber(physics.speed));
+  const rawAcceleration = poseClamp((speed - state.previousSpeed) / step, -10, 8);
+  state.previousSpeed = speed;
+  state.acceleration += (rawAcceleration - state.acceleration) * (1 - Math.exp(-step * 4.5));
+  seatedDriverPoseTargets(physics, state.acceleration, state.target);
+
+  const impact = Math.max(0, poseNumber(physics.impact)), hit = Math.max(0, poseNumber(physics.hit));
+  if (impact > 0.5) {
+    state.pitchVelocity -= Math.min(0.24, impact * 0.012);
+    state.heightVelocity -= Math.min(0.42, impact * 0.026);
+  }
+  if (hit > 1.5) {
+    state.pitchVelocity -= Math.min(0.4, hit * 0.028);
+    const heading = poseNumber(physics.heading), normalX = poseNumber(physics.hitNormal?.x), normalZ = poseNumber(physics.hitNormal?.y);
+    const side = normalX * -Math.cos(heading) + normalZ * Math.sin(heading);
+    state.rollVelocity -= poseClamp(side * hit * 0.032, -0.34, 0.34);
+    state.yawVelocity -= poseClamp(side * hit * 0.016, -0.18, 0.18);
+  }
+
+  seatedDriverSpring(state, 'pitch', 'pitchVelocity', state.target.pitch, 42, 11.5, step, 0.17);
+  seatedDriverSpring(state, 'roll', 'rollVelocity', state.target.roll, 46, 12.5, step, 0.18);
+  seatedDriverSpring(state, 'yaw', 'yawVelocity', state.target.yaw, 36, 10.5, step, 0.11);
+  seatedDriverSpring(state, 'height', 'heightVelocity', state.target.height, 68, 14.5, step, 0.035);
+
+  const seconds = poseNumber(time), rpm = poseClamp(poseNumber(physics.rpm), 0, 1);
+  const breathing = Math.sin(seconds * 1.2) * 0.0018;
+  const enginePulse = Math.sin(seconds * (18 + rpm * 8)) * rpm * 0.0009;
+  driver.position.set(state.baseX, state.baseY + state.height + breathing + enginePulse, state.baseZ);
+  driver.rotation.set(state.basePitch + state.pitch + enginePulse * 0.45, state.baseYaw + state.yaw, state.baseRoll + state.roll, 'YXZ');
+  return state;
 }
 
 // ---------------- physics ----------------
