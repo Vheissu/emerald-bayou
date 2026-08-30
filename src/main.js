@@ -331,6 +331,7 @@ async function init() {
     },
     stormRecovery: { sites: aftermath.sites.length, rigs: aftermath.rigs.size, disposed: { ...aftermath.disposedResources } },
     pursuit: encounters.pursuitSnapshot(),
+    encounterWrangler: encounters.wranglerSnapshot(),
     livingWorld: {
       debris: { live: life.debris.live.size, cachedCells: life.debris.cells.size, cacheEvictions: life.debris.cacheEvictions },
       anchoredAnglers: { live: life.traffic.liveAnglers.size, cachedCells: life.traffic.anglerCells.size, cacheEvictions: life.traffic.anglerCacheEvictions },
@@ -418,7 +419,7 @@ async function init() {
     }
     if (import.meta.env.DEV && e.code === 'F7' && !e.repeat) {
       e.preventDefault(); if (encounterStressRunning) return; encounterStressRunning = true;
-      const types = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'race', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats();
+      const types = ['distress', 'airrescue', 'grounding', 'fire', 'wrangler', 'manatee', 'spotlight', 'race', 'patrol', 'salvage', 'smuggler', 'netline'], before = debugSceneGraphStats();
       let iteration = 0, started = 0;
       const rotate = () => {
         const end = Math.min(6000, iteration + 240);

@@ -116,7 +116,7 @@ export function person(rr, { pose = 'stand', rod = false, hat = true, gun = fals
   if (can) { base.lf = 0.35; base.le = 1.1; base.lo = 0.12; }
   g.userData = {
     kind: 'person', pose, rodProp: rod, gunProp: gun, drive, can: !!can, hips, spine, head: headG, arms, legs, rod: rodMesh, tip, gun: gunG,
-    base, cur: { ...base }, waveT: 0, castT: -1, guide: 0, ph: rr() * 6.28, look: 0, lookX: 0, tug: 0,
+    base, cur: { ...base }, waveT: 0, castT: -1, guide: 0, wrangle: 0, ph: rr() * 6.28, look: 0, lookX: 0, tug: 0,
     act: null, actT: 0, actDur: 0, side: rr() < 0.5 ? -1 : 1, sideT: 4 + rr() * 8, wander: 0, wanderT: 0, rate: 5, faceY: null, buddy: null, walk: null, aimT: 0, seed: rr(),
   };
   // sit the joints at their base pose immediately (the figure may be seen before its first update)
@@ -240,6 +240,14 @@ export function animatePerson(g, t, dt, boat, envIn) {
   const k = u.actDur > 0 ? u.actT / u.actDur : 0;
   if (u.act === 'guide') { P.rf = 2.35 + Math.sin(t * 3.2) * 0.1; P.re = 0.75 + Math.sin(t * 3.2) * 0.55; P.ro = -0.2; P.sx = -0.05; P.hdx = -0.1; }
   else if (u.act && ACTS[u.act]) ACTS[u.act](u, P, k, t);
+  const wrangle = Math.max(0, Math.min(1, Number(u.wrangle) || 0));
+  if (wrangle > 0) {
+    const fight = Math.sin(t * 5.2 + ph), brace = Math.sin(t * 2.1 + ph * 0.7);
+    P.hy = lerp(P.hy, 0.58 + brace * 0.012, wrangle); P.sx = lerp(P.sx, 0.76 + fight * 0.045, wrangle); P.hdx = lerp(P.hdx, 0.42, wrangle);
+    P.lf = lerp(P.lf, 1.34 + fight * 0.08, wrangle); P.lo = lerp(P.lo, -0.5, wrangle); P.le = lerp(P.le, 1.18 - fight * 0.1, wrangle);
+    P.rf = lerp(P.rf, 1.42 - fight * 0.07, wrangle); P.ro = lerp(P.ro, -0.42, wrangle); P.re = lerp(P.re, 1.08 + fight * 0.1, wrangle);
+    P.ltf = lerp(P.ltf, 0.72, wrangle); P.lk = lerp(P.lk, 1.28 + brace * 0.05, wrangle); P.rtf = lerp(P.rtf, 0.66, wrangle); P.rk = lerp(P.rk, 1.18 - brace * 0.05, wrangle);
+  }
   if (u.routineState === RESIDENT_ROUTINE.BRACE) {
     P.sx += 0.32; P.hdx += 0.2; P.hy -= u.pose === 'stand' ? 0.1 : 0.035;
     P.lf = lerp(P.lf, 1.75, 0.72); P.lo = lerp(P.lo, -0.28, 0.72); P.le = lerp(P.le, 1.7, 0.72);
@@ -280,6 +288,7 @@ export function animatePerson(g, t, dt, boat, envIn) {
   u.castT = u.act === 'cast' ? u.actT : -1;
 }
 export function wave(g) { if (g.userData.waveT <= 0) g.userData.waveT = 2.4; }
+export function setWranglePose(g, strength = 0) { if (g?.userData) g.userData.wrangle = Math.max(0, Math.min(1, Number(strength) || 0)); }
 // start a cast; false if the figure is busy walking (try again next frame)
 export function cast(g) { const u = g.userData; if (u.act === 'walk' || u.act === 'cast' || u.act === 'reel') return false; startAct(u, 'cast', 1.65); return true; }
 export function rodTip(g, out) { return g.userData.tip ? g.userData.tip.getWorldPosition(out) : null; }

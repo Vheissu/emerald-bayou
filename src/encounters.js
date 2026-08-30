@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildSkiff } from './npc.js';
-import { person, animatePerson, wave, aim } from './folk.js';
+import { person, animatePerson, wave, aim, setWranglePose } from './folk.js';
 import { crabFloat, fuelDrum, wreck } from './markers.js';
 import { gatorMesh, manateeMesh } from './wildlife.js';
 import { mulberry32 } from './noise.js';
@@ -23,6 +23,7 @@ import { makeSurfaceSearchBeam, surfaceSearchlightResourceStats } from './surfac
 import {
   pickStormEvacuationCamp, stormEvacuationLeadSeconds, stormEvacuationWindow,
 } from './stormevacuation.js';
+import { WRANGLER_WAKE_RELEASE, wranglerAssistStep, wranglerStationQuality, wranglerWakeStep, wranglerWakeThreat } from './wrangler.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -32,7 +33,7 @@ const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
 const CHANNEL_CLOSURE_LATERAL_PROBES = [0, 8, -8, 16, -16];
 const CHANNEL_CLOSURE_CLEARANCE_PROBES = [[0, 0], [4.2, 0], [-4.2, 0], [0, 7], [0, -7]];
 const MANATEE_PROBES = [0, -0.42, 0.42, -0.86, 0.86, -1.32, 1.32];
-const DEBUG_ORDER = ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'race', 'patrol', 'smuggler', 'salvage', 'netline'];
+const DEBUG_ORDER = ['distress', 'airrescue', 'grounding', 'fire', 'wrangler', 'manatee', 'spotlight', 'race', 'patrol', 'smuggler', 'salvage', 'netline'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
 const SPILL_POOL_SIZE = 3;
 const SIGNAL_GEOMETRY = new THREE.SphereGeometry(0.075, 8, 6);
@@ -289,6 +290,12 @@ export class EncounterDirector {
     this.raceMarker = { x: 0, z: 0, kind: 'boat', heading: 0, color: '#f07a2e' };
     this.manateeObs = { x: 0, z: 0, r: 2.15, tag: 'entangled manatee', onHit: into => this.hitEntangledManatee(into) };
     this.manateeLineObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 0.16, tag: 'crab trap line', onHit: into => this.hitManateeLine(into) };
+    this.wranglerBoatObs = [
+      { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'gator work skiff', onHit: into => this.hitWranglerBoat(0, into) },
+      { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'spectator skiff', onHit: into => this.hitWranglerBoat(1, into) },
+      { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'spectator johnboat', onHit: into => this.hitWranglerBoat(2, into) },
+    ];
+    this.wranglerGatorObs = { x: 0, z: 0, r: 1.42, tag: 'nuisance alligator', onHit: into => this.hitWranglerGator(into) };
     this.phys.addObs('encounters', this.obs);
     this.rigs = this.makeRigs(); this.agents = [this.rigs.patrol.agent, ...this.rigs.patrolBackups.map(unit => unit.agent), this.rigs.smuggler.agent, this.rigs.distress.echoAgent, this.rigs.grounding.agent];
     this.salvagePieces = this.rigs.salvage.drums.map((mesh, index) => ({ mesh, index, x: 0, z: 0, vx: 0, vz: 0, found: false, ruptured: false, resolved: false, hitCd: 0, sinkT: 0, ph: index * 2.3 }));
@@ -301,6 +308,7 @@ export class EncounterDirector {
       if (import.meta.env.DEV && e.code === 'F10' && !e.repeat && this.enabled && this.active) { e.preventDefault(); this.debugApproach(); }
       if (import.meta.env.DEV && e.code === 'F11' && !e.repeat && this.enabled && this.active) {
         if (this.active.type === 'fire' && !this.active.fireOut && !this.active.burned) { e.preventDefault(); this.active.burn = this.active.limit; }
+        else if (this.active.type === 'wrangler') { e.preventDefault(); this.debugAdvanceWrangler(); }
         else if (this.active.type === 'manatee') { e.preventDefault(); this.debugAdvanceManatee(); }
         else if (this.active.type === 'spotlight') { e.preventDefault(); this.debugAdvanceSpotlight(); }
         else if (this.active.type === 'grounding') { e.preventDefault(); this.debugAdvanceGrounding(); }
@@ -418,7 +426,7 @@ export class EncounterDirector {
     const heat = this.law ? this.law.attention : 0;
     const runners = this.reputation ? this.reputation.score('runners') : 0, fwc = this.reputation ? this.reputation.score('fwc') : 0;
     const region = this.regions && this.regions.current ? this.regions.current.encounters : {};
-    const weights = { distress: 0.24, airrescue: 0.065, grounding: 0.1, fire: 0.1, manatee: 0.1, spotlight: 0.08, race: 0.105, patrol: 0.2, salvage: 0.1, smuggler: 0.1, netline: 0.07 };
+    const weights = { distress: 0.24, airrescue: 0.065, grounding: 0.1, fire: 0.1, wrangler: 0.085, manatee: 0.1, spotlight: 0.08, race: 0.105, patrol: 0.2, salvage: 0.1, smuggler: 0.1, netline: 0.07 };
     weights.patrol *= (region.law ?? 1) * (1 + heat * 1.75) * (1 + Math.max(0, -fwc) * 0.16);
     weights.smuggler *= (region.runners ?? 1) * (night ? 1.9 : 1) * (1 + Math.max(0, -runners) * 0.2);
     weights.netline *= (0.72 + (region.runners ?? 1) * 0.38) * (night ? 1.24 : 1);
@@ -427,18 +435,19 @@ export class EncounterDirector {
     const falling = clamp((-this.environment.tideRate - 0.025) / 0.24), lowWater = clamp((-this.environment.waterLevel - 0.08) / 0.3);
     weights.grounding *= (falling > 0 ? 0.72 + falling * 2.15 : lowWater * 0.75) * (0.82 + this.environment.tideRange * 0.28) * (region.danger ?? 1);
     weights.fire *= (region.danger ?? 1) * (0.82 + Math.min(1.25, (this.environment.values.wind || 0) * 0.045));
+    weights.wrangler *= (night ? 0.04 : 1) * (1 - clamp(((this.environment.values.storm || 0) - 0.08) / 0.72)) * (1 - clamp(((this.environment.values.wind || 0) - 10) / 13));
     weights.manatee *= (night ? 0.42 : 1) * (1 - clamp((this.environment.values.storm || 0) - 0.45, 0, 0.86));
     weights.spotlight *= (region.runners ?? 1) * (night ? 1.9 : 0) * (1 + Math.max(0, -runners) * 0.12) * (1 - clamp((this.environment.values.storm || 0) - 0.34, 0, 0.94));
     weights.race *= (region.runners ?? 1) * (night ? 0.7 : 1) * (1 + Math.max(0, runners) * 0.045) * (1 - clamp(((this.environment.values.storm || 0) - 0.12) / 0.76));
     weights.salvage *= 0.7 + (region.danger ?? 1) * 0.45;
     if (weather === 'hurricane' || weather === 'tropical' || weather === 'thunderstorm') {
-      weights.distress *= 1.8; weights.airrescue *= 0.025; weights.grounding *= 0.12; weights.fire *= 1.35; weights.manatee *= 0.08; weights.spotlight *= 0.04; weights.race *= 0.01; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
+      weights.distress *= 1.8; weights.airrescue *= 0.025; weights.grounding *= 0.12; weights.fire *= 1.35; weights.wrangler *= 0.002; weights.manatee *= 0.08; weights.spotlight *= 0.04; weights.race *= 0.01; weights.salvage *= 3.4; weights.patrol *= 0.18; weights.smuggler *= 0.12; weights.netline *= 0.28;
     } else if (weather === 'squall' || weather === 'hail') {
-      weights.distress *= 1.4; weights.airrescue *= 0.32; weights.grounding *= 0.55; weights.fire *= 1.2; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.race *= 0.12; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
+      weights.distress *= 1.4; weights.airrescue *= 0.32; weights.grounding *= 0.55; weights.fire *= 1.2; weights.wrangler *= 0.035; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.race *= 0.12; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
     }
     if (heat >= 3) weights.patrol *= 2.1;
     let roll = Math.random() * Object.values(weights).reduce((a, n) => a + n, 0);
-    for (const type of ['distress', 'airrescue', 'grounding', 'fire', 'manatee', 'spotlight', 'race', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
+    for (const type of ['distress', 'airrescue', 'grounding', 'fire', 'wrangler', 'manatee', 'spotlight', 'race', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
     return 'distress';
   }
 
@@ -451,6 +460,7 @@ export class EncounterDirector {
     else if (type === 'airrescue') this.startAirRescue(at);
     else if (type === 'grounding') this.startGrounding(at);
     else if (type === 'fire') this.startFire(at);
+    else if (type === 'wrangler') this.startWrangler(at);
     else if (type === 'manatee') this.startManatee(at);
     else if (type === 'spotlight') this.startSpotlight(at);
     else if (type === 'race') {
@@ -857,6 +867,138 @@ export class EncounterDirector {
       dx / n * (6.8 + Math.random() * 1.8) + p.vel.x * 0.12, 0.35 + Math.random() * 0.55, dz / n * (6.8 + Math.random() * 1.8) + p.vel.y * 0.12,
       0.13 + Math.random() * 0.08, 0.24 + Math.random() * 0.14, 0.78 + Math.random() * 0.25, 0.78,
     );
+  }
+
+  startWrangler(at) {
+    this.clearDistressEcho();
+    const W = this.rigs.distress, F = this.rigs.fire, S = this.rigs.smuggler, G = this.rigs.spotlight;
+    const heading = at.heading + (Math.random() - 0.5) * 0.42, fx = -Math.sin(heading), fz = -Math.cos(heading), rx = Math.cos(heading), rz = -Math.sin(heading);
+    W.boat.visible = true; W.survivor.visible = true; W.passenger.visible = false; W.flare.group.visible = false; W.flare.light.intensity = 0;
+    W.survivor.position.set(0.68, 0.46, -0.2); W.survivor.rotation.y = Math.PI / 2; setWranglePose(W.survivor, 1);
+    F.boat.visible = true; F.operator.visible = true; F.swimmer.visible = false; animateEngineFire(F.fire, 0, 0, 0);
+    S.boat.visible = true; S.agent.active = false; S.pack.visible = false; G.gunner.visible = false; G.light.intensity = 0; G.pool.visible = false; G.eyes.visible = false;
+    G.gator.visible = true;
+    this.active = {
+      type: 'wrangler', state: 'waiting', x: at.x, z: at.z, heading, t: 0, known: false, ph: Math.random() * Math.PI * 2,
+      workX: at.x, workZ: at.z, fireX: at.x - rx * 9 + fx * 2.5, fireZ: at.z - rz * 9 + fz * 2.5,
+      crowdX: at.x + rx * 8.5 - fx * 7.5, crowdZ: at.z + rz * 8.5 - fz * 7.5,
+      fireHeading: heading + 0.38, crowdHeading: heading - 0.68,
+      gatorX: at.x + rx * 2.42 + fx * 0.12, gatorZ: at.z + rz * 2.42 + fz * 0.12, gatorHeading: heading + Math.PI / 2, gatorSpeed: 0,
+      workerProgress: 0, assist: 0, station: 0, wakeThreat: 0, wakeRisk: 0, helped: false, bet: 0, betPaid: 0,
+      hitCd: 0, gatorHitCd: 0, releaseT: 0, resolveT: 0, lungeHeading: heading, escapeHeading: heading, lungeHit: false, playerCaused: false, outcome: '',
+    };
+    this.updateWranglerRig(this.active, 0, 0);
+  }
+
+  floatWranglerBoat(mesh, x, z, heading, t, phase) {
+    const sea = this.environment.values.sea || 0, wave = this.water.waveHeight(x, z, t);
+    mesh.position.set(x, wave - 0.05, z);
+    mesh.rotation.set(Math.sin(t * 0.63 + phase) * (0.004 + sea * 0.006), heading, Math.sin(t * 0.78 + phase * 1.7) * (0.012 + sea * 0.009), 'YXZ');
+  }
+
+  updateWranglerRig(e, dt, t) {
+    const W = this.rigs.distress, F = this.rigs.fire, S = this.rigs.smuggler, G = this.rigs.spotlight, p = this.phys;
+    this.floatWranglerBoat(W.boat, e.workX, e.workZ, e.heading, t, e.ph);
+    this.floatWranglerBoat(F.boat, e.fireX, e.fireZ, e.fireHeading, t, e.ph + 1.8);
+    this.floatWranglerBoat(S.boat, e.crowdX, e.crowdZ, e.crowdHeading, t, e.ph + 3.4);
+    const wave = this.water.waveHeight(e.gatorX, e.gatorZ, t), secured = e.state === 'secured';
+    G.gator.position.set(e.gatorX, wave - (secured ? 0.31 : 0.38) + Math.sin(t * 0.62 + e.ph) * (secured ? 0.008 : 0.025), e.gatorZ);
+    G.gator.rotation.set(0, e.gatorHeading + Math.sin(t * 0.45 + e.ph) * (secured ? 0.01 : 0.035), secured ? 0.12 : Math.sin(t * 0.41 + e.ph) * 0.018, 'YXZ');
+    setWranglePose(W.survivor, e.state === 'waiting' || e.state === 'helping' ? 1 : secured ? 0.62 : 0);
+    const boat = this._personBoat; boat.x = p.pos.x; boat.z = p.pos.y; boat.speed = p.speed;
+    animatePerson(W.survivor, t, dt, boat); animatePerson(F.operator, t, dt, boat);
+    const spectators = S.boat.userData.people;
+    if (spectators) for (const spectator of spectators) animatePerson(spectator, t, dt, boat);
+  }
+
+  addWranglerBoatObstacle(index, x, z, heading) {
+    if (Math.hypot(x - this.phys.pos.x, z - this.phys.pos.y) > 70) return;
+    const fx = -Math.sin(heading), fz = -Math.cos(heading), o = this.wranglerBoatObs[index];
+    o.ax = x + fx * 2; o.az = z + fz * 2; o.bx = x - fx * 2; o.bz = z - fz * 2; this.obs.push(o);
+  }
+
+  beginWranglerAssist(e) {
+    if (!e || e.type !== 'wrangler' || e.state !== 'waiting') return false;
+    e.state = 'helping'; e.helped = true; this.clearPrompt(); this.audio.checkpoint();
+    this.game.toast('Hold the escape cut', 'Idle outside Cal’s working circle. Keep the other boats out and leave him flat water.', 3.4);
+    return true;
+  }
+
+  placeWranglerBet(e) {
+    if (!e || e.type !== 'wrangler' || !['waiting', 'helping'].includes(e.state) || e.bet) return false;
+    if ((Number(this.game.save.cash) || 0) < 50) { this.audio.fail(); this.game.toast('Short on cash', 'The spectator wants fifty before Cal reaches for the tape.', 2.8); return false; }
+    e.bet = 50; this.game.addCash(-50); this.game.save.wranglerBets = (this.game.save.wranglerBets || 0) + 1; this.game.persist();
+    this.game.bountyToast('Side bet <b>-$50</b>'); this.audio.pickup(); this.game.toast('Fifty says ten fingers', 'The purple-cap skiff is holding the money.', 2.9); return true;
+  }
+
+  secureWrangler(e, helped = false) {
+    if (!e || e.type !== 'wrangler' || e.state === 'secured' || e.state === 'loose') return false;
+    e.state = 'secured'; e.resolveT = 5.6; e.workerProgress = 1; e.assist = Math.max(e.assist, helped ? 1 : e.assist); e.outcome = helped ? 'wrangler-assisted' : 'wrangler-watched'; this.clearPrompt();
+    let payout = 0;
+    if (helped) { payout += 180; this.game.save.wranglerAssists = (this.game.save.wranglerAssists || 0) + 1; }
+    if (e.bet) { e.betPaid = 100; payout += e.betPaid; this.game.save.wranglerBetWins = (this.game.save.wranglerBetWins || 0) + 1; }
+    if (payout) { this.game.addCash(payout); this.game.bountyToast(`${helped && e.bet ? 'Capture and side bet' : helped ? 'Capture assist' : 'Side bet paid'} <b>+$${payout}</b>`); }
+    if (helped && this.reputation) {
+      this.reputation.change('locals', 0.8, 'gator-capture-assist', 'You held a flat escape lane while Cal taped a nuisance gator beside the work skiff.', true);
+      this.reputation.change('fwc', 0.55, 'gator-capture-assist', 'A licensed nuisance-gator capture finished without a wake strike or loose animal.', false);
+    }
+    if (helped && this.law) this.law.cool(0.15);
+    this.game.persist(); this.audio.complete();
+    this.game.toast('Gator taped and tagged', helped ? 'Cal still has ten fingers. The work skiff is paying for the quiet water.' : e.bet ? 'Cal still has ten fingers. The purple-cap skiff is paying up.' : 'Cal still has ten fingers. Nobody in the gallery looks surprised.', 3.8);
+    this.radio?.transmit({ channel: 'LOCAL 72', speaker: 'CYPRESS HOOK', text: 'Cal has the tape on. Keep the cut down until the work skiff clears.', priority: 1, key: 'wrangler-secured', cooldown: 28 });
+    return true;
+  }
+
+  releaseWrangler(e, reason = 'wake', playerCaused = true) {
+    if (!e || e.type !== 'wrangler' || e.state === 'loose' || e.state === 'secured') return false;
+    const p = this.phys, dx = p.pos.x - e.gatorX, dz = p.pos.y - e.gatorZ;
+    e.state = 'loose'; e.releaseT = 0; e.resolveT = 9; e.gatorSpeed = 0.4; e.playerCaused = playerCaused; e.lungeHit = false;
+    e.lungeHeading = Math.atan2(-dx, -dz); e.escapeHeading = this.departureHeading(e.gatorX, e.gatorZ, e.gatorHeading + Math.PI * 0.72);
+    e.outcome = playerCaused ? 'wrangler-wake-break' : 'wrangler-weather-break'; setWranglePose(this.rigs.distress.survivor, 0); wave(this.rigs.fire.operator);
+    if (playerCaused) {
+      const hard = reason === 'hull'; this.game.save.wranglerWakeBreaks = (this.game.save.wranglerWakeBreaks || 0) + 1;
+      if (this.law) this.law.add(hard ? 0.68 : 0.48, hard ? 'struck a nuisance-gator capture scene' : 'reckless wake at a nuisance-gator capture', false);
+      if (this.reputation) {
+        this.reputation.change('locals', hard ? -0.8 : -0.6, 'gator-capture-broken', hard ? 'You hit a boat in Cal’s nuisance-gator setup and broke his grip.' : 'Your wake broke Cal’s grip during a nuisance-gator capture.', true);
+        this.reputation.change('fwc', hard ? -0.65 : -0.45, 'gator-capture-broken', 'The licensed capture ended with a loose animal after the tower boat entered the working circle.', false);
+      }
+      this.game.persist(); this.audio.warn(); this.game.toast('That wake made the decision', e.bet ? 'Cal let go. The gator is loose and the fifty is gone.' : 'Cal let go before the chine reached his hands. The gator is coming off the skiff.', 3.8);
+    } else {
+      this.audio.warn(); this.game.toast('Weather broke the grip', e.bet ? 'The squall scattered the gallery. The purple-cap skiff handed the fifty back.' : 'Cal let go and everybody found a throttle at once.', 3.6);
+      if (e.bet) { this.game.addCash(e.bet); this.game.bountyToast('Weather refund <b>+$50</b>'); e.bet = 0; this.game.persist(); }
+    }
+    this.radio?.transmit({ channel: 'LOCAL 72', speaker: 'CYPRESS HOOK', text: 'Loose gator off Cal’s skiff. Give the work boat room.', priority: 2, key: 'wrangler-loose', cooldown: 28 });
+    return true;
+  }
+
+  hitWranglerBoat(index, into) {
+    const e = this.active; if (!e || e.type !== 'wrangler' || !['waiting', 'helping'].includes(e.state) || e.hitCd > 0 || into < 1.2) return;
+    e.hitCd = 2.2; e.wakeRisk = Math.max(e.wakeRisk, clamp(into / 4)); this.game.shake = Math.max(this.game.shake, Math.min(0.34, into * 0.04));
+    if (this.condition) this.condition.damage(0.15 + into * 0.06, into * 0.025);
+    if (into >= 2.1) this.releaseWrangler(e, 'hull', true);
+    else this.game.toast(index ? 'Spectator boat rocked' : 'Contact with Cal’s skiff', 'Back out at idle. The gator is still in his hands.', 2.8);
+  }
+
+  hitWranglerGator(into) {
+    const e = this.active; if (!e || e.type !== 'wrangler' || e.gatorHitCd > 0 || into < 0.9) return;
+    e.gatorHitCd = 2.4;
+    if (e.state === 'waiting' || e.state === 'helping') { if (this.condition) this.condition.damage(0.35 + into * 0.09, into * 0.03); this.releaseWrangler(e, 'hull', true); return; }
+    if (e.state === 'loose') { if (this.condition) this.condition.damage(0.25 + into * 0.08, into * 0.02); this.audio.thud(Math.min(1.2, 0.35 + into * 0.1)); }
+  }
+
+  debugAdvanceWrangler() {
+    const e = this.active; if (!e || e.type !== 'wrangler') return;
+    if (e.state === 'waiting') this.beginWranglerAssist(e);
+    else if (e.state === 'helping') { e.assist = 0.995; e.workerProgress = Math.max(e.workerProgress, 0.92); }
+    else if (e.state === 'secured' || e.state === 'loose') e.resolveT = 0.01;
+  }
+
+  wranglerSnapshot() {
+    const e = this.active?.type === 'wrangler' ? this.active : null;
+    return {
+      active: Boolean(e), state: e?.state || '', assist: e?.assist || 0, wakeRisk: e?.wakeRisk || 0,
+      pooled: { boats: 3, people: 4, gators: 1 }, extraRenderResources: { objects: 0, geometries: 0, materials: 0, textures: 0, lights: 0 },
+    };
   }
 
   startManatee(at) {
@@ -1544,7 +1686,7 @@ export class EncounterDirector {
     else if (e.type === 'salvage') target = e.pieces.find(q => !q.resolved) || e;
     else if (e.type === 'fire' && e.aboard && (e.fireOut || e.burned) && e.drop) target = e.drop;
     const dx = target.x - p.pos.x, dz = target.z - p.pos.y, d = Math.hypot(dx, dz) || 1;
-    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'airrescue' ? 20 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'manatee' ? (e.state === 'cutting' ? 5.5 : 19) : e.type === 'spotlight' ? 38 : e.type === 'race' && e.state === 'challenge' ? 15 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
+    const gap = e.type === 'patrol' ? 18 : e.type === 'distress' ? 9 : e.type === 'airrescue' ? 20 : e.type === 'fire' ? (e.aboard && (e.fireOut || e.burned) ? 8 : e.overboard ? 5 : 11) : e.type === 'wrangler' ? 24 : e.type === 'manatee' ? (e.state === 'cutting' ? 5.5 : 19) : e.type === 'spotlight' ? 38 : e.type === 'race' && e.state === 'challenge' ? 15 : e.type === 'smuggler' && e.state === 'waiting' ? 5 : e.type === 'netline' ? 15 : 0;
     const x = target.x - dx / d * gap, z = target.z - dz / d * gap;
     p.reset(x, z, p.heading); p.y = this.water.waveHeight(x, z, 0);
   }
@@ -1631,6 +1773,7 @@ export class EncounterDirector {
     this.clearPrompt(); this.obs.length = 0;
     if (e.type === 'distress') { if (!(success && this.beginDistressEcho(e))) this.clearDistressEcho(); }
     else if (!this.distressEcho) this.rigs.distress.boat.visible = false;
+    setWranglePose(this.rigs.distress.survivor, 0); this.rigs.distress.survivor.position.set(0, 0.5, -0.55); this.rigs.distress.survivor.rotation.y = Math.PI;
     this.rigs.distress.passenger.visible = false;
     this.rigs.patrol.boat.visible = false; this.rigs.patrol.agent.active = false; this.resetPatrolWeather(this.rigs.patrol.agent); this.rigs.patrol.blue.light.intensity = 0; this.rigs.patrol.red.light.intensity = 0; this.hidePatrolSearchlight(this.rigs.patrol); this.resetPatrolBackups();
     this.rigs.smuggler.boat.visible = false; this.rigs.smuggler.agent.active = false; this.rigs.smuggler.pack.visible = false;
@@ -2044,6 +2187,79 @@ export class EncounterDirector {
       if (e.overboard) this.point(e.swimmerX, e.swimmerZ, 'operator in the water', '#ff5a36');
       else this.point(e.x, e.z, e.fireOut ? 'disabled skiff' : 'burning skiff', e.fireOut ? '#7be08a' : '#ff5a36');
     }
+  }
+
+  updateWrangler(e, dt, t) {
+    const p = this.phys, values = this.environment.values, dx = e.gatorX - p.pos.x, dz = e.gatorZ - p.pos.y;
+    let d = Math.hypot(dx, dz), sceneD = Math.hypot(e.workX - p.pos.x, e.workZ - p.pos.y);
+    e.hitCd = Math.max(0, e.hitCd - dt); e.gatorHitCd = Math.max(0, e.gatorHitCd - dt);
+    if (sceneD < 145) this.known(e, 'Nuisance-gator job', 'Big Cal has both hands on a nuisance gator. Half of Cypress Hook is watching from boats.');
+    if (e.known && e.state !== 'loose') this.point(e.workX, e.workZ, e.state === 'secured' ? 'taped gator' : 'gator capture', e.state === 'secured' ? '#7be08a' : '#e7a34d');
+
+    this.addWranglerBoatObstacle(0, e.workX, e.workZ, e.heading);
+    this.addWranglerBoatObstacle(1, e.fireX, e.fireZ, e.fireHeading);
+    this.addWranglerBoatObstacle(2, e.crowdX, e.crowdZ, e.crowdHeading);
+    if (d < 88) { this.wranglerGatorObs.x = e.gatorX; this.wranglerGatorObs.z = e.gatorZ; this.obs.push(this.wranglerGatorObs); }
+
+    if (e.state === 'waiting' || e.state === 'helping') {
+      const wind = Math.max(0, (values.wind || 0) * (this.environment.gust || 1));
+      const unsafeWeather = values.storm > 0.82 || wind > 22 || this.environment.key === 'hurricane' || this.environment.key === 'tropical';
+      if (unsafeWeather) this.releaseWrangler(e, 'weather', false);
+      else {
+        const closing = d > 0.01 ? (p.vel.x * dx + p.vel.y * dz) / d : p.speed;
+        e.wakeThreat = wranglerWakeThreat(d, p.speed, closing, p.airborne); e.wakeRisk = wranglerWakeStep(e.wakeRisk, dt, e.wakeThreat);
+        if (e.wakeRisk >= WRANGLER_WAKE_RELEASE) this.releaseWrangler(e, 'wake', true);
+      }
+    }
+
+    if (e.state === 'waiting' || e.state === 'helping') {
+      e.workerProgress = clamp(e.workerProgress + dt * (0.021 + (e.state === 'helping' ? 0.004 : 0)) * (1 - e.wakeRisk * 0.72));
+      if (this.alternate && d < 42 && this.canInteract()) this.placeWranglerBet(e);
+      if (e.state === 'waiting' && d < 42 && this.canInteract()) {
+        if (p.speed < 2.7 && !p.airborne) {
+          this.setPrompt(`hold the escape cut for Cal <i>· E help${e.bet ? ' · $50 riding' : ' · F $50 says he keeps all ten'}</i>`);
+          if (this.interact) this.beginWranglerAssist(e);
+        } else this.setPrompt('idle outside Cal’s working circle <i>· wake will break his grip</i>', 'SLOW');
+      }
+      if (e.state === 'helping') {
+        e.station = wranglerStationQuality(d, p.speed, p.airborne); e.assist = wranglerAssistStep(e.assist, dt, d, p.speed, p.airborne);
+        if (e.station > 0.35) this.setPrompt(`hold the escape cut <i>· ${Math.round(e.assist * 100)}%${e.bet ? ' · $50 riding' : ' · F side bet'}</i>`, 'IDLE');
+        else if (d < 17) this.setPrompt(`back outside 55 ft and idle <i>· ${Math.round(e.assist * 100)}%</i>`, 'BACK');
+        else this.setPrompt(`close to 55–100 ft and idle <i>· ${Math.round(e.assist * 100)}%</i>`, 'HOLD');
+      }
+      if (e.assist >= 1) this.secureWrangler(e, true);
+      else if (e.workerProgress >= 1) this.secureWrangler(e, false);
+    }
+
+    if (e.state === 'secured') {
+      e.resolveT -= dt; this.updateWranglerRig(e, dt, t);
+      if (e.resolveT <= 0) this.complete('Gator loaded for removal', e.helped ? 'Cal is clear of the water. The work skiff remembers who held the cut.' : 'The tape held. Cypress Hook is already improving the story.', 0, 0, '', e.outcome);
+      return;
+    }
+
+    if (e.state === 'loose') {
+      e.releaseT += dt; e.resolveT -= dt;
+      const target = e.releaseT < 3.1 ? e.lungeHeading : e.escapeHeading;
+      const dh = Math.atan2(Math.sin(target - e.gatorHeading), Math.cos(target - e.gatorHeading));
+      e.gatorHeading += clamp(dh, -dt * (e.releaseT < 3.1 ? 1.65 : 0.82), dt * (e.releaseT < 3.1 ? 1.65 : 0.82));
+      const want = e.releaseT < 3.1 ? 3.7 : 2.15; e.gatorSpeed += (want - e.gatorSpeed) * (1 - Math.exp(-dt * 2.1));
+      const gx = -Math.sin(e.gatorHeading), gz = -Math.cos(e.gatorHeading), flow = this.currents ? this.currents.flowAt(e.gatorX, e.gatorZ, this._flow) : null;
+      e.gatorX += (gx * e.gatorSpeed + (flow ? flow.x * 0.35 : 0)) * dt; e.gatorZ += (gz * e.gatorSpeed + (flow ? flow.y * 0.35 : 0)) * dt;
+      d = Math.hypot(e.gatorX - p.pos.x, e.gatorZ - p.pos.y);
+      if (!e.lungeHit && e.releaseT < 3.4 && d < 2.8) {
+        const hx = p.pos.x - e.gatorX, hz = p.pos.y - e.gatorZ, n = Math.hypot(hx, hz) || 1; e.lungeHit = true;
+        p.vel.x += hx / n * 2.4; p.vel.y += hz / n * 2.4; p.vy = Math.max(p.vy, 1.25); p.rollVel += (Math.random() < 0.5 ? -1 : 1) * 2.2;
+        p.hit = Math.max(p.hit, 4.8); p.hitNormal.set(hx / n, hz / n); p.hitTag = 'gator';
+        if (this.condition) this.condition.damage(0.75, 0.08); this.audio.thud(1.25); this.game.shake = Math.max(this.game.shake, 0.62);
+        this.game.toast('Gator under the chine', 'It hit the hull once and turned for the deep water.', 3.2);
+      }
+      this.updateWranglerRig(e, dt, t);
+      if (e.known) this.point(e.gatorX, e.gatorZ, 'loose gator', '#ff744f');
+      if (e.resolveT <= 0) this.complete('Gator loose in the cut', e.playerCaused ? 'Cal has the work skiff. The incident report has your wake.' : 'The weather ended the capture. Cal is counting hands before he tries again.', 0, 0, '', e.outcome);
+      return;
+    }
+
+    this.updateWranglerRig(e, dt, t);
   }
 
   updateManatee(e, dt, t) {
@@ -2829,6 +3045,7 @@ export class EncounterDirector {
     else if (e.type === 'airrescue') this.updateAirRescue(e, dt, t);
     else if (e.type === 'grounding') this.updateGrounding(e, dt, t);
     else if (e.type === 'fire') this.updateFire(e, dt, t);
+    else if (e.type === 'wrangler') this.updateWrangler(e, dt, t);
     else if (e.type === 'manatee') this.updateManatee(e, dt, t);
     else if (e.type === 'spotlight') this.updateSpotlight(e, dt, t);
     else if (e.type === 'race') this.updateRace(e, dt, t);
@@ -2853,6 +3070,10 @@ export class EncounterDirector {
     const e = this.active;
     if (e?.type === 'airrescue' && ['approach', 'hoist'].includes(e.state) && e.hy < 38 && Math.hypot(e.hx - this.phys.pos.x, e.hz - this.phys.pos.y) < 110) {
       const strength = clamp((38 - e.hy) / 16), stamp = this.airWashStamp; stamp.x = e.hx; stamp.z = e.hz; stamp.height = -0.72 * strength; stamp.foam = 2.4 * strength; stamp.radius = 7.5 + strength * 3; stamp.foamRadius = 8.5 + strength * 4; emitWakeStamp(out, stamp.x, stamp.z, stamp.radius, stamp.height, stamp.foam, stamp.foamRadius);
+    }
+    if (e?.type === 'wrangler' && e.state === 'loose' && e.gatorSpeed > 0.5 && Math.hypot(e.gatorX - this.phys.pos.x, e.gatorZ - this.phys.pos.y) < 85) {
+      const fx = -Math.sin(e.gatorHeading), fz = -Math.cos(e.gatorHeading), strength = clamp(e.gatorSpeed / 3.7);
+      emitWakeStamp(out, e.gatorX - fx * 0.8, e.gatorZ - fz * 0.8, 0.75, -0.18 * strength, 0.62 * strength, 0.7);
     }
   }
 }

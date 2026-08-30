@@ -71,6 +71,10 @@ Sixteen jobs unlock in sequence, from a shakedown run through a manatee count, a
 
 Between jobs, you can come across dead motors, FWC stops, watched packages, storm wreckage, drifting fuel drums and illegal monofilament sets. A hard strike can split a drum and leave a sheen moving with the current. It can also stop one of the resident working boats: kill the prop and hold alongside while the crew checks everyone aboard, or leave and hear your hull reported over the radio.
 
+On calm afternoons, Big Cal may be working a nuisance gator beside his skiff while two boats form an unhelpful gallery. Idle 55–100 ft off and hold the escape cut to help him get the tape on, or put $50 on the number of fingers he finishes with. A fast closing pass, jump landing or hull contact can break his grip. The loose animal turns at the boat before it runs for deep water, while a sudden squall can scatter the scene without blaming the player.
+
+That whole gathering borrows three skiffs, four people and the alligator already kept by the encounter director. It creates no mesh, geometry, material, texture or light. The boats use three fixed collision records, the gator uses one, and the moving animal writes into the existing wake-stamp pool.
+
 The seven resident crews keep their own schedules, jobs and operator records. They run for shelter when the weather exceeds what their boat can carry, complain about wake over working gear and remember collisions. FWC 27 can break from patrol to answer an emergency tow call when there is a safe approach.
 
 Surface patrols cannot see through islands. During a chase they check the waterline five times a second; an emergent bank or mangrove point breaks their view, sends them to the last reported position and changes the wanted display to FWC searching. Another patrol boat with a clear angle, or Air 2 overhead, can keep the hull identified. The check keeps one small state record and uses bounded terrain samples, with no new scene or GPU resources.
@@ -172,6 +176,7 @@ src/
   fishing.js       boat-bound fishing, habitat, line tension and catch log
   nocturnal.js     seeded bank fireflies and night disturbance response
   wildlife.js      birds, fish, gators and spotlight eyeshine
+  wrangler.js      nuisance-gator station keeping and wake-risk rules
   encounters.js    rescues, patrols, races, contraband and wildlife calls
   law.js           wanted attention and pursuit state
   story.js         the channel 68 arc
@@ -208,6 +213,7 @@ __dbg.environment.eyeAdaptationSnapshot()   // current exposure target and zero-
 __dbg.environment.cloudShadowSnapshot()   // live mask, drift and zero-extra-resource budget
 __dbg.environment.surfaceWetnessSnapshot()  // live film target, shared material writes and terrain uniforms
 __dbg.encounters.pursuitSnapshot()        // surface units, channel closure, shared visual and pooled aviation state
+__dbg.encounters.wranglerSnapshot()       // pooled crowd, assist, wake risk and zero extra render resources
 __dbg.hazards.resourceStats()             // debris pool, shared resources and wake-stamp budget
 __dbg.audio.spatialStats()                 // listener direction and spatial-node allocation totals
 __dbg.freeCam = { x, y, z, tx, ty, tz }   // park the camera
