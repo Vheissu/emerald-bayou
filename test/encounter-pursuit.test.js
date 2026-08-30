@@ -78,11 +78,12 @@ test('engine noise behind a bank gives patrols an uncertain search fix without g
   director.rigs = { patrol: { agent: { active: true, x: 0, z: 0 } }, patrolBackups: [{ agent: { active: false } }, { agent: { active: false } }] };
   director.game = { toast: (...args) => toasts.push(args) }; director.radio = { transmit: call => calls.push(call) }; director.law = { stats: {} };
   director.resetPatrolSound();
-  const e = { type: 'patrol', state: 'pursuit', pursuit: 4, lostT: 0.6, surfaceOccluded: true, lastKnownX: 0, lastKnownZ: 0 };
+  const e = { type: 'patrol', state: 'pursuit', pursuit: 4, lostT: 0.6, surfaceOccluded: true, lastKnownX: 0, lastKnownZ: 0, lastKnownHeading: 1.2 };
 
   assert.equal(director.patrolSurfaceSound(e, 0.25, 3, false), true);
   assert.equal(director._patrolSound.source, 'engine'); assert.equal(director._patrolSound.contact, true);
   assert.equal(e.lastKnownX, director._patrolSound.fixX); assert.equal(e.lastKnownZ, director._patrolSound.fixZ);
+  assert.equal(e.lastKnownHeading, 1.2);
   assert.ok(Math.hypot(e.lastKnownX - director.phys.pos.x, e.lastKnownZ - director.phys.pos.y) >= 8);
   assert.equal(toasts.length, 1); assert.equal(calls.length, 1); assert.equal(director.law.stats.soundContacts, 1);
 
@@ -112,6 +113,23 @@ test('visual loss emits one retained last-fix uncertainty area and clears it on 
   assert.equal(director.pursuitSearchArea(), area); assert.equal(area.active, true); assert.deepEqual([area.x, area.z], [84, -31]); assert.ok(area.r > 22);
   assert.equal(director.game.mapMarkers.length, 1); assert.equal(director.game.mapMarkers[0].kind, 'search'); assert.equal(director.game.mapMarkers[0].r, area.r);
   e.visual = true; assert.equal(director.markPatrolSearch(e, 3), null); assert.equal(director.pursuitSearchArea(), null);
+});
+
+test('a patrol backup consumes its retained perimeter assignment when visual is broken', () => {
+  const director = Object.create(EncounterDirector.prototype), movement = [];
+  const agent = { active: true, x: 20, z: 10, heading: 0, speed: 4, decisionT: 0, search: { active: false }, tactic: {} };
+  const backup = { role: 2, index: 0, agent, blueBulb: { visible: false }, redBulb: { visible: false } };
+  director.phys = { pos: { x: 200, y: 180 }, heading: 0, speed: 9, vel: { x: 0, y: -9 } };
+  director.rigs = { patrol: { agent: { active: false } }, patrolBackups: [backup] };
+  director._patrolSound = { uncertainty: 0, fixAge: Infinity };
+  director.updateAgent = (unit, dt, t, x, z, speed, holdRadius) => movement.push({ unit, x, z, speed, holdRadius });
+  director.addPatrolBackupObstacle = () => {}; director.markPatrolBackup = () => {}; director.attemptPatrolRam = () => false;
+  const e = { pursuit: 14, lostT: 6, lastKnownX: 120, lastKnownZ: 90, lastKnownHeading: 0.4, soundContact: false, tacticSide: 1 };
+
+  director.updatePatrolBackup(e, backup, 0.1, 20, 4, 4, false);
+  assert.equal(agent.search.active, true); assert.equal(agent.search.sector, 'outer exits'); assert.equal(movement.length, 1);
+  assert.deepEqual([movement[0].x, movement[0].z, movement[0].speed, movement[0].holdRadius], [agent.search.targetX, agent.search.targetZ, agent.search.speed, agent.search.holdRadius]);
+  assert.ok(agent.search.radius <= agent.search.areaRadius);
 });
 
 test('backup rams use one shared contact window and damage the player craft', () => {

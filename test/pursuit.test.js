@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitAviationVisualRange,
   pursuitBackupDelay, pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance,
-  pursuitLostProgress, pursuitLostTime, pursuitSearchRadius, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
+  pursuitLostProgress, pursuitLostTime, pursuitSearchPlan, pursuitSearchRadius, pursuitSightSampleCount, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed,
   pursuitSirenLevel, pursuitSurfaceLineOfSight, pursuitTactic, pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from '../src/pursuit.js';
 
@@ -124,6 +124,35 @@ test('the last-fix search area expands with uncertainty without becoming unbound
   assert.ok(pursuitSearchRadius(5, 999) <= 165);
   const soundFix = pursuitSearchRadius(3, 7, true, 12, 0), staleSoundFix = pursuitSearchRadius(3, 7, true, 12, 3);
   assert.ok(soundFix < lost); assert.ok(staleSoundFix > soundFix); assert.ok(staleSoundFix <= 84);
+});
+
+test('surface units divide the visible search area into retained inner, route, and perimeter sectors', () => {
+  const inner = pursuitSearchPlan(0, 4, 8, 0.35, 12, 100, -50);
+  const route = pursuitSearchPlan(1, 4, 8, 0.35, 12, 100, -50);
+  const perimeter = pursuitSearchPlan(2, 4, 8, 0.35, 12, 100, -50);
+  assert.deepEqual([inner.sector, route.sector, perimeter.sector], ['inner fix', 'probable route', 'outer exits']);
+  assert.ok(inner.radius < route.radius && route.radius < perimeter.radius);
+  for (const plan of [inner, route, perimeter]) {
+    assert.ok(plan.radius <= plan.areaRadius); assert.ok(plan.speed >= 7.5 && plan.speed <= 12);
+    assert.ok(Math.abs(Math.hypot(plan.targetX - 100, plan.targetZ + 50) - plan.radius) < 1e-9);
+  }
+  assert.ok(perimeter.radius > perimeter.areaRadius * 0.72);
+
+  const eastbound = pursuitSearchPlan(1, 4, 8, Math.PI / 2, 12, 100, -50);
+  assert.ok(Math.abs(route.radius - eastbound.radius) < 1e-9);
+  assert.notDeepEqual([route.targetX, route.targetZ], [eastbound.targetX, eastbound.targetZ]);
+
+  const retained = {};
+  assert.equal(pursuitSearchPlan(2, 4, 8, 0.35, 12, 100, -50, true, 12, 0, retained), retained);
+  assert.ok(retained.areaRadius < perimeter.areaRadius); assert.ok(retained.radius < perimeter.radius);
+
+  for (let elapsed = 0; elapsed <= 240; elapsed += 7) {
+    const innerSweep = pursuitSearchPlan(0, 5, 20, 0.7, elapsed, 0, 0);
+    const routeSweep = pursuitSearchPlan(1, 5, 20, 0.7, elapsed, 0, 0);
+    const perimeterSweep = pursuitSearchPlan(2, 5, 20, 0.7, elapsed, 0, 0);
+    assert.ok(innerSweep.radius < routeSweep.radius && routeSweep.radius < perimeterSweep.radius);
+    assert.ok(perimeterSweep.radius <= perimeterSweep.areaRadius);
+  }
 });
 
 test('patrol siren is distance driven, heat aware, and silent outside pursuit', () => {

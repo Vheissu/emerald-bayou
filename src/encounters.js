@@ -13,7 +13,7 @@ import { emitMapMarker } from './mapmarkers.js';
 import {
   canEscapePursuit, pursuitAviationAvailable, pursuitAviationDelay, pursuitAviationVisualHeld, pursuitBackupDelay,
   pursuitChannelClosurePlan, pursuitEngineNoise, pursuitHearingRange, pursuitHornRange, pursuitLostDistance, pursuitLostProgress, pursuitSightSampleCount,
-  pursuitSearchRadius, pursuitSirenLevel, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed, pursuitSurfaceLineOfSight, pursuitTactic,
+  pursuitSearchPlan, pursuitSearchRadius, pursuitSirenLevel, pursuitSoundContact, pursuitSoundUncertainty, pursuitSpeed, pursuitSurfaceLineOfSight, pursuitTactic,
   pursuitUnitCanRam, pursuitUnitCount, pursuitVisualHeld, wantedLevel,
 } from './pursuit.js';
 import { emitWakeStamp } from './wakestamps.js';
@@ -223,8 +223,10 @@ function makeSpotlightRig(rr, boat, scene) {
   return { gunner, gator, eyes, target, light, pool, uniforms };
 }
 
-function boatAgent(mesh) {
-  return { mesh, x: 0, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: 0, targetZ: 0, decisionT: 0, active: false, tactic: { lead: 0, fore: 0, side: 0 } };
+function boatAgent(mesh, searchRole = -1) {
+  const agent = { mesh, x: 0, z: 0, heading: 0, speed: 0, want: 0, turn: 0, targetX: 0, targetZ: 0, decisionT: 0, active: false, tactic: { lead: 0, fore: 0, side: 0 } };
+  if (searchRole >= 0) agent.search = { active: false, role: searchRole, sector: '', targetX: 0, targetZ: 0, radius: 0, areaRadius: 0, speed: 0, holdRadius: 0 };
+  return agent;
 }
 
 export class EncounterDirector {
@@ -308,12 +310,12 @@ export class EncounterDirector {
 
     const patrolBoat = buildSkiff({ crew: true }); recolor(patrolBoat, 0x2d5c4b); patrolBoat.visible = false; this.scene.add(patrolBoat);
     const blue = signalLight(patrolBoat, 0x267cff, -0.25, 1.35, -0.2), red = signalLight(patrolBoat, 0xff2f25, 0.25, 1.35, -0.2);
-    const patrol = { boat: patrolBoat, blue, red, agent: boatAgent(patrolBoat) };
+    const patrol = { boat: patrolBoat, blue, red, agent: boatAgent(patrolBoat, 0) };
     const patrolBackups = [0, 1].map(index => {
       const boat = buildSkiff({ crew: true, driverModel: false }); recolor(boat, index ? 0x35614f : 0x315848); boat.name = index ? 'FWC Shallow Water 4' : 'FWC Marine 12'; boat.visible = false; this.scene.add(boat);
       const blueBulb = signalBulb(boat, 0x267cff, -0.25, 1.35, -0.2), redBulb = signalBulb(boat, 0xff2f25, 0.25, 1.35, -0.2);
       const closure = { active: false, holding: false, announced: false, x: 0, z: 0, courseX: 0, courseZ: -1, heading: 0, remaining: 0, cooldown: index ? 1.8 : 0, plan: { eligible: false, lead: 0, duration: 0, cooldown: 0, approachSpeed: 0, setupTimeout: 0 } };
-      return { boat, blueBulb, redBulb, agent: boatAgent(boat), closure, index, role: index + 1 };
+      return { boat, blueBulb, redBulb, agent: boatAgent(boat, index + 1), closure, index, role: index + 1 };
     });
 
     const smugglerBoat = buildSkiff({ crew: true }); recolor(smugglerBoat, 0x4b3527); smugglerBoat.visible = false; this.scene.add(smugglerBoat);
@@ -1201,7 +1203,8 @@ export class EncounterDirector {
     const fresh = e.state !== 'pursuit'; e.state = 'pursuit'; e.wanted = true; e.lostT = 0; e.surrender = 0;
     if (fresh) {
       this.resetPatrolSight(); this.resetPatrolSound(); this.resetPatrolSearch();
-      e.pursuit = 0; e.tacticT = 0; e.tacticSide = Math.random() < 0.5 ? -1 : 1; e.lastKnownX = this.phys.pos.x; e.lastKnownZ = this.phys.pos.y;
+      if (this.rigs.patrol.agent.search) this.rigs.patrol.agent.search.active = false;
+      e.pursuit = 0; e.tacticT = 0; e.tacticSide = Math.random() < 0.5 ? -1 : 1; e.lastKnownX = this.phys.pos.x; e.lastKnownZ = this.phys.pos.y; e.lastKnownHeading = this.phys.heading;
       e.backupRequested = 0; e.backupCount = 0; e.units = 1; e.backupDue[0] = Infinity; e.backupDue[1] = Infinity; this.resetPatrolBackups();
       e.aviationRequested = false; e.aviationDue = Infinity; e.aviationActive = false; e.aviationVisual = false; e.aviationBeamActive = false;
       e.aviationLastSeen = 0; e.aviationAircraftDistance = Infinity; e.aviationBeamDistance = Infinity; this.resetPatrolAviation();
@@ -1239,7 +1242,7 @@ export class EncounterDirector {
   resetPatrolBackups() {
     if (!this.rigs?.patrolBackups) return;
     for (const R of this.rigs.patrolBackups) {
-      R.agent.active = false; R.boat.visible = false; R.blueBulb.visible = false; R.redBulb.visible = false;
+      R.agent.active = false; if (R.agent.search) R.agent.search.active = false; R.boat.visible = false; R.blueBulb.visible = false; R.redBulb.visible = false;
       if (R.closure) Object.assign(R.closure, { active: false, holding: false, announced: false, remaining: 0, cooldown: R.index ? 1.8 : 0 });
     }
   }
@@ -1330,7 +1333,7 @@ export class EncounterDirector {
     const sharedVisual = surfaceVisual || priorAirVisual;
     let targetX, targetZ;
     if (sharedVisual) {
-      e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; e.aviationLastSeen = 0;
+      e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; e.lastKnownHeading = p.heading; e.aviationLastSeen = 0;
       const phase = e.pursuit * 0.23 + e.aviationSide * 0.9, radius = 94 + Math.min(28, p.speed * 1.4);
       targetX = p.pos.x + p.vel.x * 2.1 + Math.cos(phase) * radius;
       targetZ = p.pos.y + p.vel.y * 2.1 + Math.sin(phase) * radius;
@@ -1354,7 +1357,7 @@ export class EncounterDirector {
     const beamDistance = e.aviationBeamActive ? Math.hypot(e.beamX - p.pos.x, e.beamZ - p.pos.y) : Infinity;
     const airVisual = pursuitAviationVisualHeld(aircraftDistance, beamDistance, heat, restricted, storm, regionId, true);
     e.aviationAircraftDistance = aircraftDistance; e.aviationBeamDistance = beamDistance; e.aviationVisual = airVisual;
-    if (airVisual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; e.aviationLastSeen = 0; }
+    if (airVisual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; e.lastKnownHeading = p.heading; e.aviationLastSeen = 0; }
     let audible = clamp(1 - (aircraftDistance - 35) / 620); audible *= audible * 0.86; this.audio.helicopter(audible, 0.96 + Math.min(0.16, Math.hypot(e.hvx, e.hvz) / 150), e.hx, e.hz);
     return surfaceVisual || airVisual;
   }
@@ -1362,6 +1365,7 @@ export class EncounterDirector {
   startPatrol(at, options = {}) {
     this.resetPatrolBackups(); this.resetPatrolAviation(); this.resetPatrolSight(); this.resetPatrolSound(); this.resetPatrolSearch();
     const A = this.rigs.patrol.agent; Object.assign(A, { x: at.x, z: at.z, heading: at.heading, speed: Number(options.speed) || 4, want: 8, turn: 0, active: true });
+    if (A.search) A.search.active = false;
     A.decisionT = 0; A.mesh.position.set(A.x, this.water.waveHeight(A.x, A.z, 0) - 0.05, A.z); A.mesh.rotation.y = A.heading;
     A.mesh.visible = true;
     const goodwill = Number(this.game.save.goodwill) || 0, fwcStanding = this.reputation ? this.reputation.score('fwc') : 0;
@@ -1370,7 +1374,7 @@ export class EncounterDirector {
       wanted: Boolean(options.pursuit || (this.law && this.law.attention >= 1.2) || fwcStanding <= -4), recognized: fwcStanding >= 2 || goodwill >= 4,
       lostT: 0, surrender: 0, tacticT: 0, tacticSide: Math.random() < 0.5 ? -1 : 1, contactCd: 0, ramCd: 0, ramHits: options.impact ? 1 : 0,
       surfaceVisual: true, surfaceOccluded: false, visual: true, soundContact: false, sightCallCd: 0,
-      lastKnownX: this.phys.pos.x, lastKnownZ: this.phys.pos.y, backupRequested: 0, backupCount: 0, units: 1, backupDue: [Infinity, Infinity],
+      lastKnownX: this.phys.pos.x, lastKnownZ: this.phys.pos.y, lastKnownHeading: this.phys.heading, backupRequested: 0, backupCount: 0, units: 1, backupDue: [Infinity, Infinity],
       aviationRequested: false, aviationDue: Infinity, aviationActive: false, aviationVisual: false, aviationBeamActive: false,
       aviationLastSeen: 0, aviationAircraftDistance: Infinity, aviationBeamDistance: Infinity,
     };
@@ -2357,6 +2361,10 @@ export class EncounterDirector {
         uncertainty: e ? finite(this._patrolSound.uncertainty) : null, fixAge: e ? finite(this._patrolSound.fixAge) : null,
       },
       searchArea: { active: Boolean(e && this._patrolSearch.active), radius: e ? finite(this._patrolSearch.r) : null, centerX: e ? finite(this._patrolSearch.x) : null, centerZ: e ? finite(this._patrolSearch.z) : null },
+      surfaceSearch: [
+        { callSign: 'FWC 27', active: Boolean(e && this.rigs.patrol.agent.search?.active), sector: this.rigs.patrol.agent.search?.sector || '', targetX: finite(this.rigs.patrol.agent.search?.targetX), targetZ: finite(this.rigs.patrol.agent.search?.targetZ), radius: finite(this.rigs.patrol.agent.search?.radius), areaRadius: finite(this.rigs.patrol.agent.search?.areaRadius) },
+        ...this.rigs.patrolBackups.map((unit, index) => ({ callSign: index ? 'Shallow Water 4' : 'Marine 12', active: Boolean(e && unit.agent.search?.active), sector: unit.agent.search?.sector || '', targetX: finite(unit.agent.search?.targetX), targetZ: finite(unit.agent.search?.targetZ), radius: finite(unit.agent.search?.radius), areaRadius: finite(unit.agent.search?.areaRadius) })),
+      ],
       channelClosure: { active: Boolean(e && closure?.active), holding: Boolean(e && closure?.holding), cooldown: e && closure ? finite(closure.cooldown) : null },
       aviation: {
         requested: Boolean(e?.aviationRequested), active: Boolean(e?.aviationActive), directVisual: Boolean(e?.aviationVisual), beamActive: Boolean(e?.aviationBeamActive),
@@ -2387,6 +2395,7 @@ export class EncounterDirector {
 
   updatePatrolBackup(e, R, dt, t, heat, stars, visual) {
     const A = R.agent, p = this.phys; if (!A.active) return Infinity;
+    if (visual && A.search) A.search.active = false;
     const C = R.closure; if (C) C.cooldown = Math.max(0, C.cooldown - dt);
     let d = Math.hypot(A.x - p.pos.x, A.z - p.pos.y), tx, tz, maxSpeed, holdRadius = 0;
     if (C?.active) {
@@ -2416,8 +2425,9 @@ export class EncounterDirector {
       tx = p.pos.x + p.vel.x * tactic.lead + pfx * tactic.fore + prx * tactic.side; tz = p.pos.y + p.vel.y * tactic.lead + pfz * tactic.fore + prz * tactic.side;
       maxSpeed = Math.min(19.5, pursuitSpeed(heat, p.speed) * (R.role === 1 ? 1.025 : 0.985));
     } else {
-      const phase = e.pursuit * (0.2 + R.index * 0.035) + R.index * Math.PI, radius = 18 + stars * 4.5 + R.index * 8;
-      tx = e.lastKnownX + Math.cos(phase) * radius; tz = e.lastKnownZ + Math.sin(phase) * radius; maxSpeed = 8.6 + stars * 0.65; holdRadius = 10;
+      const sound = this._patrolSound || {}, search = A.search;
+      if (!search.active || A.decisionT <= dt) pursuitSearchPlan(R.role, heat, e.lostT, e.lastKnownHeading, e.pursuit, e.lastKnownX, e.lastKnownZ, e.soundContact, sound.uncertainty, sound.fixAge, search);
+      tx = search.targetX; tz = search.targetZ; maxSpeed = search.speed; holdRadius = search.holdRadius;
     }
     const lead = this.rigs.patrol.agent;
     if (lead.active && lead !== A) {
@@ -2447,13 +2457,15 @@ export class EncounterDirector {
       const surfaceVisual = this.patrolSurfaceVisual(0, lostDistance), visual = this.updatePatrolAviation(e, dt, t, surfaceVisual, heat);
       e.surfaceVisual = surfaceVisual; e.surfaceOccluded = Boolean(this._patrolSight.occluded);
       e.soundContact = this.patrolSurfaceSound(e, dt, heat, visual);
-      if (visual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; }
+      if (visual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; e.lastKnownHeading = p.heading; if (A.search) A.search.active = false; }
       if (visual) {
         const tactic = pursuitTactic(0, heat, d, e.tacticSide, A.tactic), pfx = -Math.sin(p.heading), pfz = -Math.cos(p.heading), prx = Math.cos(p.heading), prz = -Math.sin(p.heading);
         tx = p.pos.x + p.vel.x * tactic.lead + pfx * tactic.fore + prx * tactic.side; tz = p.pos.y + p.vel.y * tactic.lead + pfz * tactic.fore + prz * tactic.side;
         maxSpeed = pursuitSpeed(heat, p.speed); holdRadius = 0;
       } else {
-        const phase = e.pursuit * 0.17, radius = 14 + stars * 3.6; tx = e.lastKnownX + Math.cos(phase) * radius; tz = e.lastKnownZ + Math.sin(phase) * radius; maxSpeed = 8.4 + stars * 0.68; holdRadius = 10;
+        const sound = this._patrolSound || {}, search = A.search;
+        if (!search.active || A.decisionT <= dt) pursuitSearchPlan(0, heat, e.lostT, e.lastKnownHeading, e.pursuit, e.lastKnownX, e.lastKnownZ, e.soundContact, sound.uncertainty, sound.fixAge, search);
+        tx = search.targetX; tz = search.targetZ; maxSpeed = search.speed; holdRadius = search.holdRadius;
       }
       e.visual = visual;
     }
@@ -2491,7 +2503,12 @@ export class EncounterDirector {
       this.audio.patrolSiren(pursuitSirenLevel(nearest, heat, true), heat, sirenX, sirenZ);
       const lostDistance = pursuitLostDistance(heat, this.environment.restrictedVisibility || 0, this.environment.values.storm || 0), surfaceVisual = this.patrolSurfaceVisual(dt, lostDistance), visual = surfaceVisual || Boolean(e.aviationVisual);
       e.surfaceVisual = surfaceVisual; e.surfaceOccluded = Boolean(this._patrolSight.occluded);
-      e.visual = visual; e.soundContact = !visual && Boolean(e.soundContact); if (visual) { e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; }
+      e.visual = visual; e.soundContact = !visual && Boolean(e.soundContact);
+      if (visual) {
+        e.lastKnownX = p.pos.x; e.lastKnownZ = p.pos.y; e.lastKnownHeading = p.heading;
+        if (A.search) A.search.active = false;
+        for (const unit of this.rigs.patrolBackups) if (unit.agent.search) unit.agent.search.active = false;
+      }
       this.law?.setPursuitVisual?.(visual); this.reportPatrolVisualTransition(e, priorSharedVisual, visual);
       const stopped = nearest < 19 && p.speed * MPH < 4.5 && !p.airborne && p.wipeT <= 0;
       e.surrender = stopped ? e.surrender + dt : Math.max(0, e.surrender - dt * 1.4);

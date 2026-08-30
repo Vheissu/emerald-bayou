@@ -165,6 +165,30 @@ export function pursuitSearchRadius(attention, lostFor = 0, soundContact = false
   return clamp(22 + stars * 4 + lost * 8.5, 26, 105 + stars * 12);
 }
 
+// Surface units divide one last-fix area instead of stacking on the same orbit. Callers pass a retained output
+// record during play so coordinating the search does not create garbage at frame cadence.
+export function pursuitSearchPlan(role, attention, lostFor = 0, lastHeading = 0, elapsed = 0, centerX = 0, centerZ = 0, soundContact = false, soundUncertainty = 0, fixAge = 0, out = {}) {
+  const unit = clamp(Math.floor(Number(role) || 0), 0, 2), stars = wantedLevel(attention);
+  const areaRadius = pursuitSearchRadius(attention, lostFor, soundContact, soundUncertainty, fixAge);
+  const sweep = areaRadius * (unit === 0 ? 0.34 : unit === 1 ? 0.56 : 0.88);
+  const sideScale = unit === 0 ? 0.75 : unit === 1 ? 0.72 : 0.86;
+  const forwardBias = areaRadius * (unit === 1 ? 0.15 : unit === 2 ? 0.06 : 0);
+  const phaseOffset = unit === 1 ? Math.PI * 2 / 3 : unit === 2 ? -Math.PI * 2 / 3 : 0;
+  const rate = (soundContact ? 0.19 : 0.14) * (1 + unit * 0.09);
+  const phase = Math.max(0, Number(elapsed) || 0) * rate + phaseOffset;
+  const fore = Math.cos(phase) * sweep + forwardBias, side = Math.sin(phase) * sweep * sideScale;
+  const heading = Number.isFinite(lastHeading) ? lastHeading : 0;
+  const fx = -Math.sin(heading), fz = -Math.cos(heading), rx = Math.cos(heading), rz = -Math.sin(heading);
+  const x = Number.isFinite(centerX) ? centerX : 0, z = Number.isFinite(centerZ) ? centerZ : 0;
+
+  out.active = true; out.role = unit; out.sector = unit === 0 ? 'inner fix' : unit === 1 ? 'probable route' : 'outer exits';
+  out.targetX = x + fx * fore + rx * side; out.targetZ = z + fz * fore + rz * side;
+  out.radius = Math.hypot(fore, side); out.areaRadius = areaRadius;
+  out.speed = clamp(7.2 + stars * 0.58 + unit * 0.45 + (soundContact ? 0.5 : 0), 7.5, 12);
+  out.holdRadius = unit === 0 ? 6.5 : unit === 1 ? 8.5 : 10.5;
+  return out;
+}
+
 export function pursuitLostDistance(attention, restrictedVisibility = 0, storm = 0) {
   const stars = wantedLevel(attention), concealment = clamp(restrictedVisibility, 0, 1) * 58 + clamp(storm, 0, 1) * 24;
   return clamp(165 + stars * 24 - concealment, 105, 275);
