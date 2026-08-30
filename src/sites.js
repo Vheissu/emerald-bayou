@@ -4,6 +4,7 @@ import { buildDock } from './tower.js';
 import { buildModelBoatFallback, buildSkiff } from './npc.js';
 import * as TEX from './textures.js';
 import { person, animatePerson, wave, aim, fishingUpdate, cooler, chair, bucket, fishingLine } from './folk.js';
+import { heroTreeFallback } from './markers.js';
 import { spawn, SPEC } from './models.js';
 import { cachedResource, sharedResource } from './cache.js';
 import { registerWetMaterial } from './surfacewetness.js';
@@ -301,7 +302,7 @@ export function buildSite(s, T) {
     dock.position.set(s.bank.x, 0, s.bank.z); dock.rotation.y = Math.atan2(dx / l, dz / l) + Math.PI; g.add(dock);
     if (rr() < 0.7) { const sk = buildSkiff({ crew: false }); const side = rr() < 0.5 ? -1 : 1; sk.position.set(s.bank.x + dx / l * 9 + (-dz / l) * side * 2.4, -0.05, s.bank.z + dz / l * 9 + (dx / l) * side * 2.4); sk.rotation.y = Math.atan2(dx / l, dz / l) + (rr() - 0.5) * 0.3; sk.rotation.order = 'YXZ'; g.add(sk); g.userData.skiff = sk; g.userData.skiffWater = { x: sk.position.x, z: sk.position.z, heading: sk.rotation.y }; }
     // a big live oak or two behind the house
-    if (rr() < 0.75) { const ry = h.rotation.y; const n = 1 + (rr() < 0.4 ? 1 : 0); for (let i = 0; i < n; i++) { const lx = (i ? 1 : -1) * (4 + rr() * 3), lz = -(6 + rr() * 4); const wx = s.x + lx * Math.cos(ry) + lz * Math.sin(ry), wz = s.z - lx * Math.sin(ry) + lz * Math.cos(ry); const tr = spawn('tree_c'); tr.position.set(wx, T.heightAt(wx, wz) - 0.1, wz); tr.rotation.y = rr() * 6.28; tr.scale.setScalar(0.85 + rr() * 0.35); g.add(tr); } }
+    if (rr() < 0.75) { const ry = h.rotation.y; const n = 1 + (rr() < 0.4 ? 1 : 0); for (let i = 0; i < n; i++) { const lx = (i ? 1 : -1) * (4 + rr() * 3), lz = -(6 + rr() * 4); const wx = s.x + lx * Math.cos(ry) + lz * Math.sin(ry), wz = s.z - lx * Math.sin(ry) + lz * Math.cos(ry); const tr = spawn('tree_c', heroTreeFallback()); tr.position.set(wx, T.heightAt(wx, wz) - 0.1, wz); tr.rotation.y = rr() * 6.28; tr.scale.setScalar(0.85 + rr() * 0.35); g.add(tr); } }
     // a kid or an old man off the end of the dock with a rod
     if (rr() < 0.55) { const p = person(rr, { pose: 'sitEdge', rod: true, hat: rr() < 0.7 }); p.position.set(0.72, 0.81, -12.6); p.rotation.y = Math.PI / 2; dock.add(p); g.userData.people.push(p); const bk = bucket(); bk.position.set(-0.4, 0.81, -12.0); dock.add(bk); }
     s.colliders = [{ ax: s.bank.x, az: s.bank.z, bx: s.bank.x + dx / l * 14, bz: s.bank.z + dz / l * 14, r: 1.1, tag: 'dock' }, { x: s.x, z: s.z, r: 3.6, tag: 'house' }];

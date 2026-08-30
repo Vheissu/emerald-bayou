@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise.js';
-import { shack, crabFloat, fuelDrum } from './markers.js';
+import { shack, crabFloat, fuelDrum, heroTreeFallback } from './markers.js';
 import { buildDock } from './tower.js';
 import { buildSkiff } from './npc.js';
 import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
@@ -113,7 +113,7 @@ export class World {
     for (let i = 0; i < 2 + Math.floor(rr() * 3); i++) { const d = fuelDrum(); const a = c.ang + (rr() - 0.5) * 1.6, r = 4 + rr() * 5; const px = c.x + Math.cos(a) * r, pz = c.z + Math.sin(a) * r; d.position.set(px, T.heightAt(px, pz) - 0.05, pz); d.rotation.y = rr() * 6; g.add(d); }
     for (let i = 0; i < 3; i++) { const f = crabFloat(); const a = rr() * 6.28, r = 2 + rr() * 3; const px = c.x + Math.cos(a) * r, pz = c.z + Math.sin(a) * r; f.position.set(px, T.heightAt(px, pz) + 0.1, pz); f.rotation.z = 1.2; f.rotation.y = rr() * 6; g.add(f); }
     // a hero tree over the shack
-    if (rr() < 0.7) { const a = c.ang + (rr() - 0.5) * 1.0; const px = c.x + Math.cos(a) * (7 + rr() * 3), pz = c.z + Math.sin(a) * (7 + rr() * 3); const tr = spawn('tree_c'); tr.position.set(px, T.heightAt(px, pz) - 0.1, pz); tr.rotation.y = rr() * 6.28; tr.scale.setScalar(0.8 + rr() * 0.4); g.add(tr); }
+    if (rr() < 0.7) { const a = c.ang + (rr() - 0.5) * 1.0; const px = c.x + Math.cos(a) * (7 + rr() * 3), pz = c.z + Math.sin(a) * (7 + rr() * 3); const tr = spawn('tree_c', heroTreeFallback()); tr.position.set(px, T.heightAt(px, pz) - 0.1, pz); tr.rotation.y = rr() * 6.28; tr.scale.setScalar(0.8 + rr() * 0.4); g.add(tr); }
     // the camp's people: somebody fishing off the dock, somebody at the shack sorting gear
     g.userData.people = []; g.userData.site = c;
     if (rr() < 0.6) { const p = person(rr, { pose: 'sitEdge', rod: true }); p.position.set(0.72, 0.81, -12.6); p.rotation.y = Math.PI / 2; dock.add(p); g.userData.people.push(p); const bk = bucket(); bk.position.set(-0.4, 0.81, -12.0); dock.add(bk); }

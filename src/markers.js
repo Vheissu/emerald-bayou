@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cachedResource } from './cache.js';
 import { registerWetMaterial } from './surfacewetness.js';
 
@@ -36,6 +37,70 @@ const capsuleGeometry = (r, l, caps, radial) => geometry('capsule', [r, l, caps,
 const planeGeometry = (w, h) => geometry('plane', [w, h], () => new THREE.PlaneGeometry(w, h));
 const torusGeometry = (r, tube, radial, tubular) => geometry('torus', [r, tube, radial, tubular], () => new THREE.TorusGeometry(r, tube, radial, tubular));
 const material = (key, params) => cachedResource(materialCache, key, () => registerWetMaterial(new THREE.MeshStandardMaterial(params)));
+
+function branchGeometry(start, end, startRadius, endRadius) {
+  const direction = end.clone().sub(start), length = direction.length();
+  const branch = new THREE.CylinderGeometry(endRadius, startRadius, length, 8, 1);
+  branch.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize()));
+  branch.translate((start.x + end.x) * 0.5, (start.y + end.y) * 0.5, (start.z + end.z) * 0.5);
+  return branch;
+}
+
+function makeHeroTreeWoodGeometry() {
+  const branches = [
+    branchGeometry(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 6.6, 0), 0.78, 0.42),
+    branchGeometry(new THREE.Vector3(-0.12, 4.5, 0), new THREE.Vector3(-2.8, 8.1, 0.4), 0.35, 0.13),
+    branchGeometry(new THREE.Vector3(0.12, 4.8, 0), new THREE.Vector3(2.8, 8.2, 0.25), 0.34, 0.13),
+    branchGeometry(new THREE.Vector3(0, 5.2, -0.1), new THREE.Vector3(-1.1, 8.5, -2.1), 0.3, 0.11),
+    branchGeometry(new THREE.Vector3(0.05, 5.1, 0.1), new THREE.Vector3(1.3, 8.6, 2), 0.3, 0.11),
+  ];
+  const merged = mergeGeometries(branches, false);
+  for (const branch of branches) branch.dispose();
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+function makeHeroTreeCrownGeometry() {
+  const lobes = [
+    [-2.9, 8.7, 0.4, 3.0, 2.05, 2.35, 0x314c2a],
+    [-1.1, 9.8, -0.7, 3.15, 2.25, 2.45, 0x3b5b30],
+    [1.15, 9.9, 0.2, 3.3, 2.3, 2.55, 0x3e6132],
+    [3.05, 8.7, 0.35, 2.85, 2.0, 2.3, 0x304d29],
+    [-1.05, 8.55, -2.05, 2.55, 1.75, 2.05, 0x294526],
+    [1.35, 8.75, 2.0, 2.6, 1.8, 2.0, 0x35552d],
+    [0, 10.8, -0.2, 2.45, 1.85, 2.1, 0x456a36],
+  ];
+  const crowns = lobes.map(([x, y, z, sx, sy, sz, tint], index) => {
+    const crown = new THREE.IcosahedronGeometry(1, 1);
+    crown.rotateY(index * 0.73); crown.rotateZ((index % 3 - 1) * 0.12); crown.scale(sx, sy, sz); crown.translate(x, y, z);
+    const color = new THREE.Color(tint), colors = new Float32Array(crown.getAttribute('position').count * 3);
+    for (let vertex = 0; vertex < colors.length; vertex += 3) color.toArray(colors, vertex);
+    crown.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return crown;
+  });
+  const merged = mergeGeometries(crowns, false);
+  for (const crown of crowns) crown.dispose();
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+// Low-memory profiles keep the authored camp and homestead silhouettes even when the expensive hero-tree GLB is
+// disabled. Every fallback clone shares these two compact GPU resources: one branched trunk and one broad oak crown.
+export function heroTreeFallback() {
+  const group = new THREE.Group(); group.name = 'hero-tree-fallback';
+  const wood = new THREE.Mesh(
+    geometry('hero-tree-wood', [], makeHeroTreeWoodGeometry),
+    material('hero-tree-wood', { color: 0x66523b, roughness: 0.98 }),
+  );
+  const crown = new THREE.Mesh(
+    geometry('hero-tree-crown', [], makeHeroTreeCrownGeometry),
+    material('hero-tree-crown', { color: 0xffffff, roughness: 0.93, vertexColors: true, flatShading: true }),
+  );
+  wood.name = 'hero-tree-wood'; crown.name = 'hero-tree-crown';
+  wood.castShadow = wood.receiveShadow = crown.castShadow = crown.receiveShadow = true;
+  group.add(wood, crown); group.userData.fallbackModel = 'tree_c';
+  return group;
+}
 
 export class Beacon {
   constructor(color = 0xf07a2e, radius = 5, height = 34) {

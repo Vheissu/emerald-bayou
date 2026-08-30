@@ -41,10 +41,11 @@ test('older-hardware profiles do not block on optional models or the full shader
   assert.ok(performance.modelBatchDelayMs > balanced.modelBatchDelayMs);
   assert.deepEqual(fallback.disabledModels, OPTIONAL_MODEL_NAMES);
   assert.deepEqual(performance.disabledModels, fallback.disabledModels);
-  assert.deepEqual(balanced.disabledModels, []);
+  assert.deepEqual(balanced.disabledModels, ['tree_c']);
+  assert.equal(balanced.modelConcurrency, 1);
   assert.equal(fallback.disabledModels.length, 10);
   assert.deepEqual([fallback.solidGrass, performance.solidGrass, balanced.solidGrass], ['off', 'off', 'deferred']);
-  assert.deepEqual([fallback.modelPressureMaxWaitMs, performance.modelPressureMaxWaitMs, balanced.modelPressureMaxWaitMs], [12000, 8000, 4000]);
+  assert.deepEqual([fallback.modelPressureMaxWaitMs, performance.modelPressureMaxWaitMs, balanced.modelPressureMaxWaitMs], [12000, 8000, 6000]);
 });
 
 test('older-hardware profiles allocate smaller bounded weather and spray pools', () => {
