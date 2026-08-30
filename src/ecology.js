@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WORLD_HALF } from './terrain.js';
 import { applyResidentRoutines } from './residentroutines.js';
+import { sampleWakeFields } from './wakefield.js';
 
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
@@ -52,7 +53,16 @@ export class Ecology {
     this.visibilityT = 0; this.frogT = 8 + Math.random() * 10;
     this.residentRoutineInput = { role: 'camp', seed: 0.5, day: 1, hour: 12, storm: 0, rain: 0, wind: 0, distance: Infinity, playerSpeed: 0, attention: 0, pursuit: false };
     this.residentRoutineStats = { groups: 0, actors: 0, inside: 0, outside: 0, watching: 0, bracing: 0, passes: 0 };
-    this.trafficWildlifeT = 0; this.trafficWildlifeStats = { passes: 0, boats: 0, manateeAlerts: 0, waderFlushes: 0, gatorSlides: 0, gatorDives: 0 };
+    this.trafficWildlifeT = 0; this.trafficWildlifeStats = { passes: 0, boats: 0, directedBoats: 0, manateeAlerts: 0, waderFlushes: 0, gatorSlides: 0, gatorDives: 0 };
+    this.directedVesselSources = [];
+    this.directedFeedingProbe = { x: 0, z: 0, distance: Infinity, speed: 0, propWash: false };
+    this._wildlifeVesselVisitor = (x, z, speed, kind) => this.applyTrafficWildlifeVessel(x, z, speed, kind, true);
+    this._feedingVesselVisitor = (x, z, speed) => {
+      if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(speed) || speed < 0.8) return;
+      const probe = this.directedFeedingProbe, distance = Math.hypot(x - probe.x, z - probe.z);
+      if (distance < probe.distance) { probe.distance = distance; probe.speed = speed; }
+      if (distance < 23 && speed > 5.2) probe.propWash = true;
+    };
     this.bio = 0; this.bioPotential = 0; this.bioContrast = 1; this.bioOverride = null; this.radio = null;
     this.nature = this.game ? (this.game.save.nature ||= {}) : {};
     this.feeding = { active: false, state: 'idle', x: 0, z: 0, age: 0, duration: 0, boilT: 0, safetyT: 0, trafficT: 0, seen: false, observed: false, quietT: 0, scatterT: 0, reason: '', potential: 0, intensity: 1, scatter: 0 };
@@ -177,6 +187,7 @@ export class Ecology {
       if (!reason && F.trafficT <= 0) {
         F.trafficT = Math.max(0.04, F.trafficT + 0.2);
         reason = trafficFeedingDisturbance(traffic.boats, F.x, F.z, traffic.wakeHeightAt(F.x, F.z, t));
+        if (!reason) reason = this.directedFeedingDisturbance(F.x, F.z, t);
       }
       if (reason) this.scatterFeeding(reason);
       else if (this.environment.values.storm > 0.68 || this.environment.values.wind > 16) this.scatterFeeding();
@@ -239,29 +250,57 @@ export class Ecology {
 
   residentRoutineSnapshot() { return { ...this.residentRoutineStats }; }
 
+  setDirectedVesselSources(sources = []) {
+    this.directedVesselSources = Array.isArray(sources) ? sources : [];
+    return this;
+  }
+
+  visitDirectedVessels(visitor) {
+    const sources = this.directedVesselSources;
+    for (let i = 0; i < sources.length; i++) sources[i]?.visitActiveVessels?.(visitor);
+  }
+
+  applyTrafficWildlifeVessel(x, z, speed, kind = 'skiff', directed = false) {
+    if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(speed) || speed < 0.8) return false;
+    const stats = this.trafficWildlifeStats;
+    stats.boats++; if (directed) stats.directedBoats++;
+    if (speed > 1.9) stats.waderFlushes += this.waders?.flushNear?.(x, z, Math.min(34, 14 + speed * 2), 'traffic') || 0;
+    if (speed > 1.2 && this.gators?.disturbByBoat) {
+      const disturbed = this.gators.disturbByBoat(x, z, speed, 'traffic');
+      stats.gatorSlides += disturbed.slides; stats.gatorDives += disturbed.dives;
+    }
+    if (!this.manatees?.list) return true;
+    const reach = kind === 'canoe' ? 18 : 34 + Math.min(12, speed * 1.4);
+    for (let i = 0; i < this.manatees.list.length; i++) {
+      const m = this.manatees.list[i]; if (!m?.pos || m.held || m.trafficAlertT > 0) continue;
+      const distance = Math.hypot(m.pos.x - x, m.pos.z - z);
+      if (distance >= reach || (speed <= (kind === 'canoe' ? 1.05 : 1.35) && distance >= 10)) continue;
+      this.manatees.alert(m, x, z, Math.min(1.45, 0.45 + speed / 10)); m.trafficAlertT = 5; stats.manateeAlerts++;
+    }
+    return true;
+  }
+
+  directedFeedingDisturbance(x, z, t) {
+    const probe = this.directedFeedingProbe;
+    probe.x = x; probe.z = z; probe.distance = Infinity; probe.speed = 0; probe.propWash = false;
+    this.visitDirectedVessels(this._feedingVesselVisitor);
+    if (!Number.isFinite(probe.distance)) return '';
+    if (probe.propWash) return 'traffic-prop-wash';
+    const wake = sampleWakeFields(this.directedVesselSources, x, z, t);
+    return probe.distance < 42 && Math.abs(wake) > 0.052 ? 'traffic-wake' : '';
+  }
+
   updateTrafficWildlife(dt) {
     this.trafficWildlifeT -= dt; if (this.trafficWildlifeT > 0) return this.trafficWildlifeStats;
     this.trafficWildlifeT = Math.max(0.04, this.trafficWildlifeT + 0.2);
     const stats = this.trafficWildlifeStats, boats = this.life?.traffic?.boats || [];
-    stats.passes++; stats.boats = 0;
+    stats.passes++; stats.boats = 0; stats.directedBoats = 0;
     for (let i = 0; i < boats.length; i++) {
       const boat = boats[i];
       if (!boat?.active || boat.collision?.active || boat.assisting || boat.state === 'sheltered' || boat.speed < 0.8) continue;
-      stats.boats++;
-      if (boat.speed > 1.9) stats.waderFlushes += this.waders?.flushNear?.(boat.x, boat.z, Math.min(34, 14 + boat.speed * 2), 'traffic') || 0;
-      if (boat.speed > 1.2 && this.gators?.disturbByBoat) {
-        const disturbed = this.gators.disturbByBoat(boat.x, boat.z, boat.speed, 'traffic');
-        stats.gatorSlides += disturbed.slides; stats.gatorDives += disturbed.dives;
-      }
-      if (!this.manatees?.list) continue;
-      const reach = boat.kind === 'canoe' ? 18 : 34 + Math.min(12, boat.speed * 1.4);
-      for (let j = 0; j < this.manatees.list.length; j++) {
-        const m = this.manatees.list[j]; if (!m?.pos || m.held || m.trafficAlertT > 0) continue;
-        const d = Math.hypot(m.pos.x - boat.x, m.pos.z - boat.z);
-        if (d >= reach || (boat.speed <= (boat.kind === 'canoe' ? 1.05 : 1.35) && d >= 10)) continue;
-        this.manatees.alert(m, boat.x, boat.z, Math.min(1.45, 0.45 + boat.speed / 10)); m.trafficAlertT = 5; stats.manateeAlerts++;
-      }
+      this.applyTrafficWildlifeVessel(boat.x, boat.z, boat.speed, boat.kind, false);
     }
+    this.visitDirectedVessels(this._wildlifeVesselVisitor);
     return stats;
   }
 

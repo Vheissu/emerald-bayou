@@ -442,6 +442,20 @@ export class StoryDirector {
     return clampWakeHeight(height, 0.28);
   }
 
+  visitActiveVessels(visitor) {
+    const passageAgent = this.passage?.agent;
+    if (this.passage?.chaseActive && passageAgent?.active) visitor(passageAgent.x, passageAgent.z, passageAgent.speed, 'skiff');
+    const stormAgents = this.stormLine?.agents;
+    if (stormAgents) for (let i = 0; i < stormAgents.length; i++) {
+      const agent = stormAgents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff');
+    }
+    const contractAgents = this.contracts?.agents;
+    if (contractAgents) for (let i = 0; i < contractAgents.length; i++) {
+      const agent = contractAgents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff');
+    }
+    if (this.departT > 0) visitor(this.departPoint.x, this.departPoint.z, this.departSpeed, 'skiff');
+  }
+
   stamps(out) {
     this.passage?.stamps(out);
     this.stormLine?.stamps(out);

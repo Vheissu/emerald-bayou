@@ -41,17 +41,38 @@ test('a resident hull sends basking and swimming alligators clear without touchi
 test('the low-frequency traffic pass coordinates wildlife without allocating a new stats record', () => {
   let manateeAlerts = 0, flushSource = '', gatorSource = '';
   const manatee = { pos: new THREE.Vector3(12, 0, 0), trafficAlertT: 0 };
-  const stats = { passes: 0, boats: 0, manateeAlerts: 0, waderFlushes: 0, gatorSlides: 0, gatorDives: 0 };
-  const ecology = Object.assign(Object.create(Ecology.prototype), {
-    trafficWildlifeT: 0, trafficWildlifeStats: stats,
+  const ecology = new Ecology({
     life: { traffic: { boats: [{ active: true, x: 0, z: 0, speed: 7, kind: 'john', state: 'transit', assisting: false, collision: { active: false } }] } },
     waders: { flushNear(x, z, radius, source) { flushSource = source; return 2; } },
     gators: { disturbByBoat(x, z, speed, source) { gatorSource = source; return { slides: 1, dives: 1 }; } },
     manatees: { list: [manatee], alert() { manateeAlerts++; } },
   });
+  const stats = ecology.trafficWildlifeStats;
 
   assert.equal(ecology.updateTrafficWildlife(0.21), stats);
-  assert.deepEqual(stats, { passes: 1, boats: 1, manateeAlerts: 1, waderFlushes: 2, gatorSlides: 1, gatorDives: 1 });
+  assert.deepEqual(stats, { passes: 1, boats: 1, directedBoats: 0, manateeAlerts: 1, waderFlushes: 2, gatorSlides: 1, gatorDives: 1 });
   assert.equal(manateeAlerts, 1); assert.equal(manatee.trafficAlertT, 5); assert.equal(flushSource, 'traffic'); assert.equal(gatorSource, 'traffic');
   assert.equal(ecology.updateTrafficWildlife(0.02), stats); assert.equal(stats.passes, 1);
+});
+
+test('police, race, mission and story craft disturb wildlife as traffic without charging the player', () => {
+  let manateeAlerts = 0, offenses = 0, visits = 0;
+  const manatee = { pos: new THREE.Vector3(12, 0, 0), trafficAlertT: 0 };
+  const source = {
+    visitActiveVessels(visitor) { visits++; visitor(0, 0, 7, 'skiff'); visitor(80, 80, 0, 'skiff'); },
+    wakeHeightAt() { return 0; },
+  };
+  const sources = [source];
+  const ecology = new Ecology({
+    life: { traffic: { boats: [] } },
+    waders: { flushNear(x, z, radius, origin) { if (origin === 'player') offenses++; return origin === 'traffic' ? 2 : 0; } },
+    gators: { disturbByBoat(x, z, speed, origin) { if (origin === 'player') offenses++; return { slides: origin === 'traffic' ? 1 : 0, dives: 1 }; } },
+    manatees: { list: [manatee], alert() { manateeAlerts++; } },
+  });
+
+  assert.equal(ecology.setDirectedVesselSources(sources), ecology);
+  assert.equal(ecology.directedVesselSources, sources);
+  const stats = ecology.updateTrafficWildlife(0.21);
+  assert.deepEqual(stats, { passes: 1, boats: 1, directedBoats: 1, manateeAlerts: 1, waderFlushes: 2, gatorSlides: 1, gatorDives: 1 });
+  assert.equal(visits, 1); assert.equal(manateeAlerts, 1); assert.equal(manatee.trafficAlertT, 5); assert.equal(offenses, 0);
 });

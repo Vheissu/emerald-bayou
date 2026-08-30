@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { bioluminescenceContrast, feedingDisturbance, feedingEventPotential, trafficFeedingDisturbance } from '../src/ecology.js';
+import { Ecology, bioluminescenceContrast, feedingDisturbance, feedingEventPotential, trafficFeedingDisturbance } from '../src/ecology.js';
 import { Birds } from '../src/wildlife.js';
 
 test('feeding activity follows light, moving tide and safe weather', () => {
@@ -37,6 +37,25 @@ test('resident traffic can scatter bait without attributing its wake to the play
   boats[0].x = 34; boats[0].speed = 2;
   assert.equal(trafficFeedingDisturbance(boats, 0, 0, 0.08), 'traffic-wake');
   assert.equal(trafficFeedingDisturbance(boats, 0, 0, 0.02), '');
+});
+
+test('directed pursuit and mission wakes scatter bait through a retained vessel probe', () => {
+  const agent = { active: true, x: 34, z: 0, speed: 2, wake: 0.08 };
+  const source = {
+    visitActiveVessels(visitor) { if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff'); },
+    wakeHeightAt() { return agent.active ? agent.wake : 0; },
+  };
+  const ecology = new Ecology({ life: { traffic: { boats: [] } } });
+  ecology.setDirectedVesselSources([source]);
+  const probe = ecology.directedFeedingProbe;
+
+  assert.equal(ecology.directedFeedingDisturbance(0, 0, 10), 'traffic-wake');
+  assert.equal(ecology.directedFeedingProbe, probe);
+  agent.x = 18; agent.speed = 6; agent.wake = 0;
+  assert.equal(ecology.directedFeedingDisturbance(0, 0, 11), 'traffic-prop-wash');
+  agent.active = false;
+  assert.equal(ecology.directedFeedingDisturbance(0, 0, 12), '');
+  assert.equal(ecology.directedFeedingProbe, probe);
 });
 
 test('moonlight changes perceived blue-fire contrast without erasing the bloom', () => {

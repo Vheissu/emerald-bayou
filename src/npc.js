@@ -164,6 +164,9 @@ export class SkiffAI {
     const dx = x - this.pos.x, dz = z - this.pos.y; if (dx * dx + dz * dz > 10609) return 0;
     return wakeSampleAt(this.pos.x, this.pos.y, this.heading, this.speed, this.maxSpeed, 0.11, x, z, t);
   }
+  visitActiveVessels(visitor) {
+    if (this.active) visitor(this.pos.x, this.pos.y, this.speed, 'skiff');
+  }
   // wake stamps for the water sim (only worth pushing when inside the sim window)
   stamps(out) {
     if (!this.active || this.speed < 2) return;

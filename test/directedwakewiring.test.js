@@ -12,12 +12,17 @@ test('every retained powered-craft director contributes to the player wake field
   ].map(file => readFile(join(root, 'src', file), 'utf8')));
 
   assert.match(main, /const physicalWakeFields = \[life\.traffic\]/);
-  assert.match(main, /physicalWakeFields\.push\(skiff, encounters, incidents, story, aftermath\)/);
+  assert.match(main, /const directedVesselSources = \[skiff, encounters, incidents, story, aftermath\]/);
+  assert.match(main, /physicalWakeFields\.push\(\.\.\.directedVesselSources\)/);
+  assert.match(main, /ecology\.setDirectedVesselSources\(directedVesselSources\)/);
   assert.match(main, /sampleWakeFields\(physicalWakeFields, x, z, t\)/);
   for (const source of [npc, encounters, incidents, passage, stormline, contracts, story, aftermath]) assert.match(source, /wakeHeightAt\(x, z, t\)/);
+  for (const source of [npc, encounters, incidents, story, aftermath]) assert.match(source, /visitActiveVessels\(visitor\)/);
   assert.match(story, /this\.passage\?\.wakeHeightAt/);
   assert.match(story, /this\.stormLine\?\.wakeHeightAt/);
   assert.match(story, /this\.contracts\?\.wakeHeightAt/);
+  assert.match(story, /this\.stormLine\?\.agents/);
+  assert.match(story, /this\.contracts\?\.agents/);
 });
 
 test('small story boat pools are retained instead of rebuilt in wake and stamp loops', async () => {

@@ -283,7 +283,9 @@ async function init() {
   game.incidents = incidents; game.story = story; radio.incidents = incidents; radio.story = story;
   const aftermath = new StormRecovery({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, incidents, encounters, story, radio, reputation, condition });
   game.aftermath = aftermath; radio.aftermath = aftermath;
-  physicalWakeFields.push(skiff, encounters, incidents, story, aftermath);
+  const directedVesselSources = [skiff, encounters, incidents, story, aftermath];
+  physicalWakeFields.push(...directedVesselSources);
+  ecology.setDirectedVesselSources(directedVesselSources);
   const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
   game.discoveries = discoveries;
   const navigationAids = new NavigationAids({ scene, terrain, world, water, phys, game, audio, environment, currents, regions, radio, law, reputation, condition });

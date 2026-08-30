@@ -568,6 +568,12 @@ export class WorldIncidents {
 
   wakeHeightAt(x, z, t) { return sampleVesselWake(this.agents, x, z, t, 12.6, 0.11); }
 
+  visitActiveVessels(visitor) {
+    for (let i = 0; i < this.agents.length; i++) {
+      const agent = this.agents[i]; if (agent.active) visitor(agent.x, agent.z, agent.speed, 'skiff');
+    }
+  }
+
   stamps(out) {
     for (const A of this.agents) {
       if (!A.active || A.backing || A.speed < 2 || Math.hypot(A.x - this.phys.pos.x, A.z - this.phys.pos.y) > 90) continue;

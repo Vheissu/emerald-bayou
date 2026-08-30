@@ -685,6 +685,17 @@ export class StormRecovery {
     return clampWakeHeight(height, 0.2);
   }
 
+  visitActiveVessels(visitor) {
+    for (let i = 0; i < this.sites.length; i++) {
+      const site = this.sites[i];
+      const movingWorkboat = site.type === 'blockage' && site.stage === 'marked';
+      const movingRecovery = site.type === 'survivor' && site.stage === 'reported';
+      if (!movingWorkboat && !movingRecovery) continue;
+      const agent = this.rigs.get(site.id)?.agent;
+      if (agent?.active) visitor(agent.x, agent.z, agent.speed, 'skiff');
+    }
+  }
+
   stamps(out) {
     for (const site of this.sites) {
       if (site.type === 'blockage' && OPEN_STAGES.has(site.stage) && Math.hypot(site.x - this.phys.pos.x, site.z - this.phys.pos.y) < 95 && Math.hypot(site.vx, site.vz) > 0.18) emitWakeStamp(out, site.x, site.z, 2.4, -0.2, 0.32, 2.2);
