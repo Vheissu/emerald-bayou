@@ -49,6 +49,8 @@ import { CHASE_CAMERA_SAMPLES, chaseCameraBoomLimit, chaseCameraBoomStep } from 
 import { SkyEnvironmentMap } from './environmentmap.js';
 
 const app = document.getElementById('app');
+const loadingProgress = (message, value) => window.__loadingScreen?.progress?.(message, value);
+loadingProgress('Launching the marsh', 0.06);
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
 const gpuRenderer = webglRendererName(renderer.getContext());
 const hardwareQualityLevel = initialQualityLevel({
@@ -111,6 +113,7 @@ async function init() {
   const startZ = 70, startX = terrain.riverCenterX(startZ);
   const terrainPrime = terrain.prime(startX, startZ);
   startupTiming.terrainPrimedMs = performance.now() - startupStartedAt;
+  loadingProgress('Growing the near shore', 0.24);
 
   // The capture scene shares the real sky geometry, material and uniforms. It adds no duplicate GPU resources and
   // can therefore follow broad day/night/weather changes without retaining a bank of environment maps.
@@ -180,6 +183,7 @@ async function init() {
 
   // ---- water ----
   const water = new Water(renderer, SUN_DIR, renderProfile);
+  loadingProgress('Filling the channels', 0.42);
 
   // ---- wildlife ----
   const birds = new Birds(terrain, new THREE.Vector3(startX, 0, startZ - 120));
@@ -242,6 +246,7 @@ async function init() {
   game.encounters = encounters;
   law.onAttention = attention => { encounters.requestPatrol(attention); };
   const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, hullDamage: boat.hullDamage, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
+  loadingProgress('Waking the backcountry', 0.68);
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
   life.traffic.hazards = hazards;
   environment.onLightning = strike => hazards.lightning(strike);
@@ -865,6 +870,7 @@ async function init() {
   // Cinematic machines absorb the full shader/model warm-up behind the loading card. Lower profiles render the real
   // dock scene only and open as soon as local terrain is visible; distant terrain and optional models keep streaming.
   let warm = null;
+  loadingProgress(startup.warmShaders ? 'Warming the storm light' : 'Checking the channel', 0.82);
   if (startup.warmShaders) {
     warm = new THREE.Group();
     { const nc = world.campAt(1, 1) || world.campsNear(0, 0, 5000)[0]; if (nc) { const g = world.buildCamp(nc); g.position.set(startX - nc.x, 0, startZ - 20 - nc.z); warm.add(g); } }
@@ -899,16 +905,17 @@ async function init() {
     if ((ready && elapsed >= startup.minWaitMs) || elapsed >= startup.maxWaitMs) { startupTiming.localTerrainReadyMs = performance.now() - startupStartedAt; r(); } else setTimeout(poll, 100);
   }; poll(); });
   await Promise.all([startup.blockingModels.length ? preload(startup.blockingModels) : Promise.resolve(), terrainReady]);
+  loadingProgress('Pulling the boat off the trailer', 0.96);
   if (startup.compileDelayMs) await new Promise(r => setTimeout(r, startup.compileDelayMs));
   if (warm) {
     scene.remove(warm); encounters.spills[0].uniforms.uAlpha.value = 0; window.__dbg.warmDisposedGeometries = disposeDetachedGeometries(warm, scene, water.scene, fxScene); skiff.mesh.visible = false;
     for (const b of life.traffic.boats) { b.mesh.visible = false; if (b.searchRig) { b.searchRig.visible = false; b.searchLight.intensity = 0; b.searchBeam.visible = false; b.searchBeam.scale.set(b.searchWidth, b.searchLength, 1); } }
   }
   if (import.meta.env.DEV) document.documentElement.dataset.emeraldResource = JSON.stringify(debugResourceSnapshot());
-  document.getElementById('loading').remove();
   startupTiming.titleReadyMs = performance.now() - startupStartedAt;
   showTitle(false);
   activatePageLifecycle();
+  window.__loadingScreen?.complete?.();
 }
 
-init().catch(e => { console.error(e); document.getElementById('loading').textContent = 'Error: ' + e.message; });
+init().catch(e => { console.error(e); window.__loadingScreen?.fail?.('The launch motor quit. Reload and try again.'); });

@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Emerald Bayou</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="./fonts/le-murmure-regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/src/loading-screen.css">
 <style>
   /* Type: Avenir Next Condensed - the condensed sans of hull registration numbers and marina timing boards.
      Colours pulled from the scene: foam white, channel-marker orange, cypress dark, brackish gold. */
@@ -162,7 +164,6 @@
   #start .title-action .action-detail { display:block; margin-top:5px; font-family:"Avenir Next","Futura",sans-serif; font-size:12px; line-height:1.35; letter-spacing:0.025em; opacity:.68; }
   #start .title-action.primary .action-detail { opacity:.72; }
   #start .title-foot { display:flex; justify-content:space-between; gap:16px; margin:12px 16px 0; font-size:10px; letter-spacing:.14em; text-transform:uppercase; opacity:.54; }
-  #loading { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); color:#cfe3d5; font-size:13px; letter-spacing:0.2em; text-transform:uppercase; z-index:6; }
   /* full pause shell: DOM only, so opening it does not allocate another 3D scene */
   #menu { box-sizing:border-box; display:grid; grid-template-columns:96px minmax(0,1fr); grid-template-rows:minmax(0,1fr) 58px; padding:0; gap:0; overflow:hidden; background:linear-gradient(90deg,rgba(3,10,8,0.96) 0%,rgba(3,10,8,0.88) 48%,rgba(3,10,8,0.56) 100%); }
   #menu:focus { outline:none; }
@@ -321,7 +322,32 @@
 </div>
 <div id="bigmap" class="hidden"><canvas id="bigmapCanvas"></canvas><div id="bigmapLegend"></div></div>
 <div id="fade"></div>
-<div id="loading">Growing the bayou…</div>
+<div id="loading">
+  <img class="loading-art loading-art-a" alt="" aria-hidden="true" decoding="async">
+  <img class="loading-art loading-art-b" alt="" aria-hidden="true" decoding="async">
+  <div class="loading-ui">
+    <div class="loading-scene-meta" aria-hidden="true">
+      <span id="loadscene">01 / 06</span>
+      <i></i>
+      <span id="loaddistrict">Sawgrass Landing</span>
+    </div>
+    <div class="loading-brand" aria-label="Emerald Bayou">
+      <span class="loading-wordmark">Emerald</span>
+      <span class="loading-script" aria-hidden="true">Bayou</span>
+    </div>
+    <div class="loading-story">
+      <strong id="loadchapter">Gator overtime</strong>
+      <span id="loadnote">Everybody clocked out except the gator.</span>
+    </div>
+    <div class="loading-progress" role="status" aria-live="polite">
+      <div class="loading-status">
+        <span id="loadtext">Flooding the backcountry</span>
+        <span id="loadpct">0%</span>
+      </div>
+      <div id="loadtrack" class="bar" role="progressbar" aria-label="Loading Emerald Bayou" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+    </div>
+  </div>
+</div>
 <div id="start" class="overlay hidden" aria-hidden="true">
   <div class="start-panel">
     <p class="kicker">South Florida backcountry</p>
@@ -341,6 +367,6 @@
 </div>
 <div id="menu" class="overlay hidden" tabindex="-1" aria-hidden="true"></div>
 <div id="result" class="overlay hidden"></div>
-<script type="module" src="/src/main.js"></script>
+<script type="module" src="/src/bootstrap.js"></script>
 </body>
 </html>
