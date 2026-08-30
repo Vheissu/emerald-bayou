@@ -44,6 +44,7 @@ export class Spray {
     this.life[i] = life; this.maxLife[i] = life; this.size[i] = size; this.alpha[i] = alpha; this.baseAlpha[i] = alpha;
     this.geo.setDrawRange(0, this.count);
   }
+  clear() { this.count = 0; this.head = 0; this.geo.setDrawRange(0, 0); }
   remove(i) {
     const last = --this.count;
     if (i === last) return;
@@ -182,6 +183,7 @@ export class Plume {
     this.seed[i] = Math.random(); this.alpha[i] = encodedAlpha; this.baseAlpha[i] = encodedAlpha;
     this.geo.instanceCount = this.count;
   }
+  clear() { this.count = 0; this.head = 0; this.geo.instanceCount = 0; }
   remove(i) {
     const last = --this.count;
     if (i === last) return;

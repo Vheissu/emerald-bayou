@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { environmentReflectionSignature, SkyEnvironmentMap } from '../src/environmentmap.js';
+import { environmentCaptureAllowed, environmentReflectionSignature, SkyEnvironmentMap } from '../src/environmentmap.js';
 import { qualityProfile } from '../src/renderquality.js';
 
 test('reflection signatures follow broad solar, cloud and storm lighting instead of frame noise', () => {
@@ -10,8 +10,8 @@ test('reflection signatures follow broad solar, cloud and storm lighting instead
   assert.equal(environmentReflectionSignature({ hour: 12, sunAltitude: 0.95, storm: 0.3, cover: 0.4 }), 'noon:overcast:storm');
 });
 
-test('old-hardware tiers keep static PMREMs while higher tiers refresh on meaningful state changes', () => {
-  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).environmentMapRefreshSeconds), [0, 0, 75, 45]);
+test('every hardware tier keeps one static PMREM during live play', () => {
+  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).environmentMapRefreshSeconds), [0, 0, 0, 0]);
   const targets = [], scene = { environment: null }, uniforms = { flash: { value: 0.8 }, rain: { value: 0.5 }, rainbow: { value: 0.6 } };
   let now = 1000;
   const maps = new SkyEnvironmentMap({
@@ -34,11 +34,31 @@ test('old-hardware tiers keep static PMREMs while higher tiers refresh on meanin
   assert.equal(uniforms.rainbow.value, 0.6);
 });
 
+test('synchronous sky convolution is limited to the title or loading presentation', () => {
+  assert.equal(environmentCaptureAllowed(), true);
+  assert.equal(environmentCaptureAllowed({ started: true }), false);
+  assert.equal(environmentCaptureAllowed({ hidden: true }), false);
+  assert.equal(environmentCaptureAllowed({ hibernated: true }), false);
+});
+
+test('resource telemetry reports the retained target after a live quality downgrade', () => {
+  const scene = { environment: null };
+  const maps = new SkyEnvironmentMap({
+    renderer: {}, scene, skyScene: {}, skyUniforms: {}, profile: qualityProfile(3),
+    targetFactory: () => ({ texture: {}, dispose() {} }), now: () => 0,
+  });
+  maps.capture({ hour: 12, sunAltitude: 1, storm: 0, cover: 0.5 });
+  maps.setProfile(qualityProfile(0));
+  const stats = maps.resourceStats();
+  assert.equal(stats.size, 32); assert.equal(stats.targetSize, 128); assert.equal(stats.retainedBytes, 2_359_296);
+});
+
 test('replacement releases the prior target before allocating the next and restores transient sky uniforms', () => {
   const scene = { environment: null }, flash = { value: 0.7 }, rain = { value: 0.9 }, rainbow = { value: 0.4 }, order = [];
   let now = 0, previous = null;
   const maps = new SkyEnvironmentMap({
-    renderer: {}, scene, skyScene: {}, skyUniforms: { flash, rain, rainbow }, profile: qualityProfile(3), now: () => now,
+    renderer: {}, scene, skyScene: {}, skyUniforms: { flash, rain, rainbow },
+    profile: { ...qualityProfile(3), environmentMapRefreshSeconds: 45 }, now: () => now,
     targetFactory(renderer, skyScene, size) {
       assert.equal(scene.environment, null);
       if (previous) assert.equal(previous.disposed, true);
@@ -52,11 +72,11 @@ test('replacement releases the prior target before allocating the next and resto
   now += 46_000;
   assert.equal(maps.needsRefresh({ ...afternoon, storm: 0.8, cover: 0.2 }, now), true);
   assert.equal(maps.capture({ ...afternoon, storm: 0.8, cover: 0.2 }, 'atmosphere', now), true);
-  assert.deepEqual(order, ['allocate:256', 'dispose', 'allocate:256']);
+  assert.deepEqual(order, ['allocate:128', 'dispose', 'allocate:128']);
   assert.deepEqual({ flash: flash.value, rain: rain.value, rainbow: rainbow.value }, { flash: 0.7, rain: 0.9, rainbow: 0.4 });
   const stats = maps.resourceStats();
   assert.equal(stats.captures, 2); assert.equal(stats.replacements, 1); assert.equal(stats.disposals, 1);
-  assert.equal(stats.retainedBytes, 9_437_184);
+  assert.equal(stats.retainedBytes, 2_359_296);
   assert.equal(maps.dispose(), true); assert.equal(maps.dispose(), false);
   assert.equal(maps.resourceStats().retainedBytes, 0);
   assert.equal(maps.needsRefresh(afternoon, now), true);

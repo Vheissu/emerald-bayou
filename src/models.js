@@ -15,6 +15,8 @@ const DEFERRED_PRIORITY = Object.freeze({
 });
 let deferOptionalModels = false, modelConcurrency = 2, modelBatchDelayMs = 0, modelIdleTimeoutMs = 900, modelPressureMaxWaitMs = 8000, drainingDeferred = false, drainPromise = null, requestOrder = 0;
 let modelPressureStartedAt = 0, modelPressureUntil = 0, pressureForcedBatches = 0;
+let prepareModel = null;
+let modelPreparation = { attempted: 0, completed: 0, failures: 0, totalMs: 0, maxMs: 0 };
 let disabledModels = new Set();
 const skippedModels = new Set();
 const modelRoot = `${import.meta.env?.BASE_URL || '/'}models/`;
@@ -40,14 +42,27 @@ function fit(name, root) {
 export function modelBox(name) { const r = cacheDone.get(name); return r ? fit(name, r) : null; }
 const cacheDone = new Map();
 
-export function configureModelLoading({ deferOptional = false, concurrency = 2, batchDelayMs = 0, idleTimeoutMs = 900, pressureMaxWaitMs = 8000, disabled = [] } = {}) {
+export function configureModelLoading({ deferOptional = false, concurrency = 2, batchDelayMs = 0, idleTimeoutMs = 900, pressureMaxWaitMs = 8000, disabled = [], prepare = null } = {}) {
   deferOptionalModels = Boolean(deferOptional);
   modelConcurrency = Math.max(1, Math.min(4, Math.round(Number(concurrency) || 1)));
   modelBatchDelayMs = Math.max(0, Math.min(5000, Math.round(Number(batchDelayMs) || 0)));
   modelIdleTimeoutMs = Math.max(250, Math.min(5000, Math.round(Number(idleTimeoutMs) || 900)));
   const maxWait = Number(pressureMaxWaitMs); modelPressureMaxWaitMs = Number.isFinite(maxWait) ? Math.max(0, Math.min(30000, Math.round(maxWait))) : 8000;
   modelPressureStartedAt = 0; modelPressureUntil = 0; pressureForcedBatches = 0;
+  prepareModel = typeof prepare === 'function' ? prepare : null;
+  modelPreparation = { attempted: 0, completed: 0, failures: 0, totalMs: 0, maxMs: 0 };
   disabledModels = new Set(Array.isArray(disabled) ? disabled : []);
+}
+
+export async function prepareModelForSwap(prepare, root, name, now = () => performance.now()) {
+  if (typeof prepare !== 'function' || !root) return { attempted: false, completed: false, failed: false, durationMs: 0 };
+  const startedAt = now();
+  try {
+    await prepare(root, name);
+    return { attempted: true, completed: true, failed: false, durationMs: Math.max(0, now() - startedAt) };
+  } catch (error) {
+    return { attempted: true, completed: false, failed: true, durationMs: Math.max(0, now() - startedAt) };
+  }
 }
 
 // Optional GLBs replace procedural stand-ins. A bad gameplay frame therefore buys the renderer some quiet time before
@@ -83,9 +98,17 @@ export function orderDeferredModelNames(names) {
 }
 
 function fetchModel(name) {
-  return loader.loadAsync(`${modelRoot}${name}.glb`).then(g => {
+  return loader.loadAsync(`${modelRoot}${name}.glb`).then(async g => {
     const root = g.scene;
     root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; const m = o.material; if (m) { if (m.map) { m.map.anisotropy = 4; m.map.colorSpace = THREE.SRGBColorSpace; } m.roughness = Math.max(m.roughness ?? 1, 0.55); } } });
+    // The clone shares these materials. Prepare their programs while the authored model is still detached so its
+    // first visible replacement cannot turn an ordinary gameplay frame into a shader-compilation pause.
+    const prepared = await prepareModelForSwap(prepareModel, root, name);
+    if (prepared.attempted) {
+      modelPreparation.attempted++; modelPreparation.totalMs += prepared.durationMs;
+      modelPreparation.maxMs = Math.max(modelPreparation.maxMs, prepared.durationMs);
+      if (prepared.completed) modelPreparation.completed++; else modelPreparation.failures++;
+    }
     cacheDone.set(name, root); fit(name, root);
     return root;
   }).catch(e => { console.warn('model', name, e); return null; });
@@ -170,6 +193,7 @@ export function modelLoadingStats() {
   return {
     cached: cache.size, ready: cacheDone.size, queued: deferredByName.size, skipped: skippedModels.size, concurrency: modelConcurrency, deferred: deferOptionalModels,
     pressure: { paused: remaining > 0, remainingMs: remaining, maxWaitMs: modelPressureMaxWaitMs, forcedBatches: pressureForcedBatches },
+    preparation: { ...modelPreparation },
   };
 }
 

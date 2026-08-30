@@ -18,6 +18,7 @@ export const fmtDist = (m) => m < 300 ? `${Math.round(m * FT / 10) * 10} ft` : m
 const MEDALS = ['BRONZE', 'SILVER', 'GOLD'];
 export const HUD_REFRESH_HZ = 12;
 const HUD_REFRESH_INTERVAL = 1 / HUD_REFRESH_HZ;
+export const SAVE_DEFER_MS = 40;
 
 export class Game {
   constructor(o) {
@@ -28,6 +29,8 @@ export class Game {
     this.state = null; // active mission runtime
     this.paused = false; this.playing = false; this.inputLock = false; this.menuOpen = false; this.resultOpen = false;
     this.sel = 0; this.systemSel = 0; this.menuTab = 'jobs'; this.resetArmedUntil = 0; this.resetTimer = 0; this.persistenceDisabled = false;
+    this.persistTimer = null; this.persistPending = false;
+    this.persistenceStats = { requests: 0, writes: 0, coalesced: 0, errors: 0, lastMs: 0, maxMs: 0, lastChars: 0 };
     this.beacon = new Beacon(0xf07a2e, 5); this.beacon2 = new Beacon(0xf3ede0, 4.5); this.beacon2.uniforms.alpha.value = 0.35;
     this.scene.add(this.beacon.group, this.beacon2.group);
     this.el = {
@@ -54,7 +57,7 @@ export class Game {
     this._v = new THREE.Vector3(); this._f = new THREE.Vector2();
     this.fx = null; // set by main: { thud(), splash() } hooks not needed; main reads phys
     window.addEventListener('keydown', e => this.onKey(e));
-    this.pagehideHandler = () => this.persist();
+    this.pagehideHandler = () => this.flushPersistence(true);
     window.addEventListener('pagehide', this.pagehideHandler);
     this.renderHud();
   }
@@ -112,6 +115,7 @@ export class Game {
   requestNewGame() {
     if (this.newGameArmed()) {
       this.persistenceDisabled = true;
+      this.cancelPersistence();
       try { localStorage.removeItem(SAVE_KEY); localStorage.removeItem('emeraldBayou.save.v1'); } catch (error) { /* an unavailable store already has nothing durable to clear */ }
       location.reload(); return true;
     }
@@ -134,7 +138,31 @@ export class Game {
     };
     return true;
   }
-  persist() { if (this.persistenceDisabled) return; this.captureBoatPosition(); try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.save)); } catch (e) { /* ignore */ } }
+  cancelPersistence() {
+    if (this.persistTimer !== null && this.persistTimer !== undefined) clearTimeout(this.persistTimer);
+    this.persistTimer = null; this.persistPending = false;
+  }
+  flushPersistence(force = false) {
+    if (this.persistTimer !== null && this.persistTimer !== undefined) clearTimeout(this.persistTimer);
+    this.persistTimer = null;
+    if (this.persistenceDisabled || (!this.persistPending && !force)) { this.persistPending = false; return false; }
+    this.persistPending = false; this.captureBoatPosition();
+    const started = performance.now();
+    try {
+      const payload = JSON.stringify(this.save); localStorage.setItem(SAVE_KEY, payload);
+      const elapsed = performance.now() - started, stats = this.persistenceStats;
+      stats.writes++; stats.lastMs = elapsed; stats.maxMs = Math.max(stats.maxMs, elapsed); stats.lastChars = payload.length;
+      return true;
+    } catch (e) { this.persistenceStats.errors++; return false; }
+  }
+  persist() {
+    if (this.persistenceDisabled) return false;
+    const stats = this.persistenceStats; stats.requests++;
+    this.persistPending = true;
+    if (this.persistTimer !== null && this.persistTimer !== undefined) { stats.coalesced++; return false; }
+    this.persistTimer = setTimeout(() => { this.persistTimer = null; this.flushPersistence(); }, SAVE_DEFER_MS);
+    return true;
+  }
   addCash(n) { this.save.cash += n; this.persist(); }
   unlocked(i) { return i === 0 || this.save.done.includes(this.missions[i - 1].id) || this.save.done.includes(this.missions[i].id) || this.debugUnlock; }
   unlockAll() { this.debugUnlock = true; this.renderMenu(); }

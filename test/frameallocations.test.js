@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { AirboatPhysics } from '../src/airboat.js';
 import { Game, HUD_REFRESH_HZ } from '../src/game.js';
@@ -60,4 +61,12 @@ test('HUD refresh cadence removes four out of five render-frame DOM rebuilds', (
   for (let frame = 0; frame < 600; frame++) game.refreshHud(1 / 60);
   assert.equal(refreshes, HUD_REFRESH_HZ * 10);
   assert.equal(refreshes / 600, 0.2);
+});
+
+test('hard hull strikes keep the simulation clock at real time', () => {
+  const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  const hitStart = source.indexOf('    if (phys.hit > 3) {');
+  const hitEnd = source.indexOf('    // boat transform', hitStart);
+  assert.ok(hitStart >= 0 && hitEnd > hitStart);
+  assert.doesNotMatch(source.slice(hitStart, hitEnd), /slowT\s*=|slowK\s*=/);
 });

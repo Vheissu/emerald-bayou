@@ -23,12 +23,12 @@ export const QUALITY_PROFILES = Object.freeze([
   }),
   Object.freeze({
     id: 'balanced', label: 'Balanced', maxDrawPixels: 2_000_000, maxDevicePixelRatio: 1.6,
-    msaaSamples: 2, shadowMapSize: 2048, environmentMapSize: 128, environmentMapRefreshSeconds: 75, reflectionScale: 0.4, reflectionInterval: 2,
+    msaaSamples: 2, shadowMapSize: 2048, environmentMapSize: 128, environmentMapRefreshSeconds: 0, reflectionScale: 0.4, reflectionInterval: 2,
     reflectionMipmaps: false, wakeResolution: 384, wakeMaxStamps: 18, minimapTileLimit: 224, surfaceMist: 0.65, heatHaze: 0.58, cloudShadows: 0.58, precipitationRipples: 0.62, lensWater: 0.62, fireflyPoints: 153, spotlightVolume: 0.75, skyWeatherDetail: 0.75, hullDamageDetail: 0.78, bloom: true, finalPass: false,
   }),
   Object.freeze({
     id: 'cinematic', label: 'Cinematic', maxDrawPixels: MAX_DRAW_PIXELS, maxDevicePixelRatio: MAX_DEVICE_PIXEL_RATIO,
-    msaaSamples: 4, shadowMapSize: 4096, environmentMapSize: 256, environmentMapRefreshSeconds: 45, reflectionScale: 0.5, reflectionInterval: 1,
+    msaaSamples: 4, shadowMapSize: 4096, environmentMapSize: 128, environmentMapRefreshSeconds: 0, reflectionScale: 0.5, reflectionInterval: 1,
     reflectionMipmaps: true, wakeResolution: 512, wakeMaxStamps: 20, minimapTileLimit: 256, surfaceMist: 1, heatHaze: 1, cloudShadows: 1, precipitationRipples: 1, lensWater: 1, fireflyPoints: 243, spotlightVolume: 1, skyWeatherDetail: 1, hullDamageDetail: 1, bloom: true, finalPass: true,
   }),
 ]);

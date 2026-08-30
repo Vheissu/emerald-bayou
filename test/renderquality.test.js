@@ -45,23 +45,22 @@ test('removes multisample attachments on performance profiles', () => {
   assert.equal(msaaSamplesFor(2000, 1000, 4), 2);
 });
 
-test('scales startup environment convolution while preserving the cinematic map', () => {
+test('bounds startup environment convolution without reducing the live world', () => {
   const sizes = [0, 1, 2, 3].map(level => qualityProfile(level).environmentMapSize);
-  assert.deepEqual(sizes, [32, 64, 128, 256]);
+  assert.deepEqual(sizes, [32, 64, 128, 128]);
   const fallback = environmentMapBudget(sizes[0]), performance = environmentMapBudget(sizes[1]), cinematic = environmentMapBudget(sizes[3]);
   assert.deepEqual(cinematic, {
-    cubeSize: 256, width: 768, height: 1024, pixels: 786432, colorBytes: 6291456, depthBytes: 3145728,
-    retainedBytes: 9437184, peakTargetBytes: 15728640,
+    cubeSize: 128, width: 384, height: 512, pixels: 196608, colorBytes: 1572864, depthBytes: 786432,
+    retainedBytes: 2359296, peakTargetBytes: 3932160,
   });
   assert.equal(performance.retainedBytes, 1032192);
-  assert.ok(performance.retainedBytes < cinematic.retainedBytes * 0.11);
-  assert.ok(fallback.peakTargetBytes < cinematic.peakTargetBytes * 0.055);
+  assert.ok(performance.retainedBytes < cinematic.retainedBytes * 0.45);
+  assert.ok(fallback.peakTargetBytes < cinematic.peakTargetBytes * 0.25);
 });
 
-test('keeps dynamic sky convolution off old hardware and infrequent on high-end tiers', () => {
+test('keeps synchronous sky convolution out of gameplay on every tier', () => {
   const refresh = [0, 1, 2, 3].map(level => qualityProfile(level).environmentMapRefreshSeconds);
-  assert.deepEqual(refresh, [0, 0, 75, 45]);
-  assert.ok(refresh[2] > refresh[3]);
+  assert.deepEqual(refresh, [0, 0, 0, 0]);
 });
 
 test('scales distant storm-sky detail without changing world simulation', () => {

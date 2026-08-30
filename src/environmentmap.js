@@ -3,6 +3,12 @@ import { environmentMapBudget } from './renderquality.js';
 
 const clamp = value => Math.max(0, Math.min(1, Number(value) || 0));
 
+// PMREMGenerator.fromScene is synchronous GPU work. It is safe behind the loading/title presentation, but even an
+// idle callback cannot guarantee enough time for it while the simulation is live.
+export function environmentCaptureAllowed({ started = false, hidden = false, hibernated = false } = {}) {
+  return !started && !hidden && !hibernated;
+}
+
 // The direct sun/moon lights keep moving every frame. The PMREM only needs a new broad lighting distribution when
 // the dome crosses a meaningful solar or weather band; quantising here prevents an expensive convolution loop.
 export function environmentReflectionSignature({ hour = 12, sunAltitude = 1, storm = 0, cover = 0.49 } = {}) {
@@ -88,7 +94,10 @@ export class SkyEnvironmentMap {
   }
 
   resourceStats() {
-    const size = Math.max(16, Number(this.profile?.environmentMapSize) || 16), budget = environmentMapBudget(size);
+    const size = Math.max(16, Number(this.profile?.environmentMapSize) || 16);
+    // A live quality downgrade deliberately keeps the already-convolved target until the next title/loading state.
+    // Report the retained target's real size rather than pretending the cheaper requested profile is already live.
+    const budget = environmentMapBudget(this.target ? this.targetSize : size);
     return {
       profile: this.profile?.id || '', size, targetSize: this.targetSize,
       refreshSeconds: Math.max(0, Number(this.profile?.environmentMapRefreshSeconds) || 0),

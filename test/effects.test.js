@@ -47,6 +47,9 @@ test('spray and plume compact expired particles and draw only live slots', async
   for (let i = 0; i < 5; i++) spray.emit(10 + i, 1, 0, 0, 0, 0, 0.1, 1);
   assert.equal(spray.count, 3);
   assert.equal(spray.geo.drawRange.count, 3);
+  spray.clear();
+  assert.equal(spray.count, 0); assert.equal(spray.head, 0); assert.equal(spray.geo.drawRange.count, 0);
+  spray.emit(12, 1, 0, 0, 0, 0, 0.1, 1);
   spray.update(2);
   assert.equal(spray.count, 0);
   assert.equal(spray.geo.drawRange.count, 0);
@@ -61,6 +64,9 @@ test('spray and plume compact expired particles and draw only live slots', async
   assert.equal(plume.pos[0], 2);
   assert.equal(plume.geo.attributes.aPos.updateRanges[0].count, 3);
   assert.equal(plume.geo.attributes.aData.updateRanges[0].count, 4);
+  plume.clear();
+  assert.equal(plume.count, 0); assert.equal(plume.head, 0); assert.equal(plume.geo.instanceCount, 0);
+  plume.emit(3, 1, 3, 0, 0, 0, 0.2, 0.1, 1);
   plume.update(2, 3);
   assert.equal(plume.count, 0);
   assert.equal(plume.geo.instanceCount, 0);

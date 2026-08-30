@@ -50,8 +50,9 @@ import { WakeStampPool } from './wakestamps.js';
 import { shallowWaterSediment, sedimentPlumeRadius } from './sediment.js';
 import { bindPageLifecycle } from './pagelifecycle.js';
 import { CHASE_CAMERA_SAMPLES, chaseCameraBoomLimit, chaseCameraBoomStep } from './chasecamera.js';
-import { SkyEnvironmentMap } from './environmentmap.js';
+import { environmentCaptureAllowed, SkyEnvironmentMap } from './environmentmap.js';
 import { sampleWakeFields } from './wakefield.js';
+import { warmDeferredShaders } from './shaderwarmup.js';
 
 const app = document.getElementById('app');
 const loadingProgress = (message, value) => window.__loadingScreen?.progress?.(message, value);
@@ -90,7 +91,7 @@ async function init() {
   const startupTiming = {
     terrainPrimedMs: 0, landmarksReadyMs: 0, vegetationReadyMs: 0, renderTargetsReadyMs: 0,
     livingWorldReadyMs: 0, directorsReadyMs: 0, environmentMapMs: 0, environmentMapReadyMs: 0,
-    loopReadyMs: 0, warmupReadyMs: 0, terrainWaitMs: 0, localTerrainReadyMs: 0, titleReadyMs: 0,
+    loopReadyMs: 0, warmupReadyMs: 0, deferredShaderWarmupMs: 0, terrainWaitMs: 0, localTerrainReadyMs: 0, titleReadyMs: 0,
   };
   let terrainReadinessState = { ready: false, timedOut: false, visibleAtStart: false, settled: false, queued: 0, finalizing: 0, inFlight: 0, visible: 0, building: '' };
   const markStartup = key => { startupTiming[key] = performance.now() - startupStartedAt; };
@@ -102,6 +103,7 @@ async function init() {
     idleTimeoutMs: startup.modelIdleTimeoutMs,
     pressureMaxWaitMs: startup.modelPressureMaxWaitMs,
     disabled: startup.disabledModels,
+    prepare: (root) => typeof renderer.compileAsync === 'function' ? renderer.compileAsync(root, camera, scene) : renderer.compile(root, camera, scene),
   });
   // ---- sky & lighting ----
   const sky = new Sky(SUN_DIR, renderProfile);
@@ -403,7 +405,8 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats() }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, durationMs: 0 };
+  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }) };
@@ -412,7 +415,7 @@ async function init() {
   const keys = {};
   let started = false;
   const reflectionState = { hour: environment.hour, sunAltitude: environment.sunDir.y, storm: environment.values.storm, cover: environment.values.cloud };
-  let reflectionCheckT = 2, reflectionIdleJob = 0, reflectionIdleKind = '';
+  let reflectionIdleJob = 0, reflectionIdleKind = '';
   const syncReflectionState = () => {
     reflectionState.hour = environment.hour; reflectionState.sunAltitude = environment.sunDir.y;
     reflectionState.storm = environment.values.storm; reflectionState.cover = environment.values.cloud;
@@ -425,9 +428,9 @@ async function init() {
   };
   const scheduleEnvironmentReflections = (reason = 'atmosphere') => {
     if (reflectionIdleJob) return false;
-    const run = deadline => {
+    const run = () => {
       reflectionIdleJob = 0; reflectionIdleKind = '';
-      if (document.hidden || pageHibernated || (!game.paused && deadline && !deadline.didTimeout && deadline.timeRemaining() < 4)) return false;
+      if (!environmentCaptureAllowed({ started, hidden: document.hidden, hibernated: pageHibernated })) return false;
       if (!environmentReflections.needsRefresh(syncReflectionState())) return false;
       return captureEnvironmentReflections(reason);
     };
@@ -543,7 +546,6 @@ async function init() {
   };
   let renderFrameNo = 0;
   const applyRenderQuality = profile => {
-    const oldEnvironmentSize = environmentReflections.targetSize;
     renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); sky.setQuality(profile); condition.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile); environmentReflections.setProfile(profile);
     if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
       sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
@@ -552,10 +554,9 @@ async function init() {
     }
     if (environmentReflections.targetSize !== profile.environmentMapSize) {
       cancelEnvironmentReflectionJob();
-      // A downgrade releases the larger target before doing the cheaper convolution. Upgrades at the title are safe
-      // to apply immediately; an in-play promotion waits for browser idle time.
-      if (profile.environmentMapSize < oldEnvironmentSize || game.paused) captureEnvironmentReflections('quality');
-      else scheduleEnvironmentReflections('quality');
+      // Keep the current map through active play. Rebuilding even a smaller PMREM is synchronous GPU work and can
+      // turn one missed frame into a multi-second quality-change cascade.
+      if (!started) scheduleEnvironmentReflections('quality');
     }
     renderFrameNo = 0; resize();
   };
@@ -611,6 +612,7 @@ async function init() {
     for (const key in keys) keys[key] = false;
     if (persist) game.persist();
     renderTitle(); startEl.classList.remove('hidden'); startEl.setAttribute('aria-hidden', 'false');
+    if (environmentReflections.needsRefresh(syncReflectionState())) scheduleEnvironmentReflections('title');
     if (startup.releaseModelsAtTitle) scheduleDeferredModels(startup.titleModelReleaseDelayMs);
     requestAnimationFrame(() => titlePrimary.focus({ preventScroll: true }));
   };
@@ -753,7 +755,6 @@ async function init() {
     }
     if (phys.hit > 3) {
       audio.thud(Math.min(1.5, phys.hit / 6)); fovKick = Math.min(14, fovKick + phys.hit * 0.6);
-      if (phys.hit > 6 && slowT <= 0) { slowT = 0.22; slowK = 0.35; } // hit-stop on a real crash
       // bark and leaf litter knocked loose, plus the water thrown up by the hull slewing sideways
       const nx = phys.hitNormal.x, nz = phys.hitNormal.y; const n = Math.floor(10 + phys.hit * 4);
       for (let i = 0; i < n; i++) plume.emit(phys.pos.x - nx * 1.6 + jitter() * 1.2, 0.3 + Math.random() * 1.2, phys.pos.y - nz * 1.6 + jitter() * 1.2, nx * (1 + Math.random() * 2) + jitter() * 2, 0.5 + Math.random() * 2, nz * (1 + Math.random() * 2) + jitter() * 2, 0.2 + Math.random() * 0.3, 0.9, 0.5 + Math.random() * 0.4, 0.28);
@@ -837,11 +838,6 @@ async function init() {
 
     // world updates
     sky.update(time, camera.position);
-    reflectionCheckT -= dtRaw;
-    if (reflectionCheckT <= 0) {
-      reflectionCheckT = 2;
-      if (frameDelta < 1 / 28 && environmentReflections.needsRefresh(syncReflectionState())) scheduleEnvironmentReflections();
-    }
     terrain.update(time, camera.position);
     veg.update(time, environment.lightDir, wind);
     birds.update(time, camera.position, dt);
@@ -971,7 +967,9 @@ async function init() {
   const hibernatePage = () => {
     if (pageHibernated) return false;
     const before = attachmentBytes(), canvasBefore = minimap.memoryStats().estimatedBackingBytes + worldMap.memoryStats().estimatedBackingBytes; pageHibernated = true; renderer.setAnimationLoop(null);
-    cancelEnvironmentReflectionJob(); environmentReflections.dispose();
+    // Keep the compact static PMREM across backgrounding. Rebuilding it on return is synchronous and caused the
+    // first resumed frame to stall; the much larger post, water, shadow and chart attachments are still released.
+    cancelEnvironmentReflectionJob();
     pipeline.hibernate(); water.hibernate();
     minimap.releaseTiles(); worldMap.hibernate();
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; water.uniforms.shadowOn.value = 0; }
@@ -982,7 +980,7 @@ async function init() {
   };
   const resumePage = () => {
     if (!pageHibernated || document.hidden) return false;
-    pageHibernated = false; pipeline.resume(); water.resume(); resize(); worldMap.resume(); clock.reset(); renderFrameNo = 0; void audio.resume(); renderer.setAnimationLoop(frame); scheduleEnvironmentReflections('resume');
+    pageHibernated = false; pipeline.resume(); water.resume(); resize(); worldMap.resume(); clock.reset(); renderFrameNo = 0; void audio.resume(); renderer.setAnimationLoop(frame);
     pageLifecycle.hibernated = false; pageLifecycle.resumedAt = Date.now();
     return true;
   };
@@ -992,6 +990,12 @@ async function init() {
   };
   // Cinematic machines absorb the full shader/model warm-up behind the loading card. Lower profiles render the real
   // dock scene only and open as soon as local terrain is visible; distant terrain and optional models keep streaming.
+  // Draw the exact first-impact and waypoint paths through the real post pipeline once. A compile-only pass uses the
+  // default framebuffer and cannot cover every render-target variant that the first live spray or marker activates.
+  spray.emit(startX, water.level + 0.2, startZ, 0, 0, 0, 0.02, 8, 0.01);
+  plume.emit(startX, water.level + 0.2, startZ, 0, 0, 0, 0.02, 0, 8, 0.01);
+  game.beacon.set(startX, water.level, startZ, 0xf07a2e, true);
+  game.beacon2.set(startX + 2, water.level, startZ, 0xf3ede0, true);
   let warm = null;
   loadingProgress(startup.warmShaders ? 'Warming the storm light' : 'Checking the channel', 0.82);
   if (startup.warmShaders) {
@@ -1040,6 +1044,13 @@ async function init() {
     } else setTimeout(poll, 100);
   }; poll(); });
   await Promise.all([startup.blockingModels.length ? preload(startup.blockingModels) : Promise.resolve(), terrainReady]);
+  // Compile the small set of retained custom effects while the loading card is still covering the canvas. This
+  // includes zero-count collision spray/plume buffers and hidden mission, fire and pursuit visuals, without walking
+  // or retaining shader variants for the complete streamed map.
+  loadingProgress('Checking the emergency gear', 0.93);
+  deferredShaderWarmup = await warmDeferredShaders(renderer, camera, [scene, water.scene, fxScene]);
+  startupTiming.deferredShaderWarmupMs = deferredShaderWarmup.durationMs;
+  spray.clear(); plume.clear(); game.beacon.hide(); game.beacon2.hide();
   loadingProgress('Pulling the boat off the trailer', 0.96);
   if (startup.compileDelayMs) await new Promise(r => setTimeout(r, startup.compileDelayMs));
   if (warm) {
