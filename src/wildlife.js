@@ -346,6 +346,85 @@ function baskSpot(T, rand, cx, cz, rMin, rMax) {
   }
   return null;
 }
+
+export function alligatorEyeshineExposure(distance = Infinity, beamDot = -1, facingDot = -1, night = 0, spotlight = false, surfaced = false, fog = 0, storm = 0, blink = 1) {
+  const d = Number(distance), beamAngle = Number(beamDot), facing = Number(facingDot);
+  if (!spotlight || !surfaced || !Number.isFinite(d) || d < 1.5 || !Number.isFinite(beamAngle) || !Number.isFinite(facing)) return 0;
+  const fogN = clamp(Number(fog) || 0), stormN = clamp(Number(storm) || 0), maximum = 108 - fogN * 32 - stormN * 10;
+  if (d >= maximum) return 0;
+  const beam = smooth(Math.cos(0.31), Math.cos(0.08), beamAngle);
+  const lookingBack = smooth(-0.18, 0.62, facing);
+  const range = 1 - smooth(maximum * 0.48, maximum, d);
+  const darkness = smooth(0.18, 0.82, Number(night) || 0);
+  return clamp(beam * lookingBack * range * darkness * (1 - fogN * 0.45) * (1 - stormN * 0.18) * clamp(Number(blink) || 0));
+}
+
+export function alligatorFloatHeight(relativeFloat = -0.6, waterLevel = 0, diveDepth = 0) {
+  const float = Number(relativeFloat), water = Number(waterLevel), dive = Number(diveDepth);
+  return (Number.isFinite(water) ? water : 0) + (Number.isFinite(float) ? float : -0.6) - Math.max(0, Number.isFinite(dive) ? dive : 0);
+}
+
+// The player can catch thirty-six eyes without creating thirty-six meshes or lights. Visible pairs compact into the
+// front of one retained instance buffer; when the spotlight is off the draw disappears entirely.
+export class GatorEyeshinePool {
+  constructor(gatorCapacity = 18) {
+    this.capacity = Math.max(1, Math.trunc(Number(gatorCapacity) || 1) * 2);
+    this.geometry = new THREE.SphereGeometry(1, 6, 4);
+    this.material = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+    this.mesh = new THREE.InstancedMesh(this.geometry, this.material, this.capacity); this.mesh.name = 'alligator-eyeshine';
+    this.mesh.count = 0; this.mesh.visible = false; this.mesh.frustumCulled = false; this.mesh.renderOrder = 3;
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this._matrix = new THREE.Matrix4(); this._position = new THREE.Vector3(); this._quaternion = new THREE.Quaternion(); this._scale = new THREE.Vector3(); this._color = new THREE.Color(1, 0.3, 0.02);
+    this.mesh.setColorAt(0, this._color); this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage); this.mesh.instanceColor.needsUpdate = true;
+    this.active = 0; this.peak = 0; this.matrixWrites = 0; this.colorWrites = 0;
+  }
+
+  update(gators, t, boatX, boatZ, boatHeading, spotlight, night, fog = 0, storm = 0) {
+    let slot = 0;
+    if (spotlight && night > 0.18) {
+      const boatForwardX = -Math.sin(boatHeading), boatForwardZ = -Math.cos(boatHeading);
+      for (let index = 0; index < gators.length; index++) {
+        const g = gators[index];
+        if (slot + 1 >= this.capacity) break;
+        if (!g?.pos || g.mesh?.visible === false) continue;
+        const dx = g.pos.x - boatX, dz = g.pos.z - boatZ, distance = Math.hypot(dx, dz); if (distance < 1e-4) continue;
+        const inverse = 1 / distance, gatorForwardX = -Math.sin(g.heading), gatorForwardZ = -Math.cos(g.heading);
+        const beamDot = (dx * boatForwardX + dz * boatForwardZ) * inverse;
+        const facingDot = (-dx * gatorForwardX - dz * gatorForwardZ) * inverse;
+        const blinkPhase = fract(t * 0.115 + (g.ph || 0) * 0.071), blink = blinkPhase > 0.965 && blinkPhase < 0.993 ? 0 : 1;
+        const surfaced = Boolean(g.bask || g.surfaced || g.towed) && g.dive <= 0.35;
+        const exposure = alligatorEyeshineExposure(distance, beamDot, facingDot, night, true, surfaced, fog, storm, blink);
+        if (exposure < 0.012) continue;
+
+        const scale = Math.max(0.35, Number(g.mesh?.scale?.x) || 1), head = 1.2 * scale;
+        const rightX = Math.cos(g.heading), rightZ = -Math.sin(g.heading), eyeY = g.pos.y + 0.5 * scale;
+        const glintSize = (0.035 + Math.min(distance, 100) * 0.00025) * scale * (0.82 + exposure * 0.3);
+        this._scale.setScalar(glintSize); this._color.setRGB(3.1 * exposure, 0.72 * exposure, 0.055 * exposure);
+        const centreX = g.pos.x + gatorForwardX * head, centreZ = g.pos.z + gatorForwardZ * head, halfEye = 0.16 * scale;
+        for (let side = -1; side <= 1; side += 2) {
+          this._position.set(centreX + rightX * side * halfEye, eyeY, centreZ + rightZ * side * halfEye);
+          this._matrix.compose(this._position, this._quaternion, this._scale); this.mesh.setMatrixAt(slot, this._matrix); this.mesh.setColorAt(slot, this._color);
+          slot++; this.matrixWrites++; this.colorWrites++;
+        }
+      }
+    }
+    this.mesh.count = slot; this.mesh.visible = slot > 0; this.active = slot; this.peak = Math.max(this.peak, slot);
+    if (slot) { this.mesh.instanceMatrix.needsUpdate = true; this.mesh.instanceColor.needsUpdate = true; }
+    return slot;
+  }
+
+  resourceStats() {
+    return {
+      active: this.active, peak: this.peak, capacity: this.capacity, drawCalls: this.active ? 1 : 0,
+      geometries: 1, materials: 1, textures: 0, pointLights: 0,
+      instanceBytes: this.mesh.instanceMatrix.array.byteLength + this.mesh.instanceColor.array.byteLength,
+      matrixWrites: this.matrixWrites, colorWrites: this.colorWrites,
+    };
+  }
+
+  dispose() { this.mesh.dispose(); this.geometry.dispose(); this.material.dispose(); }
+}
+
 export class Gators {
   constructor(terrain, count, seed = 77) {
     this.T = terrain; this.list = [];
@@ -363,19 +442,20 @@ export class Gators {
       const h = terrain.heightAt(x, z); if (h > -0.9 || h < -3.5) continue; // shallows and pool edges
       g.pos.set(x, g.float, z); this.list.push(g);
     }
+    this.eyeshinePool = new GatorEyeshinePool(count); this.eyeshine = this.eyeshinePool.mesh;
     this.calm = false; this.onCharge = null; this.onSlide = null; this.audio = null; this.spooked = 0; this.activity = 1;
   }
   // scare(x, z, radius): gators inside the radius slip under for a while
   scare(x, z, radius = 24) { for (const g of this.list) if (Math.hypot(g.pos.x - x, g.pos.z - z) < radius && g.dive <= 0) g.dive = 6 + Math.random() * 4; }
-  update(dt, t, boatX, boatZ, boatSpeed) {
+  update(dt, t, boatX, boatZ, boatSpeed, boatHeading = 0, spotlight = false, night = 0, fog = 0, storm = 0, waterLevel = 0) {
     if (!this.rand) this.rand = mulberry32(91);
     for (const g of this.list) {
       if (!g.towed && !g.parked && Math.hypot(g.pos.x - boatX, g.pos.z - boatZ) > 700) {
         const sp = (!g.big && this.rand() < 0.4) ? baskSpot(this.T, this.rand, boatX, boatZ, 160, 450) : null;
         if (sp) { g.pos.set(sp.x, sp.h + 0.02, sp.z); g.bask = true; g.slide = 0; g.toWater = sp.ang; g.heading = sp.ang + Math.PI + (this.rand() - 0.5) * 1.2; g.dive = 0; }
-        else { const spot = findNear(this.T, this.rand, boatX, boatZ, 160, 450, -3.5, -0.9); if (spot) { g.pos.x = spot.x; g.pos.z = spot.z; g.pos.y = g.float; g.dive = 0; g.bask = false; } }
+        else { const spot = findNear(this.T, this.rand, boatX, boatZ, 160, 450, waterLevel - 3.5, waterLevel - 0.9); if (spot) { g.pos.x = spot.x; g.pos.z = spot.z; g.pos.y = alligatorFloatHeight(g.float, waterLevel); g.dive = 0; g.bask = false; } }
       }
-      if (g.towed) { g.mesh.position.copy(g.pos); g.mesh.rotation.set(0.05, g.heading, Math.sin(t * 5) * 0.12); g.surfaced = true; continue; }
+      if (g.towed) { g.pos.y += (alligatorFloatHeight(g.float, waterLevel) - g.pos.y) * (1 - Math.exp(-dt * 4)); g.mesh.position.copy(g.pos); g.mesh.rotation.set(0.05, g.heading, Math.sin(t * 5) * 0.12); g.surfaced = true; continue; }
       const dB = Math.hypot(boatX - g.pos.x, boatZ - g.pos.z);
       if (g.bask) {
         // sunning on the bank: the boat coming close sends it down the mud and into the water
@@ -389,9 +469,9 @@ export class Gators {
         const fx = -Math.sin(g.heading), fz = -Math.cos(g.heading); const sp = 2.8;
         g.pos.x += fx * sp * dt; g.pos.z += fz * sp * dt;
         const gh = this.T.heightAt(g.pos.x, g.pos.z);
-        g.pos.y = Math.max(gh + 0.02, g.float);
+        g.pos.y = Math.max(gh + 0.02, alligatorFloatHeight(g.float, waterLevel));
         g.mesh.position.copy(g.pos); g.mesh.rotation.set(Math.sin(t * 14) * 0.03, g.heading, Math.sin(t * 14) * 0.08); // scramble
-        if (gh < -0.35 || g.slide <= 0) { g.bask = false; g.dive = 5 + this.rand() * 3; g.pos.y = g.float; if (this.onSplash) this.onSplash(g.pos.x, g.pos.z, g.mesh.scale.x); }
+        if (gh < waterLevel - 0.35 || g.slide <= 0) { g.bask = false; g.dive = 5 + this.rand() * 3; g.pos.y = alligatorFloatHeight(g.float, waterLevel); if (this.onSplash) this.onSplash(g.pos.x, g.pos.z, g.mesh.scale.x); }
         continue;
       }
       // the bull: idle near him for long and he comes at the hull
@@ -403,7 +483,7 @@ export class Gators {
         g.charge -= dt;
         const want = Math.atan2(-(boatX - g.pos.x), -(boatZ - g.pos.z)); let dh = want - g.heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh)); g.heading += Math.max(-1.5, Math.min(1.5, dh * 3)) * dt;
         const fx = -Math.sin(g.heading), fz = -Math.cos(g.heading); g.pos.x += fx * 5.5 * dt; g.pos.z += fz * 5.5 * dt;
-        g.pos.y += (g.float + 0.15 - g.pos.y) * (1 - Math.exp(-dt * 4));
+        g.pos.y += (alligatorFloatHeight(g.float, waterLevel) + 0.15 - g.pos.y) * (1 - Math.exp(-dt * 4));
         g.mesh.position.copy(g.pos); g.mesh.rotation.set(-0.08, g.heading, Math.sin(t * 12) * 0.12); g.surfaced = true;
         if (dB < 3.4) { g.charge = 0; g.dive = 6; g.hitT = 4; if (this.onCharge) this.onCharge(g); }
         else if (dB > 40) g.charge = 0;
@@ -415,7 +495,8 @@ export class Gators {
       const hAhead = this.T.heightAt(g.pos.x + fx * ahead, g.pos.z + fz * ahead);
       const hL = this.T.heightAt(g.pos.x + (fx * 0.7 - fz * 0.7) * ahead, g.pos.z + (fz * 0.7 + fx * 0.7) * ahead);
       const hR = this.T.heightAt(g.pos.x + (fx * 0.7 + fz * 0.7) * ahead, g.pos.z + (fz * 0.7 - fx * 0.7) * ahead);
-      if (hAhead > -0.7 || hAhead < -3.6) g.heading += (Math.abs(hL + 2) < Math.abs(hR + 2) ? 1 : -1) * dt * 0.9;
+      const depthAhead = waterLevel - hAhead;
+      if (depthAhead < 0.7 || depthAhead > 3.6) g.heading += (Math.abs(waterLevel - hL - 2) < Math.abs(waterLevel - hR - 2) ? 1 : -1) * dt * 0.9;
       g.heading += Math.sin(t * 0.2 + g.ph) * dt * 0.2;
       const d = Math.hypot(boatX - g.pos.x, boatZ - g.pos.z);
       if (!g.parked && g.dive <= 0 && d < 22 && boatSpeed > 4.5) g.dive = 7 + Math.random() * 4; // a boat coming in fast: under it goes
@@ -424,11 +505,13 @@ export class Gators {
       g.hitT = Math.max(0, g.hitT - dt);
       const sp = g.speed * this.activity * (under ? 1.6 : 1) * (g.parked ? 0.3 : 1);
       g.pos.x += fx * sp * dt; g.pos.z += fz * sp * dt;
-      const tgtY = under ? g.float - 1.0 : g.float + Math.sin(t * 0.7 + g.ph) * 0.02;
+      const tgtY = alligatorFloatHeight(g.float, waterLevel, under ? 1 : 0) + (under ? 0 : Math.sin(t * 0.7 + g.ph) * 0.02);
       g.pos.y += (tgtY - g.pos.y) * (1 - Math.exp(-dt * 2.2));
       g.mesh.position.copy(g.pos);
       g.mesh.rotation.set(under ? -0.25 : 0, g.heading, Math.sin(t * 1.6 + g.ph) * 0.03);
-      g.surfaced = g.pos.y > g.float - 0.3;
+      g.surfaced = g.pos.y > alligatorFloatHeight(g.float, waterLevel) - 0.3;
     }
+    this.eyeshinePool.update(this.list, t, boatX, boatZ, boatHeading, spotlight, night, fog, storm);
   }
+  resourceStats() { return { animals: this.list.length, eyeshine: this.eyeshinePool.resourceStats() }; }
 }

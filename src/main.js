@@ -185,6 +185,7 @@ async function init() {
   for (const m of manatees.list) scene.add(m.mesh);
   const gators = new Gators(terrain, 18);
   for (const g of gators.list) scene.add(g.mesh);
+  scene.add(gators.eyeshine);
 
   // ---- fx ----
   const spray = new Spray(startup.effectBudget.spray);
@@ -292,7 +293,7 @@ async function init() {
     wildlife: {
       waders: debugTreeResources(waders.list.map(w => w.mesh)),
       manatees: debugTreeResources(manatees.list.map(m => m.mesh)),
-      gators: debugTreeResources(gators.list.map(g => g.mesh)),
+      gators: { ...debugTreeResources(gators.list.map(g => g.mesh)), ...gators.resourceStats() },
       dolphins: dolphins.resourceStats(),
     },
     stormRecovery: { sites: aftermath.sites.length, rigs: aftermath.rigs.size, disposed: { ...aftermath.disposedResources } },
@@ -658,7 +659,7 @@ async function init() {
     veg.update(time, environment.lightDir, wind);
     birds.update(time, camera.position, dt);
     manatees.update(dt, time, phys.pos.x, phys.pos.y);
-    gators.update(dt, time, phys.pos.x, phys.pos.y, phys.speed);
+    gators.update(dt, time, phys.pos.x, phys.pos.y, phys.speed, phys.heading, environment.spotOn, environment.night, environment.restrictedVisibility, environment.values.storm, environment.waterLevel);
     waders.update(dt, time, phys.pos.x, phys.pos.y, phys.speed);
     world.update(dt, time, phys.pos.x, phys.pos.y);
     // Do not start resident shifts or write their first-seen state while the title card is still open.

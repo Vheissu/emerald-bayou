@@ -100,6 +100,8 @@ Navigation aids are streamed from seeded 360 m cells and capped at 36 around the
 
 Wildlife lives its own life. Alligators bask on banks and slide in when you get close, and the bull will charge an idle hull inside 16 m. Mullet jump near the boat, bait boils off the bow in the shallows, ibis and pelicans run lines low over the water, and vultures circle high. When you get more than 700 m away it all quietly relocates ahead of you.
 
+At night, the boat spotlight can catch an alligator before the rest of it appears out of the black water. A surfaced animal facing the beam throws back a tight amber-red pair. Turn its head, let it dive, or bring in dense fog and the return goes. The eighteen gators share one fixed 36-eye instanced pool with one geometry and one material. The effect uses no point lights or textures, and their swimming height and preferred depth now move with the tide.
+
 On a moving tide, pelicans and the osprey can find a mullet school in open water. Hold 25–65 m off at idle and the bait stays up; drive through it or let your wake reach it and the birds lift while the school goes deep. The event redirects two existing bird flocks and borrows from the fixed fish and spray pools instead of creating another set of wildlife.
 
 Bring the airboat to idle and press `C` to cast. Florida bass, bluegill and bowfin hold in the freshwater backwaters; common snook, juvenile tarpon and red drum work the mangrove and broad-river water. Depth, murk, current, time of day, tide, weather and recent prop wash all change the wait and the species on the line. During the fight, hold `C` to reel and let go when a hard run pushes the tension into the red. Every fish is measured over the gunwale, released, and written into the boat log with its region and personal best.
@@ -149,6 +151,7 @@ src/
   navigationaids.js seeded channel markers, light failures and reports
   fishing.js       boat-bound fishing, habitat, line tension and catch log
   nocturnal.js     seeded bank fireflies and night disturbance response
+  wildlife.js      birds, fish, gators and spotlight eyeshine
   encounters.js    rescues, patrols, races, contraband and wildlife calls
   law.js           wanted attention and pursuit state
   story.js         the channel 68 arc
@@ -176,6 +179,7 @@ __dbg.navigationAids.resourceStats()     // active aids, draw calls, faults and 
 __dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fish budget
 __dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspection
 __dbg.nocturnal.resourceStats()           // point count, draw count and geometry bytes
+__dbg.gators.resourceStats()               // 18 animals and the fixed 36-eye instanced pool
 __dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
 __dbg.environment.settlementPowerSnapshot() // five-light pool, live grid stress and saved strike outages
 __dbg.environment.surfaceWetnessSnapshot()  // live film target, shared material writes and terrain uniforms
