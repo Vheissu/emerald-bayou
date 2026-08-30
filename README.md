@@ -92,6 +92,8 @@ World sounds follow their sources across the water. Gator bellows, bird calls, f
 
 A clearing squall can leave a rainbow opposite the low sun. The primary bow carries red on the outside; a faint secondary reverses the colours, with Alexander's dark band between them. It needs recent rain and a break in the cloud, then fades as the rain curtain moves off. Both arcs are drawn inside the existing sky shader and its water reflection, with no extra scene objects, textures or render targets.
 
+Clouds now move across the ground as well as the sky. In fair and overcast daylight, broad shadows cross the water, banks and trees with the wind. They thin through a squall and disappear under the solid dark deck of a hurricane. The mask takes one sample from the 256 px noise texture already used by mist, inside the existing colour-grade pass. Performance and Fallback skip the work. It adds no scene object or render target and reuses the existing shader program and texture.
+
 The Moon advances through a 29.531-day cycle. Its rise time, crescent or quarter terminator, moonlight and shadows all come from the same phase. New and full moons retain the strongest spring range; quarter moons soften the water and currents into a neap range. Clouds now hide the stars and Moon instead of letting either draw over the weather.
 
 The renderer budgets its internal drawing buffer instead of blindly doubling every Retina dimension. Performance profiles release the full-size optional post targets, reduce reflection and shadow work, and defer optional GLB decoding until the dock scene is playable. The map, streaming distance and simulation stay unchanged while the largest HDR and depth attachments remain bounded.
@@ -185,6 +187,7 @@ __dbg.gators.resourceStats()               // 18 animals and the fixed 36-eye in
 __dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
 __dbg.environment.settlementPowerSnapshot() // five-light pool, live grid stress and saved strike outages
 __dbg.environment.spotlightVolumeSnapshot() // one weather-scaled beam mesh and its fixed geometry budget
+__dbg.environment.cloudShadowSnapshot()   // live mask, drift and zero-extra-resource budget
 __dbg.environment.surfaceWetnessSnapshot()  // live film target, shared material writes and terrain uniforms
 __dbg.encounters.pursuitSnapshot()        // surface units, shared visual and pooled aviation state
 __dbg.hazards.resourceStats()             // debris pool, shared resources and wake-stamp budget

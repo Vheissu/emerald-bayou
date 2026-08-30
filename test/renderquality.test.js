@@ -58,6 +58,10 @@ test('keeps the atmospheric mist shader off the two old-hardware profiles', () =
   assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).surfaceMist), [0, 0, 0.65, 1]);
 });
 
+test('reserves moving cloud shadows for balanced and cinematic hardware', () => {
+  assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).cloudShadows), [0, 0, 0.58, 1]);
+});
+
 test('reserves procedural precipitation impacts for balanced and cinematic water', () => {
   assert.deepEqual([0, 1, 2, 3].map(level => qualityProfile(level).precipitationRipples), [0, 0, 0.62, 1]);
 });

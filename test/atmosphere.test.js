@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { rainbowMoistureStep, rainbowPotential, rainbowResponse, surfaceMistEnvelope } from '../src/environment.js';
+import { cloudShadowPotential, rainbowMoistureStep, rainbowPotential, rainbowResponse, surfaceMistEnvelope } from '../src/environment.js';
 import { Sky } from '../src/sky.js';
 
 test('surface mist follows calm dawn cooling and real fog without surviving hurricane wind', () => {
@@ -16,6 +16,19 @@ test('surface mist follows calm dawn cooling and real fog without surviving hurr
   assert.ok(windyDawn < 0.01);
   assert.ok(denseFog > 0.85);
   assert.ok(hurricane < 0.2);
+});
+
+test('cloud shadows belong to sunlit broken cover rather than night or a solid hurricane deck', () => {
+  const fair = cloudShadowPotential(0.49, 1, 0.72, 0);
+  const overcast = cloudShadowPotential(0.40, 1, 0.72, 0.28);
+  const squall = cloudShadowPotential(0.31, 1, 0.72, 0.68);
+
+  assert.ok(fair > 0.45 && fair < 0.55);
+  assert.ok(overcast > fair);
+  assert.ok(squall > 0.3 && squall < fair);
+  assert.equal(cloudShadowPotential(0.49, 0, 0.72, 0), 0);
+  assert.equal(cloudShadowPotential(0.49, 1, -0.02, 0), 0);
+  assert.equal(cloudShadowPotential(0.16, 1, 0.72, 1), 0);
 });
 
 test('a rainbow needs a clearing rain curtain and a low unobscured sun', () => {

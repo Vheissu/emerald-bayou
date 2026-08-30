@@ -9,7 +9,10 @@ test('performance mode releases full-size optional post targets', () => {
   const pipeline = new Pipeline(renderer, new THREE.PerspectiveCamera(52, 16 / 9, 0.3, 7500), qualityProfile(3));
   const cinematic = pipeline.memoryStats();
   assert.equal(cinematic.surfaceMist, 1);
+  assert.equal(cinematic.cloudShadows, 1);
   assert.equal(cinematic.lensWater, 1);
+  assert.deepEqual(Object.keys(pipeline.grade.material.uniforms).filter(name => /^t[A-Z]/.test(name)).sort(), ['tBloom', 'tColor', 'tDepth', 'tNoise']);
+  assert.equal((pipeline.grade.material.fragmentShader.match(/texture2D\(tNoise, cloudUv\)/g) || []).length, 1);
 
   const profile = qualityProfile(1);
   const ratio = pixelRatioFor(1920, 1080, 2, profile.maxDrawPixels, profile.maxDevicePixelRatio);
@@ -21,6 +24,11 @@ test('performance mode releases full-size optional post targets', () => {
   assert.equal(performance.bloom, false);
   assert.equal(performance.finalPass, false);
   assert.equal(performance.surfaceMist, 0);
+  assert.equal(performance.cloudShadows, 0);
+  assert.equal(performance.cloudShadowExtraPasses, 0);
+  assert.equal(performance.cloudShadowExtraPrograms, 0);
+  assert.equal(performance.cloudShadowExtraTextures, 0);
+  assert.equal(performance.cloudShadowExtraAttachmentBytes, 0);
   assert.equal(performance.lensWater, 0);
   assert.equal(pipeline.aaRT.width, 1);
   assert.equal(pipeline.bloomA.width, 1);

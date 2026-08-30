@@ -14,6 +14,7 @@ import {
 
 const FT = 3.28084;
 const MPS_TO_MPH = 2.23694;
+const CLOUD_SHADOW_WRAP = 25000;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 const smoothSlope = (a, b, v) => { const t = (v - a) / (b - a); return t > 0 && t < 1 ? 6 * t * (1 - t) / (b - a) : 0; };
@@ -25,6 +26,16 @@ export function surfaceMistEnvelope({ hour = 12, fog = 0, rain = 0, wind = 0, st
   const weatherFog = smooth(0.0006, 0.0031, fog) * 0.88;
   const rainCooling = smooth(0.22, 0.86, rain) * calm * (1 - smooth(0.52, 1, storm)) * 0.2;
   return clamp(weatherFog + dawnCooling * calm * 0.58 + rainCooling);
+}
+
+// Cloud cover is a threshold in the sky shader: lower values build a more continuous deck. Distinct moving
+// shadows therefore peak under broken fair/overcast cover, then recede when a severe cell becomes uniformly dark.
+export function cloudShadowPotential(cover = 0.49, daylight = 0, sunAltitude = 0, storm = 0) {
+  const coverN = clamp(Number(cover) || 0), dayN = clamp(Number(daylight) || 0), stormN = clamp(Number(storm) || 0);
+  const cloudMass = 1 - smooth(0.42, 0.56, coverN);
+  const openTexture = smooth(0.18, 0.38, coverN);
+  const liftedSun = smooth(0.015, 0.13, Number(sunAltitude) || 0);
+  return clamp(cloudMass * openTexture * dayN * liftedSun * lerp(1, 0.38, stormN));
 }
 
 export function spotlightVolumeState(out = {}, on = false, night = 0, restrictedVisibility = 0, rain = 0, storm = 0, quality = 1) {
@@ -382,6 +393,7 @@ export class Environment {
     this.navVisibility = { port: true, starboard: true, stern: true }; this.hornCooldown = 0;
     this.precip = new Precipitation(this.fxScene, this.effectBudget);
     this.windDir = new THREE.Vector3(1, 0, 0); this.moonDir = new THREE.Vector3();
+    this.cloudShadowOffset = new THREE.Vector2(); this.cloudShadowAmount = 0;
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
@@ -511,6 +523,14 @@ export class Environment {
       target: surfaceWetnessTarget(this.values.rain, this.values.hail, this.values.fog, this.daylight),
       terrainUniforms: this.terrain.uniforms ? 2 : 0,
       materials: surfaceWetMaterialStats(),
+    };
+  }
+  cloudShadowSnapshot() {
+    const grade = this.pipeline.grade.material.uniforms;
+    return {
+      amount: this.cloudShadowAmount, quality: grade.cloudShadowQuality.value,
+      offsetX: this.cloudShadowOffset.x, offsetZ: this.cloudShadowOffset.y,
+      extraPasses: 0, extraPrograms: 0, extraTextures: 0, extraAttachmentBytes: 0,
     };
   }
   hurricaneSnapshot() {
@@ -720,6 +740,13 @@ export class Environment {
     this.gust = clamp(this.gust, 0.58, 1.18);
     this.windDir.set(Math.cos(this.localWindAngle), 0, Math.sin(this.localWindAngle));
     this.wind.set(this.windDir.x, clamp(0.32 + V.wind * this.gust / 16, 0.35, 2.65), this.windDir.z);
+    if (step) {
+      this.cloudShadowOffset.x += this.windDir.x * V.wind * step;
+      this.cloudShadowOffset.y += this.windDir.z * V.wind * step;
+      // 25 km is exactly 32 repeats at the grade shader's 0.00128 scale, so precision wrapping cannot pop the mask.
+      if (Math.abs(this.cloudShadowOffset.x) > CLOUD_SHADOW_WRAP) this.cloudShadowOffset.x %= CLOUD_SHADOW_WRAP;
+      if (Math.abs(this.cloudShadowOffset.y) > CLOUD_SHADOW_WRAP) this.cloudShadowOffset.y %= CLOUD_SHADOW_WRAP;
+    }
 
     const solar = (this.hour - 6) / 24 * Math.PI * 2;
     const sunY = Math.sin(solar), sunX = -Math.cos(solar) * 0.86;
@@ -782,6 +809,9 @@ export class Environment {
     fog.fogMax.value = lerp(0.6, 0.94, this.restrictedVisibility);
     fog.bloomAmt.value = lerp(0.18, 0.1, daylight) + V.rain * 0.03 + this.restrictedVisibility * (this.spotOn ? 0.065 : 0.022);
     fog.sunDir.value.copy(this.lightDir);
+    this.cloudShadowAmount = cloudShadowPotential(V.cloud, daylight, this.sunDir.y, V.storm);
+    fog.cloudShadowAmount.value = this.cloudShadowAmount;
+    fog.cloudShadowOffset.value.copy(this.cloudShadowOffset);
     fog.mistAmount.value = surfaceMistEnvelope({ hour: this.hour, fog: V.fog, rain: V.rain, wind: V.wind * this.gust, storm: V.storm });
     fog.mistLevel.value = this.waterLevel;
     fog.mistHeight.value = lerp(2.35, 4.1, this.restrictedVisibility) + V.rain * 0.35;

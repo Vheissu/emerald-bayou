@@ -78,6 +78,7 @@ export class Pipeline {
         near: { value: camera.near }, far: { value: camera.far }, exposure: { value: 1.0 },
         fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, fogMax: { value: 0.6 }, bloomAmt: { value: 0.12 }, bloomQuality: { value: this.bloomEnabled ? 1 : 0 },
         mistAmount: { value: 0 }, mistQuality: { value: quality.surfaceMist ?? 0 }, mistLevel: { value: 0 }, mistHeight: { value: 2.8 }, mistTime: { value: 0 }, mistWind: { value: new THREE.Vector2() },
+        cloudShadowAmount: { value: 0 }, cloudShadowQuality: { value: quality.cloudShadows ?? 0 }, cloudShadowOffset: { value: new THREE.Vector2() },
         lensWetness: { value: 0 }, lensQuality: { value: quality.lensWater ?? 0 }, lensTime: { value: 0 }, lensWind: { value: 0 }, lensAspect: { value: w / Math.max(1, h) },
         invProj: { value: new THREE.Matrix4() }, camMat: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       },
@@ -85,6 +86,7 @@ export class Pipeline {
       fragmentShader: `
         uniform sampler2D tColor, tDepth, tBloom, tNoise; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt, bloomQuality; uniform vec3 fogColor, sunDir;
         uniform float mistAmount, mistQuality, mistLevel, mistHeight, mistTime; uniform vec2 mistWind;
+        uniform float cloudShadowAmount, cloudShadowQuality; uniform vec2 cloudShadowOffset;
         uniform float lensWetness, lensQuality, lensTime, lensWind, lensAspect;
         uniform mat4 invProj, camMat; varying vec2 vUv;
         vec3 aces(vec3 x) { const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14; return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0); }
@@ -130,25 +132,45 @@ export class Pipeline {
           vec3 fc = mix(fogColor, vec3(0.95, 0.9, 0.8), sunAmt * 0.5);
           if (d < 0.99999) {
             float z = linZ(d);
+            float cloudStrength = cloudShadowAmount * cloudShadowQuality;
+            float mistStrength = mistAmount * mistQuality;
+            float rayDist = 0.0; vec3 cameraWorld = vec3(0.0), worldPos = vec3(0.0);
+            if (cloudStrength > 0.001 || mistStrength > 0.001) {
+              rayDist = min(z / max(-viewRay.z, 0.05), 7500.0);
+              cameraWorld = camMat[3].xyz;
+              worldPos = cameraWorld + vdir * rayDist;
+            }
+            if (cloudStrength > 0.001) {
+              // Intersect the sightline endpoint's ray to the sun with a broad notional cloud deck. Its retained
+              // wind offset moves the cover through world space, while mipmapped shared noise keeps distant banks
+              // stable. Luminous lamps and lightning remain light sources instead of being painted dark.
+              float cloudHeight = 720.0;
+              vec2 cloudWorld = worldPos.xz + sunDir.xz * max(0.0, cloudHeight - worldPos.y) / max(sunDir.y, 0.08);
+              vec2 cloudUv = (cloudWorld - cloudShadowOffset) * 0.00128;
+              vec4 cloudNoise = texture2D(tNoise, cloudUv);
+              float cloudField = cloudNoise.r * 0.76 + cloudNoise.g * 0.24;
+              float cloudPatch = smoothstep(0.43, 0.66, cloudField);
+              float sourceProtection = 1.0 - smoothstep(0.92, 2.4, dot(c, vec3(0.2126, 0.7152, 0.0722)));
+              float shadow = cloudPatch * cloudStrength * sourceProtection * 0.19;
+              c *= 1.0 - shadow;
+            }
             float dist = z;
             float f = 1.0 - exp(-dist * fogDensity);
             f = clamp(f, 0.0, fogMax);
             c = mix(c, fc * 1.05, f);
             // Low fog has a real height instead of tinting the entire view equally. Reconstructing the endpoint makes
             // open water and lower trunks carry the bank while the tops of cypress remain visible above it.
-            float mistStrength = mistAmount * mistQuality;
             if (mistStrength > 0.001) {
-              float rayDist = min(z / max(-viewRay.z, 0.05), 900.0);
-              vec3 cameraWorld = camMat[3].xyz;
-              vec3 worldPos = cameraWorld + vdir * rayDist;
-              float h0 = max(cameraWorld.y - mistLevel, 0.0), h1 = max(worldPos.y - mistLevel, 0.0);
+              float mistRayDist = min(rayDist, 900.0);
+              vec3 mistWorldPos = cameraWorld + vdir * mistRayDist;
+              float h0 = max(cameraWorld.y - mistLevel, 0.0), h1 = max(mistWorldPos.y - mistLevel, 0.0);
               float heightDensity = (exp(-h0 / mistHeight) + exp(-h1 / mistHeight)) * 0.5;
               vec2 drift = mistWind * mistTime;
-              float broad = texture2D(tNoise, worldPos.xz * 0.0022 - drift * 0.0022).r;
-              float detail = texture2D(tNoise, worldPos.xz * 0.0061 - drift * 0.0047 + 0.37).g;
+              float broad = texture2D(tNoise, mistWorldPos.xz * 0.0022 - drift * 0.0022).r;
+              float detail = texture2D(tNoise, mistWorldPos.xz * 0.0061 - drift * 0.0047 + 0.37).g;
               float patchDensity = mix(0.52, 1.28, smoothstep(0.18, 0.82, broad * 0.7 + detail * 0.3));
-              float bank = (1.0 - exp(-rayDist * 0.0032 * heightDensity * patchDensity)) * mistStrength;
-              bank *= smoothstep(18.0, 75.0, rayDist);
+              float bank = (1.0 - exp(-mistRayDist * 0.0032 * heightDensity * patchDensity)) * mistStrength;
+              bank *= smoothstep(18.0, 75.0, mistRayDist);
               bank = clamp(bank, 0.0, 0.42 * mistStrength);
               c = mix(c, fc * 1.035, bank);
             }
@@ -233,6 +255,7 @@ export class Pipeline {
     if (this.grade) {
       this.grade.material.uniforms.bloomQuality.value = this.bloomEnabled ? 1 : 0;
       this.grade.material.uniforms.mistQuality.value = quality.surfaceMist ?? 0;
+      this.grade.material.uniforms.cloudShadowQuality.value = quality.cloudShadows ?? 0;
       this.grade.material.uniforms.lensQuality.value = quality.lensWater ?? 0;
     }
   }
@@ -274,7 +297,14 @@ export class Pipeline {
     const sceneBytes = pixels * 12 * (1 + samples);
     const compositeBytes = pixels * 12, postBytes = pixels * 4 + (this.finalEnabled ? pixels * 4 : 4);
     const bloomBytes = this.bloomEnabled ? Math.floor(width / 4) * Math.floor(height / 4) * 16 : 16;
-    return { width, height, pixels, samples, dormant: this.dormant, bloom: this.bloomEnabled, finalPass: this.finalEnabled, surfaceMist: this.grade.material.uniforms.mistQuality.value, lensWater: this.grade.material.uniforms.lensQuality.value, lensWetness: this.lensWetness, estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes };
+    const grade = this.grade.material.uniforms;
+    return {
+      width, height, pixels, samples, dormant: this.dormant, bloom: this.bloomEnabled, finalPass: this.finalEnabled,
+      surfaceMist: grade.mistQuality.value, cloudShadows: grade.cloudShadowQuality.value, cloudShadowAmount: grade.cloudShadowAmount.value,
+      cloudShadowExtraPasses: 0, cloudShadowExtraPrograms: 0, cloudShadowExtraTextures: 0, cloudShadowExtraAttachmentBytes: 0,
+      lensWater: grade.lensQuality.value, lensWetness: this.lensWetness,
+      estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes,
+    };
   }
   // scene: opaque world. overlays: array of scenes rendered on top (water, fx)
   render(scene, camera, overlays, mode = 'full') {
