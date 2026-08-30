@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { foliageInstanceCount, normalizeFoliageDetail, Vegetation } from '../src/vegetation.js';
+import { crossedFoliageCardGeometry, foliageInstanceCount, normalizeFoliageDetail, Vegetation } from '../src/vegetation.js';
 
 function deferredVegetation(chunks) {
   const terrain = {
@@ -44,6 +44,34 @@ function recordingBatch() {
   };
 }
 
+function compactKind(hasCrown = false) {
+  return {
+    geo: new THREE.PlaneGeometry(1, 1),
+    mat: new THREE.MeshBasicMaterial(),
+    depth: new THREE.MeshDepthMaterial(),
+    opts: { hasCrown }, shadow: false, small: false,
+  };
+}
+
+function compactChunkVegetation() {
+  const vegetation = deferredVegetation([]);
+  Object.assign(vegetation.terrain, {
+    hf: { compute: () => 0.25 }, island: { x: 9000, y: 9000 }, lagoon: { x: 0, y: 0 },
+    riverCenterX: () => 20,
+  });
+  vegetation.cyp = compactKind(true); vegetation.oak = compactKind(true); vegetation.palm = compactKind();
+  vegetation.palmetto = compactKind(); vegetation.moss = compactKind(); vegetation.grass = compactKind(); vegetation.reed = compactKind();
+  vegetation.trunkGeo = new THREE.BoxGeometry(1, 1, 1); vegetation.branchGeo = new THREE.BoxGeometry(1, 1, 1); vegetation.kneeGeo = new THREE.BoxGeometry(1, 1, 1);
+  vegetation.trunkMat = new THREE.MeshBasicMaterial(); vegetation.branchMat = new THREE.MeshBasicMaterial(); vegetation.kneeMat = new THREE.MeshBasicMaterial();
+  const chunk = {
+    key: '0:40:40', level: 0, x0: 4000, z0: 4000, size: 100, minH: 0.25, maxH: 0.25,
+    h: new Float32Array([0.25]), bio: new Float32Array([0.2]), colliders: [], sample: () => 0.25,
+  };
+  const stream = vegetation.buildChunk(chunk); let step;
+  do step = stream.next(); while (!step.done);
+  return { vegetation, chunk };
+}
+
 function populateStreamingCell(interleaveScratch = false, tier = 0) {
   const vegetation = deferredVegetation([]);
   Object.assign(vegetation.terrain, {
@@ -77,6 +105,44 @@ test('foliage detail keeps silhouettes bounded while reducing retained cards', (
   assert.deepEqual([0.36, 0.56, 0.82, 1].map(detail => foliageInstanceCount(100, detail, 12)), [36, 56, 82, 100]);
   assert.equal(foliageInstanceCount(5, 0.25, 2), 2);
   assert.equal(foliageInstanceCount(0, 0.5, 2), 0);
+});
+
+test('ground cover bakes the same crossed silhouette into one shared geometry', () => {
+  const crossed = crossedFoliageCardGeometry();
+  assert.equal(crossed.getAttribute('position').count, 8);
+  assert.equal(crossed.getAttribute('uv').count, 8);
+  assert.equal(crossed.index.count, 12);
+  crossed.computeBoundingBox();
+  assert.deepEqual(crossed.boundingBox.min.toArray(), [-0.5, 0, -0.5]);
+  assert.deepEqual(crossed.boundingBox.max.toArray(), [0.5, 1, 0.5]);
+  crossed.dispose();
+});
+
+test('chunk-local half-float foliage positions preserve the large world without duplicate 32-bit coordinates', () => {
+  const { chunk } = compactChunkVegetation();
+  assert.deepEqual(chunk.veg.position.toArray(), [4050, 0, 4050]);
+
+  const compactMeshes = chunk.veg.children.filter(mesh => mesh.geometry.getAttribute('iPosition'));
+  assert.ok(compactMeshes.length > 0);
+  let instances = 0;
+  for (const mesh of compactMeshes) {
+    const position = mesh.geometry.getAttribute('iPosition');
+    assert.equal(position.isFloat16BufferAttribute, true);
+    assert.equal(position.array.BYTES_PER_ELEMENT, 2);
+    assert.equal(position.count, mesh.userData.instanceCount);
+    instances += position.count;
+    for (let i = 0; i < position.count; i++) {
+      assert.ok(Math.abs(position.getX(i)) < 90);
+      assert.ok(Math.abs(position.getZ(i)) < 90);
+    }
+  }
+  assert.ok(instances > 100);
+
+  const solid = chunk.veg.children.find(mesh => mesh.isInstancedMesh);
+  assert.ok(solid);
+  const matrix = new THREE.Matrix4(), local = new THREE.Vector3();
+  solid.getMatrixAt(0, matrix); local.setFromMatrixPosition(matrix);
+  assert.ok(Math.abs(local.x) < 90 && Math.abs(local.z) < 90);
 });
 
 test('dense vegetation cells yield repeatedly without changing placements or collisions', () => {
