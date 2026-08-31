@@ -836,10 +836,14 @@ async function init() {
       for (let i = 0; i < n; i++) plume.emit(phys.pos.x - nx * 1.6 + jitter() * 1.2, 0.3 + Math.random() * 1.2, phys.pos.y - nz * 1.6 + jitter() * 1.2, nx * (1 + Math.random() * 2) + jitter() * 2, 0.5 + Math.random() * 2, nz * (1 + Math.random() * 2) + jitter() * 2, 0.2 + Math.random() * 0.3, 0.9, 0.5 + Math.random() * 0.4, 0.28);
       if (phys.wet > 0.3) for (let i = 0; i < n * 3; i++) spray.emit(phys.pos.x + jitter() * 2.4, 0.05, phys.pos.y + jitter() * 2.4, nx * (2 + Math.random() * 4) + jitter() * 3, 1 + Math.random() * 3, nz * (2 + Math.random() * 4) + jitter() * 3, 0.015 + Math.random() * 0.03, 0.4 + Math.random() * 0.4, 0.6);
     }
+    if (phys.bottomStrike > 5) {
+      audio.thud(Math.min(1.6, phys.bottomStrike / 7)); fovKick = Math.min(14, fovKick + phys.bottomStrike * 0.42);
+      controller.rumble(Math.min(1, 0.34 + phys.bottomStrike * 0.055), Math.min(0.9, 0.24 + phys.bottomStrike * 0.04), Math.min(320, 110 + phys.bottomStrike * 13));
+    }
 
     // boat transform
     const g = boat.group;
-    g.position.set(phys.pos.x, phys.y - 0.32, phys.pos.y);
+    g.position.set(phys.pos.x, phys.y - 0.32 - (phys.damageSink || 0), phys.pos.y);
     g.rotation.set(phys.pitch, phys.heading, phys.roll, 'YXZ');
     if (phys.rpm > 0.01) boat.prop.rotation.z += dt * (8 + phys.rpm * 95);
     boat.blur.material.opacity = Math.min(0.35, phys.rpm * 0.4);

@@ -7,6 +7,7 @@ import { HullDamageMaterial } from './hulldamage.js';
 import { person } from './folk.js';
 import { mulberry32 } from './noise.js';
 import { registerWetMaterial } from './surfacewetness.js';
+import { bottomStrikeSeverity } from './boatdamage.js';
 
 // Boat local frame: +X starboard, +Y up, -Z forward (bow at -Z).
 // The player boat and scheduled traffic use the same detailed hull. Keep one immutable render template so its
@@ -486,6 +487,7 @@ export class AirboatPhysics {
     this.speed = 0;
     this.wet = 1; this.landFac = 0; this.contact = true; this.airborne = false; this.airTime = 0; this.airPeak = 0;
     this.impact = 0; // vertical landing impact (m/s) on the frame it happens
+    this.bottomStrike = 0; // fast first contact with a submerged bed
     this.hit = 0; this.hitNormal = new THREE.Vector2(); // collision speed into an obstacle this frame
     this.surfH = 0; this.prevFloor = null; this.groundH = 0; this.waterH = 0;
     this.grounded = 0; this.bob = 0;
@@ -496,7 +498,7 @@ export class AirboatPhysics {
     this.lastFloat = new THREE.Vector2(x, z);
     this.loaded = 0; // passenger / cargo mass factor
     this.towDrag = 0; // extra quadratic drag from something on a rope behind the boat
-    this.powerScale = 1; this.steerScale = 1; this.damageLoad = 0; this.damageList = 0; this.damageTrim = 0;
+    this.powerScale = 1; this.steerScale = 1; this.damageLoad = 0; this.damageList = 0; this.damageTrim = 0; this.damageSink = 0;
     this.landedFrame = false; this.takeoffFrame = false;
     this.landQuality = ''; // '', 'clean', 'hard', 'stuffed', 'wipeout' on the landing frame
     this.noseIn = 0; this.tailIn = 0; this.wipeT = 0; this.stuffT = 0;
@@ -568,7 +570,7 @@ export class AirboatPhysics {
     this.anchorConstraint = null;
     this.pos.set(x, z); this.vel.set(0, 0); this.heading = heading; this.angVel = 0; this.y = 0; this.vy = 0;
     this.pitch = this.roll = this.pitchVel = this.rollVel = 0; this.prevFloor = null; this.airTime = 0; this.airPeak = 0; this.lastFloat.set(x, z);
-    this.airborne = false; this.landedFrame = false; this.takeoffFrame = false; this.landQuality = ''; this.wipeT = 0; this.stuffT = 0; this.impact = 0; this.hit = 0;
+    this.airborne = false; this.landedFrame = false; this.takeoffFrame = false; this.landQuality = ''; this.wipeT = 0; this.stuffT = 0; this.impact = 0; this.bottomStrike = 0; this.hit = 0;
     this.windHeel = 0; this.apparentWind = 0; this.crosswind = 0;
     this.current.set(0, 0); this.waterSpeed = 0;
   }
@@ -584,8 +586,8 @@ export class AirboatPhysics {
     this.rpm += (rpmTarget - this.rpm) * (1 - Math.exp(-dt * 2.5));
 
     const fwd = this.forward(this._f), rgt = this.right(this._r);
-    const massF = 1 + this.loaded * 0.18 + (this.damageLoad || 0);
-    this.hit = 0; this.hitTag = ''; this.hitObj = null;
+    const massF = 1 + this.loaded * 0.18 + (this.damageLoad || 0), previousGrounded = this.grounded;
+    this.hit = 0; this.hitTag = ''; this.hitObj = null; this.bottomStrike = 0;
 
     // ---- support surfaces under the hull ----
     const px = this.pos.x, pz = this.pos.y;
@@ -641,6 +643,7 @@ export class AirboatPhysics {
     const rvx = this.vel.x - cx, rvz = this.vel.y - cz;
     const vf = rvx * fwd.x + rvz * fwd.y, vl = rvx * rgt.x + rvz * rgt.y;
     this.waterSpeed = Math.hypot(rvx, rvz);
+    this.bottomStrike = bottomStrikeSeverity(this.waterSpeed, previousGrounded, this.landFac, waterC - Math.max(hC, hMean), hBow - Math.max(hC, hStern));
     const anchor = this.anchorConstraint, anchorForce = this._anchorForce;
     if (anchor?.active && anchor.engaged && this.wet > 0.2 && !this.airborne) {
       anchorConstraintForce(anchor, px + fwd.x * 2.2, pz + fwd.y * 2.2, this.vel.x, this.vel.y, anchorForce);

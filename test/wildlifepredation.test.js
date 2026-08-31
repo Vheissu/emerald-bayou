@@ -36,6 +36,14 @@ test('a hooked fish attracts only the nearest eligible gator over a clear water 
   assert.equal(blockedDirector.attractToHookedFish(source, 0, 0, 1, 0), null);
 });
 
+test('the old bull can become the retained tow target and is released back into the same pool', () => {
+  const bull = testGator(12, 0, { big: true, scale: 1.55 }), source = { state: 'fight' };
+  const director = Object.create(Gators.prototype); director.list = [bull];
+  assert.equal(director.hookAlligator(source, bull), true); assert.equal(bull.towed, true); assert.equal(bull.hookSource, source); assert.equal(bull.dive, 0);
+  source.state = 'gator'; assert.equal(director.releaseHookedAlligator(source), 1);
+  assert.equal(bull.towed, false); assert.equal(bull.hookSource, null); assert.ok(bull.dive >= 5.5); assert.ok(bull.preyCooldown >= 45);
+});
+
 test('an attracted gator closes on the moving fight target and takes it once', () => {
   const gator = testGator(0, 6), distances = [];
   const source = {
@@ -52,4 +60,19 @@ test('an attracted gator closes on the moving fight target and takes it once', (
 
   assert.equal(source.taken, 1); assert.ok(distances.length > 0); assert.ok(distances.at(-1) < distances[0]);
   assert.equal(gator.preySource, null); assert.ok(gator.dive > 7); assert.ok(gator.wakeKick >= 1.3); assert.ok(gator.preyCooldown >= 37);
+});
+
+test('the old bull capture hands the same animal into the heavy-tackle fight without diving it away', () => {
+  const bull = testGator(0, 1, { big: true, scale: 1.55 });
+  const source = {
+    state: 'fight', session: { x: 0, z: 0, species: { power: 0.8 } },
+    trackAlligatorThreat() {}, clearAlligatorThreat() {},
+    alligatorTake(gator) { gator.towed = true; gator.hookSource = this; this.state = 'gator'; return 'hooked'; },
+  };
+  bull.preySource = source; bull.preyT = 10;
+  const director = Object.create(Gators.prototype);
+  Object.assign(director, { T: { heightAt: () => -2 }, list: [bull], activity: 1, rand: () => 0.5, eyeshinePool: { update() {} }, wakeBoatX: 0, wakeBoatZ: 0 });
+  director.update(1 / 60, 0, 18, 0, 0, 0, false, 0, 0, 0, 0);
+  assert.equal(source.state, 'gator'); assert.equal(bull.towed, true); assert.equal(bull.hookSource, source);
+  assert.equal(bull.preySource, null); assert.equal(bull.dive, 0); assert.equal(bull.preyCooldown, 45);
 });

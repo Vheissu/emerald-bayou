@@ -128,6 +128,35 @@ export function fishingFightStep(state, input = {}, random = Math.random) {
   return '';
 }
 
+export function alligatorFightStep(state, input = {}, random = Math.random) {
+  const dt = clamp(input.dt, 0, 0.08), reeling = Boolean(input.reeling), power = clamp(input.power, 0.8, 1.8);
+  state.startedRun = false; state.fightT = Math.max(0, Number(state.fightT) || 0) + dt;
+  if (state.runT > 0) state.runT = Math.max(0, state.runT - dt);
+  else {
+    state.restT = Math.max(0, (Number(state.restT) || 0) - dt);
+    if (state.restT <= 0) {
+      state.runT = 0.9 + clamp(random()) * 1.45;
+      state.restT = 0.85 + clamp(random()) * 1.8;
+      state.runStrength = 0.94 + clamp(random()) * 0.34;
+      state.startedRun = true;
+    }
+  }
+  const running = state.runT > 0, stamina = clamp(state.stamina), strength = Number(state.runStrength) || 1;
+  const pull = power * (running ? strength : 0.32) * (0.62 + stamina * 0.38); state.pull = pull;
+  const target = clamp(0.17 + pull * 0.52 + (reeling ? 0.34 : -0.1), 0.02, 1.22);
+  state.tension = clamp((Number(state.tension) || 0) + (target - (Number(state.tension) || 0)) * (1 - Math.exp(-dt * (reeling ? 4.4 : 3))), 0, 1.2);
+  const retrieve = reeling ? (running ? Math.max(0.04, 0.5 - pull * 0.18) : Math.max(0.8, 2.9 - pull * 0.35)) : 0;
+  state.distance = clamp((Number(state.distance) || 0) + (pull * (running ? 1.18 : 0.22) - retrieve) * dt, 0, Number(state.lineLimit) || 58);
+  if (state.tension > 0.2 && state.tension < 0.9) state.stamina = clamp(stamina - dt * (0.018 + state.tension * 0.042) / (0.92 + power * 0.5));
+  else state.stamina = clamp(stamina + dt * 0.006);
+  state.strain = clamp((Number(state.strain) || 0) + dt * (state.tension > 0.96 ? 1.18 + (state.tension - 0.96) * 5 : -1.35));
+  state.slack = clamp((Number(state.slack) || 0) + dt * (state.tension < 0.055 ? 0.72 : -1.8));
+  if (state.strain >= 0.68) return 'snapped';
+  if (state.slack >= 1 || state.distance >= (Number(state.lineLimit) || 58) - 0.05 || state.fightT >= 52) return 'lost';
+  if (state.distance <= 4.5 && state.stamina <= 0.24 && state.fightT >= 12) return 'alongside';
+  return '';
+}
+
 export function ensureFishingSave(save) {
   const raw = save?.fishing && typeof save.fishing === 'object' ? save.fishing : {}, rawSpecies = raw.species && typeof raw.species === 'object' ? raw.species : {};
   const species = {}; let speciesTotal = 0;
@@ -149,7 +178,8 @@ export function ensureFishingSave(save) {
   }
   const journal = {
     total: Math.max(speciesTotal, whole(raw.total, FISHING_LIMITS.maxCount)), released: whole(raw.released, FISHING_LIMITS.maxCount),
-    missed: whole(raw.missed, FISHING_LIMITS.maxCount), snapped: whole(raw.snapped, FISHING_LIMITS.maxCount), gatorLosses: whole(raw.gatorLosses, FISHING_LIMITS.maxCount), species, recent,
+    missed: whole(raw.missed, FISHING_LIMITS.maxCount), snapped: whole(raw.snapped, FISHING_LIMITS.maxCount), gatorLosses: whole(raw.gatorLosses, FISHING_LIMITS.maxCount),
+    gatorHooks: whole(raw.gatorHooks, FISHING_LIMITS.maxCount), species, recent,
   };
   if (save && typeof save === 'object') save.fishing = journal;
   return journal;
@@ -189,7 +219,7 @@ export class Fishing {
       t: 0, x: 0, z: 0, startX: 0, startZ: 0, waitT: 0, biteT: 0, potential: 0, species: null, lengthIn: 0,
       distance: 0, lineLimit: 42, stamina: 1, tension: 0.35, strain: 0, slack: 0, runT: 0, restT: 1, runStrength: 1,
       startedRun: false, runAngle: 0, turnDirection: 1, jumpT: 0, jumpDuration: 0.82, jumpStartY: 0, regionId: '', regionName: '', isBest: false,
-      alligator: null, alligatorDistance: Infinity,
+      alligator: null, alligatorDistance: Infinity, hookedGator: null, gatorLengthFt: 0, gatorWeightLb: 0, fightT: 0, pull: 0,
     };
     this.snapshot = {}; this.fightInput = { dt: 0, reeling: false, power: 0.5 };
     this.tip = new THREE.Vector3(); this.lurePos = new THREE.Vector3(); this.sidePos = new THREE.Vector3(); this.forward = new THREE.Vector2(); this.right = new THREE.Vector2(); this.flow = new THREE.Vector2();
@@ -224,10 +254,10 @@ export class Fishing {
     const code = typeof event === 'string' ? event : event?.code;
     if (code !== 'KeyC' && code !== 'KeyX') return false;
     event?.preventDefault?.();
-    if (code === 'KeyX') { if (this.state === 'fight') this.cutLine(); else if (this.blocking()) this.cancel('Line reeled in', true); return true; }
+    if (code === 'KeyX') { if (this.state === 'fight' || this.state === 'gator') this.cutLine(); else if (this.blocking()) this.cancel('Line reeled in', true); return true; }
     if (this.state === 'idle') this.start();
     else if (this.state === 'bite' && !event?.repeat) this.setHook();
-    else if (this.state === 'fight') this.reeling = true;
+    else if (this.state === 'fight' || this.state === 'gator') this.reeling = true;
     else if (this.state === 'landed' && !event?.repeat) this.release();
     return true;
   }
@@ -280,6 +310,7 @@ export class Fishing {
       lineLimit: 42, stamina: 1, tension: 0.34, strain: 0, slack: 0, runT: 0, restT: 0.85 + this.random() * 0.75, runStrength: 1,
       startedRun: false, runAngle: Math.atan2(target.z - this.phys.pos.y, target.x - this.phys.pos.x), turnDirection: this.random() < 0.5 ? -1 : 1,
       jumpT: 0, regionId: snapshot.regionId, regionName: snapshot.regionName, isBest: false, alligator: null, alligatorDistance: Infinity,
+      hookedGator: null, gatorLengthFt: 0, gatorWeightLb: 0, fightT: 0, pull: 0,
     });
     this.state = 'casting'; this.reeling = false; this.releaseSplash = false; this.rodRoot.visible = true; this.line.visible = true; this.lure.visible = true; this.catchMesh.visible = false;
     this.rodRoot.rotation.set(-0.76, 0.02, 0.34, 'YXZ'); this.updateVisuals(0, 0); return true;
@@ -315,7 +346,10 @@ export class Fishing {
   }
 
   cutLine() {
-    if (this.state !== 'fight') return false;
+    if (this.state !== 'fight' && this.state !== 'gator') return false;
+    if (this.state === 'gator') {
+      this.cancel('', false); this.game.toast('Line cut', 'The pull came off the stern. Smart.', 2.7); return true;
+    }
     const threatened = Boolean(this.session.alligator); this.store.missed = whole(this.store.missed + 1); this.dirty = true;
     this.cancel('', false); this.game.toast('Line cut', threatened ? 'The fish is gone, but the gator is off the boat.' : 'The fish is gone. Cast again when the water settles.', 2.4); return true;
   }
@@ -324,6 +358,20 @@ export class Fishing {
     if (this.state !== 'fight' || (this.session.alligator && this.session.alligator !== gator)) return false;
     const session = this.session, name = session.species?.name || 'fish', x = session.x, z = session.z;
     this.store.missed = whole(this.store.missed + 1); this.store.gatorLosses = whole(this.store.gatorLosses + 1); this.dirty = true;
+    if (gator?.big && this.gators?.hookAlligator?.(this, gator)) {
+      const scale = clamp(gator.mesh?.scale?.x, 0.8, 1.8);
+      session.hookedGator = gator; session.alligator = gator; session.alligatorDistance = 0;
+      session.gatorLengthFt = Math.round((8.7 + scale * 2.8) * 10) / 10;
+      session.gatorWeightLb = Math.round((510 + Math.pow(clamp((scale - 0.8) / 0.75), 1.75) * 520) / 10) * 10;
+      session.distance = clamp(Math.hypot(gator.pos.x - this.phys.pos.x, gator.pos.z - this.phys.pos.y), 6, 28); session.lineLimit = 58;
+      session.runAngle = Math.atan2(gator.pos.z - this.phys.pos.y, gator.pos.x - this.phys.pos.x); session.turnDirection = this.random() < 0.5 ? -1 : 1;
+      session.stamina = 1; session.tension = 0.46; session.strain = 0; session.slack = 0; session.runT = 1.15; session.restT = 1.2;
+      session.runStrength = 1.18; session.startedRun = true; session.fightT = 0; session.pull = 1;
+      this.store.gatorHooks = whole(this.store.gatorHooks + 1); this.state = 'gator'; this.reeling = false; this.phys.towDrag = 0.025;
+      this.life?.fish?.splash?.(x, z, 1.55, this.phys.pos.x, this.phys.pos.y); this.audio?.warn?.(); this.audio?.bellow?.(0.68, gator.pos.x, gator.pos.z);
+      this.game.toast('Treble in the old bull', `${session.gatorLengthFt.toFixed(1)} ft · about ${session.gatorWeightLb.toLocaleString()} lb · X cuts the line`, 3.8);
+      return 'hooked';
+    }
     this.life?.fish?.splash?.(x, z, 1.15, this.phys.pos.x, this.phys.pos.y); this.cancel('', false);
     this.game.toast('Alligator took the fish', `${name} gone in one strike.`, 3.1); return true;
   }
@@ -369,6 +417,45 @@ export class Fishing {
     else if (outcome === 'lost') this.loseFish(false);
   }
 
+  updateGatorFight(dt) {
+    const session = this.session, gator = session.hookedGator;
+    if (!gator?.pos || gator.hookSource !== this) { this.cancel('The old bull threw the hook', true); return; }
+    this.fightInput.dt = dt; this.fightInput.reeling = this.reeling; this.fightInput.power = 1.55;
+    const outcome = alligatorFightStep(session, this.fightInput, this.random);
+    if (session.startedRun) {
+      session.turnDirection = this.random() < 0.5 ? -1 : 1; gator.wakeKick = Math.max(Number(gator.wakeKick) || 0, 1.15);
+      this.audio?.tone?.(105, 0.11, 0.09, 'sawtooth'); this.life?.fish?.splash?.(gator.pos.x, gator.pos.z, 1.3, this.phys.pos.x, this.phys.pos.y);
+    }
+    session.runAngle += session.turnDirection * dt * (session.runT > 0 ? 0.2 : 0.055);
+    let x = this.phys.pos.x + Math.cos(session.runAngle) * session.distance, z = this.phys.pos.y + Math.sin(session.runAngle) * session.distance;
+    if (this.environment.waterLevel - this.terrain.heightAt(x, z) < 0.5) {
+      session.runAngle -= session.turnDirection * dt * 1.4; session.turnDirection *= -1;
+      x = this.phys.pos.x + Math.cos(session.runAngle) * session.distance; z = this.phys.pos.y + Math.sin(session.runAngle) * session.distance;
+    }
+    session.x = x; session.z = z; gator.pos.x = x; gator.pos.z = z; gator.heading = Math.atan2(-(x - this.phys.pos.x), -(z - this.phys.pos.y));
+    const dx = x - this.phys.pos.x, dz = z - this.phys.pos.y, distance = Math.hypot(dx, dz) || 1, pullX = dx / distance, pullZ = dz / distance;
+    const acceleration = (session.runT > 0 ? 1.08 : 0.24) * (0.42 + Math.max(0, session.pull)) * clamp(session.tension / 0.35, 0.2, 1.25);
+    this.phys.vel.x += pullX * acceleration * dt; this.phys.vel.y += pullZ * acceleration * dt;
+    this.phys.right(this.right); const side = pullX * this.right.x + pullZ * this.right.y;
+    this.phys.angVel -= side * acceleration * dt * 0.11; this.phys.rollVel += side * acceleration * dt * 0.045;
+    this.phys.towDrag = 0.022 + session.tension * 0.022; gator.wakeSpeed = Math.max(Number(gator.wakeSpeed) || 0, Math.min(5.5, acceleration * 2.1));
+    this.audio?.fishingReel?.(this.reeling ? 1 : 0, session.tension);
+    if (outcome === 'alongside') this.finishGatorFight();
+    else if (outcome) this.loseGator(outcome === 'snapped' ? 'snapped' : 'lost');
+  }
+
+  finishGatorFight() {
+    const session = this.session, length = session.gatorLengthFt, seconds = Math.round(session.fightT);
+    this.cancel('', false); this.audio?.tone?.(410, 0.08, 0.08, 'triangle');
+    this.game.toast('Treble pulled free', `${length.toFixed(1)} ft bull · ${seconds} seconds on the line`, 3.3);
+  }
+
+  loseGator(reason = 'lost') {
+    if (reason === 'snapped' || reason === 'collision') this.store.snapped = whole(this.store.snapped + 1);
+    this.dirty = true; this.audio?.warn?.(); this.cancel('', false);
+    this.game.toast(reason === 'collision' ? 'Line broke on the hit' : reason === 'snapped' ? 'Treble straightened' : 'Old bull broke off', reason === 'snapped' ? 'Too much drag. The hook opened up.' : 'The wake went quiet.', 2.9);
+  }
+
   landCatch() {
     const session = this.session, species = session.species, record = this.store.species[species.id];
     this.gators?.releaseHookedFish?.(this); session.alligator = null; session.alligatorDistance = Infinity;
@@ -392,15 +479,17 @@ export class Fishing {
   }
 
   cancel(message = '', announce = false) {
-    this.gators?.releaseHookedFish?.(this); this.session.alligator = null; this.session.alligatorDistance = Infinity;
+    this.gators?.releaseHookedFish?.(this); this.gators?.releaseHookedAlligator?.(this); this.session.alligator = null; this.session.alligatorDistance = Infinity; this.session.hookedGator = null;
+    this.phys.towDrag = 0;
     this.audio?.fishingReel?.(0, 0); this.state = 'idle'; this.reeling = false; this.rodRoot.visible = false; this.line.visible = false; this.lure.visible = false; this.catchMesh.visible = false;
     if (this.dirty) { this.game.persist(); this.dirty = false; }
     if (announce && message) this.game.toast(message, 'C casts again when the hull is back at idle.', 1.8);
   }
 
   interruption() {
-    return Boolean(this.game.state || this.game.story?.blocking?.() || this.game.aftermath?.blocking?.() || this.game.encounters?.active || this.game.incidents?.active || this.game.law?.pursuit || this.game.life?.traffic?.activeCollision?.()
-      || this.phys.airborne || this.phys.wipeT > 0 || this.phys.hit > 2.4 || this.phys.speed > 2.2);
+    const occupied = this.game.state || this.game.story?.blocking?.() || this.game.aftermath?.blocking?.() || this.game.encounters?.active || this.game.incidents?.active || this.game.law?.pursuit || this.game.life?.traffic?.activeCollision?.();
+    if (this.state === 'gator') return Boolean(occupied || this.phys.airborne || this.phys.wipeT > 0 || this.phys.hit > 5.5);
+    return Boolean(occupied || this.phys.airborne || this.phys.wipeT > 0 || this.phys.hit > 2.4 || this.phys.speed > 2.2);
   }
 
   update(dt, time, enabled = true) {
@@ -410,12 +499,13 @@ export class Fishing {
     }
     if (!this.blocking()) return;
     if (!enabled) { this.reeling = false; this.audio?.fishingReel?.(0, 0); return; }
-    if (this.interruption()) { this.cancel('Line abandoned', true); return; }
+    if (this.interruption()) { if (this.state === 'gator') this.loseGator(this.phys.hit > 5.5 ? 'collision' : 'lost'); else this.cancel('Line abandoned', true); return; }
     const session = this.session; session.t += dt;
     if (this.state === 'casting' && session.t >= 0.82) { this.state = 'waiting'; session.t = 0; this.life?.fish?.splash?.(session.x, session.z, 0.22, this.phys.pos.x, this.phys.pos.y); }
     else if (this.state === 'waiting') this.updateWaiting(dt);
     else if (this.state === 'bite') { session.biteT -= dt; if (session.biteT <= 0) this.missedBite(); }
     else if (this.state === 'fight') this.updateFight(dt);
+    else if (this.state === 'gator') this.updateGatorFight(dt);
     else if (this.state === 'release') {
       if (!this.releaseSplash && session.t >= 0.48) { this.releaseSplash = true; this.life?.fish?.splash?.(this.sidePos.x, this.sidePos.z, 0.7, this.phys.pos.x, this.phys.pos.y); this.audio?.plip?.(0.24); }
       if (session.t >= 1.05) this.cancel('', false);
@@ -425,21 +515,21 @@ export class Fishing {
 
   updateVisuals(dt, time) {
     if (!this.blocking()) return;
-    const session = this.session, cast = this.state === 'casting' ? smooth(0, 0.82, session.t) : 1;
+    const session = this.session, gatorFight = this.state === 'gator', cast = this.state === 'casting' ? smooth(0, 0.82, session.t) : 1;
     const targetX = this.phys.pos.x + (session.x - this.phys.pos.x) * cast, targetZ = this.phys.pos.y + (session.z - this.phys.pos.y) * cast;
-    let targetY = this.water.waveHeight(targetX, targetZ, time) + 0.045;
+    let targetY = gatorFight && session.hookedGator?.pos ? session.hookedGator.pos.y + clamp(session.hookedGator.mesh?.scale?.x, 0.8, 1.8) * 0.22 : this.water.waveHeight(targetX, targetZ, time) + 0.045;
     if (this.state === 'casting') targetY += Math.sin(cast * Math.PI) * 4.2;
     else if (this.state === 'bite') targetY -= 0.13 + Math.sin(session.biteT * 24) * 0.045;
     this.lurePos.set(targetX, targetY, targetZ); this.lure.position.copy(this.lurePos); this.lure.rotation.y += dt * 3;
 
-    const fight = this.state === 'fight', bend = fight ? 0.42 + session.tension * 0.55 : this.state === 'bite' ? 0.58 : 0.22;
+    const fight = this.state === 'fight' || gatorFight, bend = fight ? (gatorFight ? 0.16 : 0.42) + session.tension * (gatorFight ? 0.28 : 0.55) : this.state === 'bite' ? 0.58 : 0.22;
     const targetRodX = fight ? -0.44 - session.tension * 0.16 : this.state === 'casting' ? -0.76 + cast * 0.28 : -0.46;
     this.rodRoot.rotation.x += (targetRodX - this.rodRoot.rotation.x) * (1 - Math.exp(-dt * 9));
     this.rodRoot.rotation.z += ((fight ? 0.23 + Math.sin(time * 9) * session.tension * 0.035 : 0.34) - this.rodRoot.rotation.z) * (1 - Math.exp(-dt * 7));
     this.rodTip.getWorldPosition(this.tip); this.setLine(this.tip, this.lurePos, bend);
 
     this.catchMesh.visible = false;
-    if (fight && session.jumpT > 0) {
+    if (this.state === 'fight' && session.jumpT > 0) {
       const progress = 1 - session.jumpT / session.jumpDuration, arc = Math.sin(progress * Math.PI);
       this.catchMesh.visible = true; this.catchMesh.position.set(session.x, this.water.waveHeight(session.x, session.z, time) + arc * (0.8 + session.species.power * 0.75), session.z);
       this.catchMesh.rotation.set(-0.25 + Math.sin(progress * Math.PI * 2) * 0.55, -session.runAngle + Math.PI / 2, session.turnDirection * arc * 0.35, 'YXZ'); this.setFishScaleAndColor();
@@ -480,6 +570,11 @@ export class Fishing {
     if (this.state === 'casting') return { title, obj: 'Casting off the starboard bow', sub: 'Let the topwater lure settle.', timer: '', warn: false };
     if (this.state === 'waiting') return { title, obj: 'Watch the lure', sub: `${this.waterLabel()} · C sets the hook when it goes under · X reels in`, timer: '', warn: false };
     if (this.state === 'bite') return { title, obj: 'Strike now', sub: 'C · set the hook', timer: `${Math.max(0, session.biteT).toFixed(1)}<small>seconds</small>`, warn: true };
+    if (this.state === 'gator') {
+      const danger = session.tension > 0.88, running = session.runT > 0;
+      const sub = danger ? 'Let go of C before the treble opens.' : running ? 'He is towing the hull. Give him line or press X to cut free.' : 'The pull eased. Hold C and gain line. X cuts free.';
+      return { title: `Heavy tackle · ${session.regionName || 'open water'}`, obj: `${session.gatorLengthFt.toFixed(1)} ft old bull · about ${session.gatorWeightLb.toLocaleString()} lb`, sub, timer: `${Math.round(session.tension * 100)}%<small>line tension</small>`, warn: true };
+    }
     if (this.state === 'fight') {
       const danger = session.tension > 0.86, slack = session.tension < 0.14, alligator = session.alligator && Number.isFinite(session.alligatorDistance);
       const sub = alligator ? `Alligator ${Math.max(1, Math.round(session.alligatorDistance))} m off · pull the fish clear or X cuts the line` : danger ? 'Let go of C. The line is close to breaking.' : slack ? 'Hold C and take up the slack.' : `${this.reeling ? 'Reeling' : 'Fish running'} · hold C to reel · release it during a hard run · X cuts the line`;
@@ -500,7 +595,7 @@ export class Fishing {
       if (object.geometry) geometries.add(object.geometry); if (object.material) materials.add(object.material);
     });
     let bytes = 0; for (const geometry of geometries) bytes += geometryBytes(geometry);
-    return { state: this.state, predator: this.session.alligator ? 'alligator' : '', objects, meshes, geometries: geometries.size, materials: materials.size, geometryBytes: bytes, linePoints: FISHING_LIMITS.linePoints, visibleDraws };
+    return { state: this.state, predator: this.session.alligator || this.session.hookedGator ? 'alligator' : '', objects, meshes, geometries: geometries.size, materials: materials.size, geometryBytes: bytes, linePoints: FISHING_LIMITS.linePoints, visibleDraws };
   }
 
   dispose() {

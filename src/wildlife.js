@@ -450,7 +450,7 @@ export class Gators {
     while (this.list.length < count && tries++ < 40000) {
       const big = this.list.length === 0; // one old bull
       const m = gatorMesh(big ? 1.55 : 0.8 + r() * 0.35);
-      const g = { mesh: m, float: -(0.68 * m.scale.x - 0.08), pos: new THREE.Vector3(0, 0, 0), heading: r() * Math.PI * 2, speed: 0.35 + r() * 0.3, ph: r() * 6, dive: 0, big, hitT: 0, bask: false, slide: 0, charge: 0, chargeCd: 8, bellowT: 5 + r() * 20, wakeKick: 0, wakeSpeed: 0, preySource: null, preyT: 0, preyCooldown: 0, preyDistance: Infinity };
+      const g = { mesh: m, float: -(0.68 * m.scale.x - 0.08), pos: new THREE.Vector3(0, 0, 0), heading: r() * Math.PI * 2, speed: 0.35 + r() * 0.3, ph: r() * 6, dive: 0, big, hitT: 0, bask: false, slide: 0, charge: 0, chargeCd: 8, bellowT: 5 + r() * 20, wakeKick: 0, wakeSpeed: 0, preySource: null, preyT: 0, preyCooldown: 0, preyDistance: Infinity, hookSource: null };
       if (!big && this.list.length % 5 === 2) {
         const z = 120 - r() * 780; const sp = baskSpot(terrain, r, terrain.riverCenterX(z), z, 10, 120);
         if (sp) { g.pos.set(sp.x, sp.h + 0.02, sp.z); g.bask = true; g.toWater = sp.ang; g.heading = sp.ang + Math.PI + (r() - 0.5) * 1.2; this.list.push(g); continue; }
@@ -499,6 +499,21 @@ export class Gators {
       previous?.clearAlligatorThreat?.(g);
     }
   }
+  hookAlligator(source, gator) {
+    if (!source || source.state !== 'fight' || !gator?.big || gator.towed || gator.parked || gator.bask) return false;
+    gator.preySource = null; gator.preyT = 0; gator.preyDistance = Infinity; gator.preyCooldown = Math.max(Number(gator.preyCooldown) || 0, 45);
+    gator.hookSource = source; gator.towed = true; gator.dive = 0; gator.charge = 0; gator.hitT = 0; gator.wakeKick = Math.max(Number(gator.wakeKick) || 0, 1.25);
+    return true;
+  }
+  releaseHookedAlligator(source = null) {
+    let released = 0;
+    for (const g of this.list) {
+      if (!g.hookSource || (source && g.hookSource !== source)) continue;
+      g.hookSource = null; g.towed = false; g.dive = Math.max(Number(g.dive) || 0, 5.5); g.preyCooldown = Math.max(Number(g.preyCooldown) || 0, 45);
+      g.wakeKick = Math.max(Number(g.wakeKick) || 0, 1.25); g.chargeCd = Math.max(Number(g.chargeCd) || 0, 24); released++;
+    }
+    return released;
+  }
   attractToHookedFish(source, x, z, splash = 0.5, waterLevel = 0) {
     if (!source || source.state !== 'fight' || !Number.isFinite(x) || !Number.isFinite(z)) return null;
     for (const g of this.list) if (g.preySource === source && g.preyT > 0) { g.preyT = Math.max(g.preyT, 12); return g; }
@@ -523,6 +538,7 @@ export class Gators {
     if (!this.rand) this.rand = mulberry32(91);
     this.wakeBoatX = boatX; this.wakeBoatZ = boatZ;
     for (const g of this.list) {
+      if (g.hookSource && g.hookSource.state !== 'gator') this.releaseHookedAlligator(g.hookSource);
       g.wakeKick = Math.max(0, (Number(g.wakeKick) || 0) - dt * 1.35);
       g.wakeSpeed = 0;
       g.preyT = Math.max(0, (Number(g.preyT) || 0) - dt); g.preyCooldown = Math.max(0, (Number(g.preyCooldown) || 0) - dt);
@@ -574,8 +590,8 @@ export class Gators {
         g.preyDistance = distance; source.trackAlligatorThreat?.(g, distance);
         const captureRange = 1.35 + clamp(g.mesh?.scale?.x || 1, 0.6, 1.8) * 0.35;
         if (distance < captureRange) {
-          source.alligatorTake?.(g); g.preySource = null; g.preyT = 0; g.preyDistance = Infinity; g.preyCooldown = 38;
-          g.dive = 7 + this.rand() * 3; g.wakeKick = Math.max(g.wakeKick, 1.3); g.chargeCd = Math.max(g.chargeCd, 18);
+          const result = source.alligatorTake?.(g); g.preySource = null; g.preyT = 0; g.preyDistance = Infinity; g.preyCooldown = result === 'hooked' ? 45 : 38;
+          g.dive = result === 'hooked' ? 0 : 7 + this.rand() * 3; g.wakeKick = Math.max(g.wakeKick, 1.3); g.chargeCd = Math.max(g.chargeCd, 18);
           if (this.onSplash) this.onSplash(g.pos.x, g.pos.z, g.mesh.scale.x);
         }
         continue;
