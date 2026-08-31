@@ -2,6 +2,31 @@ const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const finite = (value, fallback) => { const number = Number(value); return Number.isFinite(number) ? number : fallback; };
 
 export const CHASE_CAMERA_SAMPLES = 12;
+export const BOAT_CAMERA_CHASE = 'chase';
+export const BOAT_CAMERA_HELM = 'helm';
+
+export function normalizeBoatCameraMode(mode) {
+  return mode === BOAT_CAMERA_HELM ? BOAT_CAMERA_HELM : BOAT_CAMERA_CHASE;
+}
+
+export function nextBoatCameraMode(mode) {
+  return normalizeBoatCameraMode(mode) === BOAT_CAMERA_CHASE ? BOAT_CAMERA_HELM : BOAT_CAMERA_CHASE;
+}
+
+export function boatCameraPitch(value, mode) {
+  const pitch = finite(value, 0);
+  return normalizeBoatCameraMode(mode) === BOAT_CAMERA_HELM ? clamp(pitch, -0.52, 0.52) : clamp(pitch, -0.25, 0.6);
+}
+
+// Boat-local view direction for the helm camera. The caller owns `out`; the live camera then rotates this
+// direction by the retained hull quaternion, so pitch, roll, mouse and stick look add no frame garbage.
+export function helmCameraDirection(yaw, pitch, out = {}) {
+  const heading = finite(yaw, 0), elevation = boatCameraPitch(pitch, BOAT_CAMERA_HELM), horizontal = Math.cos(elevation);
+  out.x = -Math.sin(heading) * horizontal;
+  out.y = -Math.sin(elevation);
+  out.z = -Math.cos(heading) * horizontal;
+  return out;
+}
 
 // Samples the heightfield along a caller-owned camera boom. The scalar return value lets the
 // frame loop resolve its retained vectors without a Raycaster, intersection arrays, or garbage.

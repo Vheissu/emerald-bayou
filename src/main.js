@@ -49,7 +49,10 @@ import { NocturnalWetland } from './nocturnal.js';
 import { WakeStampPool } from './wakestamps.js';
 import { shallowWaterSediment, sedimentPlumeRadius } from './sediment.js';
 import { bindPageLifecycle } from './pagelifecycle.js';
-import { CHASE_CAMERA_SAMPLES, chaseCameraBoomLimit, chaseCameraBoomStep } from './chasecamera.js';
+import {
+  BOAT_CAMERA_CHASE, BOAT_CAMERA_HELM, CHASE_CAMERA_SAMPLES, boatCameraPitch,
+  chaseCameraBoomLimit, chaseCameraBoomStep, helmCameraDirection, nextBoatCameraMode, normalizeBoatCameraMode,
+} from './chasecamera.js';
 import { environmentCaptureAllowed, SkyEnvironmentMap } from './environmentmap.js';
 import { sampleWakeFields } from './wakefield.js';
 import { warmDeferredShaders } from './shaderwarmup.js';
@@ -407,11 +410,11 @@ async function init() {
     },
   }) : null;
   let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, durationMs: 0 };
-  let controller = null;
+  let controller = null, cameraView = BOAT_CAMERA_CHASE, setCameraView = () => false;
   window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
-  }), controllerStats: () => controller?.snapshot?.() || { connected: false } };
+  }), controllerStats: () => controller?.snapshot?.() || { connected: false }, cameraStats: () => ({ mode: cameraView, fov: camera.fov, driverVisible: playerDriver?.visible !== false }) };
 
   // ---- input ----
   const keys = {};
@@ -529,6 +532,7 @@ async function init() {
       };
       report('start'); if (result.staged) { window.setTimeout(() => report('after1500'), 1500); window.setTimeout(() => report('after4500'), 4500); }
     }
+    if (started && e.code === 'KeyV' && !e.repeat && !game.menuOpen && !game.mapOpen && !game.resultOpen) { e.preventDefault(); setCameraView(); return; }
     if (started && e.code === 'KeyR' && !game.menuOpen && !game.resultOpen && !(game.state && game.state.m.countdown)) phys.reset(phys.lastFloat.x, phys.lastFloat.y);
   });
   window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -540,10 +544,10 @@ async function init() {
     if (!dragging) return;
     setInputMode('keyboard');
     camYaw -= (e.clientX - lastX) * 0.005; camPitch += (e.clientY - lastY) * 0.003;
-    camPitch = Math.max(-0.25, Math.min(0.6, camPitch));
+    camPitch = boatCameraPitch(camPitch, cameraView);
     lastX = e.clientX; lastY = e.clientY;
   });
-  window.addEventListener('wheel', e => { setInputMode('keyboard'); camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
+  window.addEventListener('wheel', e => { setInputMode('keyboard'); if (cameraView === BOAT_CAMERA_CHASE) camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
   let resizeTimer = 0; const drawingSize = new THREE.Vector2();
   const resize = () => {
     if (pageHibernated) return false;
@@ -619,6 +623,7 @@ async function init() {
   const showTitle = (persist = true) => {
     game.closeMap(); game.closeMenu(); game.closeResult();
     fishing.cancel('', false);
+    setCameraView(BOAT_CAMERA_CHASE, false);
     started = false; game.playing = false; game.paused = true;
     for (const key in keys) keys[key] = false;
     if (persist) game.persist();
@@ -646,6 +651,16 @@ async function init() {
   const camPos = new THREE.Vector3(startX, 4, startZ + 10);
   const camTarget = new THREE.Vector3(startX, 1, startZ);
   const camBack = new THREE.Vector3(), camDesired = new THREE.Vector3(), camAim = new THREE.Vector3(), camPivot = new THREE.Vector3(), audioForward = new THREE.Vector3();
+  const helmEyeLocal = new THREE.Vector3(0, 2.3, 0.28), helmDirection = new THREE.Vector3();
+  let cameraViewCut = true;
+  setCameraView = (mode = nextBoatCameraMode(cameraView), announce = true) => {
+    const next = normalizeBoatCameraMode(mode), changed = next !== cameraView;
+    cameraView = next; if (playerDriver) playerDriver.visible = next !== BOAT_CAMERA_HELM;
+    if (!changed) return false;
+    cameraViewCut = true; camYaw = 0; camPitch = 0; idle = 0;
+    if (announce && started) game.toast('Camera', next === BOAT_CAMERA_HELM ? 'Helm view' : 'Chase view', 1.35);
+    return true;
+  };
   const cameraHeightAt = (x, z) => terrain.heightAt(x, z);
   const cameraCollision = {
     startX: 0, startY: 0, startZ: 0, endX: 0, endY: 0, endZ: 0,
@@ -679,6 +694,7 @@ async function init() {
         else if (index === GAMEPAD_BUTTON.DPAD_DOWN || index === GAMEPAD_BUTTON.DPAD_RIGHT) moveTitleFocus(1);
         return;
       }
+      if (index === GAMEPAD_BUTTON.LEFT_STICK && !game.menuOpen && !game.mapOpen && !game.resultOpen) { setCameraView(); return; }
       if (index === GAMEPAD_BUTTON.RIGHT_STICK && !game.menuOpen && !game.mapOpen && !game.resultOpen) {
         camYaw = 0; camPitch = 0; idle = 0; return;
       }
@@ -837,39 +853,51 @@ async function init() {
     if (controllerLooking && started && !game.paused && !game.menuOpen && !game.mapOpen && !game.resultOpen) {
       camYaw -= controllerState.lookX * dtRaw * 2.2;
       camPitch += controllerState.lookY * dtRaw * 1.45;
-      camPitch = Math.max(-0.25, Math.min(0.6, camPitch)); idle = 0;
+      camPitch = boatCameraPitch(camPitch, cameraView); idle = 0;
     }
     if (!dragging) { idle += dt; if (idle > 2.5) { camYaw *= Math.exp(-dt * 1.2); camPitch *= Math.exp(-dt * 1.2); } }
-    const yaw = phys.heading + camYaw;
-    camBack.set(Math.sin(yaw), 0, Math.cos(yaw));
     // in the air the camera hangs back and rises so the ground stays in frame for the landing
     airCam += ((phys.airborne ? Math.min(1, phys.airTime * 1.5) : 0) - airCam) * (1 - Math.exp(-dt * (phys.airborne ? 3 : 5)));
-    const cd = camDist + airCam * 2.4;
-    camDesired.set(phys.pos.x, 3.9 + cd * Math.sin(camPitch) * 1.2 + Math.max(0, phys.y) * 0.2 + airCam * 1.2, phys.pos.y).addScaledVector(camBack, cd * Math.cos(camPitch));
-    camAim.set(phys.pos.x + fwd2.x * 4.5, Math.max(1.2 + Math.max(0, phys.y) * 0.9, water.level + 1), phys.pos.y + fwd2.y * 4.5);
-    camPivot.set(phys.pos.x, Math.max(2.1 + Math.max(0, phys.y) * 0.75, water.level + 1.2), phys.pos.y);
-    // Keep the ideal endpoint above surge, then retract the entire boom when a bank lies between it and the hull.
-    camDesired.y = Math.max(camDesired.y, water.level + 1.2);
-    cameraCollision.startX = camPivot.x; cameraCollision.startY = camPivot.y; cameraCollision.startZ = camPivot.z;
-    cameraCollision.endX = camDesired.x; cameraCollision.endY = camDesired.y; cameraCollision.endZ = camDesired.z;
-    cameraCollision.waterLevel = water.level;
-    const boomLimit = chaseCameraBoomLimit(cameraCollision, cameraHeightAt), previousBoom = cameraBoom;
-    cameraBoom = chaseCameraBoomStep(cameraBoom, boomLimit, dtRaw);
-    camDesired.x = camPivot.x + (camDesired.x - camPivot.x) * cameraBoom;
-    camDesired.y = camPivot.y + (camDesired.y - camPivot.y) * cameraBoom;
-    camDesired.z = camPivot.z + (camDesired.z - camPivot.z) * cameraBoom;
-    camDesired.y = Math.max(camDesired.y, terrain.heightAt(camDesired.x, camDesired.z) + 0.9, water.level + 0.9);
-    const cameraCut = boomLimit < previousBoom - 0.01 || camPos.distanceToSquared(camDesired) > 6400;
-    if (cameraCut) camPos.copy(camDesired); else camPos.lerp(camDesired, 1 - Math.exp(-dt * 5.5));
-    camPos.y = Math.max(camPos.y, terrain.heightAt(camPos.x, camPos.z) + 0.9, water.level + 0.9);
-    camTarget.lerp(camAim, 1 - Math.exp(-dt * 7));
+    const yaw = phys.heading + camYaw;
+    if (cameraView === BOAT_CAMERA_HELM) {
+      // The eye stays on the real hull attitude while look remains boat-local. Retained vectors keep this no heavier
+      // than the chase camera, and the water floor protects the view during an extreme stuffed landing or surge.
+      camDesired.copy(helmEyeLocal).applyQuaternion(g.quaternion).add(g.position);
+      camDesired.y = Math.max(camDesired.y, water.level + 1.18);
+      helmCameraDirection(camYaw, camPitch, helmDirection); helmDirection.applyQuaternion(g.quaternion);
+      camAim.copy(camDesired).addScaledVector(helmDirection, 40);
+      camPos.copy(camDesired); camTarget.copy(camAim); cameraBoom = 1; cameraViewCut = false;
+    } else {
+      camBack.set(Math.sin(yaw), 0, Math.cos(yaw));
+      const cd = camDist + airCam * 2.4;
+      camDesired.set(phys.pos.x, 3.9 + cd * Math.sin(camPitch) * 1.2 + Math.max(0, phys.y) * 0.2 + airCam * 1.2, phys.pos.y).addScaledVector(camBack, cd * Math.cos(camPitch));
+      camAim.set(phys.pos.x + fwd2.x * 4.5, Math.max(1.2 + Math.max(0, phys.y) * 0.9, water.level + 1), phys.pos.y + fwd2.y * 4.5);
+      camPivot.set(phys.pos.x, Math.max(2.1 + Math.max(0, phys.y) * 0.75, water.level + 1.2), phys.pos.y);
+      // Keep the ideal endpoint above surge, then retract the entire boom when a bank lies between it and the hull.
+      camDesired.y = Math.max(camDesired.y, water.level + 1.2);
+      cameraCollision.startX = camPivot.x; cameraCollision.startY = camPivot.y; cameraCollision.startZ = camPivot.z;
+      cameraCollision.endX = camDesired.x; cameraCollision.endY = camDesired.y; cameraCollision.endZ = camDesired.z;
+      cameraCollision.waterLevel = water.level;
+      const boomLimit = chaseCameraBoomLimit(cameraCollision, cameraHeightAt), previousBoom = cameraBoom;
+      cameraBoom = chaseCameraBoomStep(cameraBoom, boomLimit, dtRaw);
+      camDesired.x = camPivot.x + (camDesired.x - camPivot.x) * cameraBoom;
+      camDesired.y = camPivot.y + (camDesired.y - camPivot.y) * cameraBoom;
+      camDesired.z = camPivot.z + (camDesired.z - camPivot.z) * cameraBoom;
+      camDesired.y = Math.max(camDesired.y, terrain.heightAt(camDesired.x, camDesired.z) + 0.9, water.level + 0.9);
+      const cameraCut = cameraViewCut || boomLimit < previousBoom - 0.01 || camPos.distanceToSquared(camDesired) > 6400;
+      if (cameraCut) camPos.copy(camDesired); else camPos.lerp(camDesired, 1 - Math.exp(-dt * 5.5));
+      camPos.y = Math.max(camPos.y, terrain.heightAt(camPos.x, camPos.z) + 0.9, water.level + 0.9);
+      if (cameraViewCut) camTarget.copy(camAim); else camTarget.lerp(camAim, 1 - Math.exp(-dt * 7));
+      cameraViewCut = false;
+    }
     camera.position.copy(camPos);
-    if (game.shake > 0.01) { const sh = game.shake * 0.35; camera.position.x += (Math.random() - 0.5) * sh; camera.position.y += (Math.random() - 0.5) * sh; camera.position.z += (Math.random() - 0.5) * sh; }
+    if (game.shake > 0.01) { const sh = game.shake * (cameraView === BOAT_CAMERA_HELM ? 0.16 : 0.35); camera.position.x += (Math.random() - 0.5) * sh; camera.position.y += (Math.random() - 0.5) * sh; camera.position.z += (Math.random() - 0.5) * sh; }
     camera.lookAt(camTarget);
+    if (cameraView === BOAT_CAMERA_HELM && !window.__dbg.freeCam) camera.rotateZ(phys.roll * 0.72);
     if (window.__dbg.freeCam) { const fc = window.__dbg.freeCam; camera.position.set(fc.x, fc.y, fc.z); camera.lookAt(fc.tx, fc.ty, fc.tz); } // dev: park the camera anywhere
-    if (game.shake > 0.01) camera.rotateZ((Math.random() - 0.5) * game.shake * 0.04);
+    if (game.shake > 0.01) camera.rotateZ((Math.random() - 0.5) * game.shake * (cameraView === BOAT_CAMERA_HELM ? 0.02 : 0.04));
     fovKick *= Math.exp(-dtRaw * 5);
-    { const f = 52 + fovKick + airCam * 4; if (Math.abs(camera.fov - f) > 0.01) { camera.fov = f; camera.updateProjectionMatrix(); } }
+    { const f = (cameraView === BOAT_CAMERA_HELM ? 64 : 52) + fovKick * (cameraView === BOAT_CAMERA_HELM ? 0.45 : 1) + airCam * (cameraView === BOAT_CAMERA_HELM ? 1.5 : 4); if (Math.abs(camera.fov - f) > 0.01) { camera.fov = f; camera.updateProjectionMatrix(); } }
     camera.updateMatrixWorld();
     camera.getWorldDirection(audioForward); audio.setListener(camera.position.x, camera.position.z, audioForward.x, audioForward.z);
 

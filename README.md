@@ -53,6 +53,7 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 | `A` / `D` | rudder, and spin while airborne |
 | `S` / `Shift` in the air | lean back, lean forward |
 | drag | look around |
+| `V` | switch between chase and helm cameras |
 | `E` | interact (job posts, docks, traps, field notes, aid reports) |
 | `C` | cast, set the hook, and reel while held |
 | `X` | reel in or cut the line |
@@ -63,7 +64,7 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 | `H` | horn; one prolonged blast in dense fog |
 | `R` | reset the boat |
 | controller `RT` / `LT` | analogue throttle and reverse |
-| controller left stick | rudder; pitch and spin while airborne |
+| controller left stick | rudder; pitch and spin while airborne; click to switch camera |
 | controller right stick | look; click to centre the camera |
 | controller `A / Cross` | interact |
 | controller `X / Square`, `B / Circle`, `Y / Triangle` | fish, alternate action or cut the line, anchor |
