@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import {
   airboatSprayExposure,
   airboatWetnessStep,
+  makePropWrapVisual,
   prepareAirboatWetSurfaces,
   registerAirboatEnvironmentWetness,
   setAirboatWetness,
@@ -32,6 +33,16 @@ test('chine spray requires a wet moving hull and grows with prop wash', () => {
   const flatOut = airboatSprayExposure({ speed: 14, wet: 1, rpm: 1 });
   assert.ok(cruise > 0 && cruise < flatOut);
   assert.equal(flatOut, 1);
+});
+
+test('the player prop wrap is one hidden retained line buffer', () => {
+  const wrap = makePropWrapVisual(), position = wrap.geometry.getAttribute('position');
+  assert.equal(wrap.isLineSegments, true); assert.equal(wrap.visible, false);
+  assert.equal(position.array.byteLength, 768); assert.equal(position.count, 64);
+  const geometry = wrap.geometry, material = wrap.material;
+  wrap.visible = true; wrap.material.opacity = 0.7; wrap.scale.set(1.1, 1.1, 1);
+  assert.equal(wrap.geometry, geometry); assert.equal(wrap.material, material);
+  geometry.dispose(); material.dispose();
 });
 
 test('the player wet pass clones each unique material once and keeps textures shared', () => {

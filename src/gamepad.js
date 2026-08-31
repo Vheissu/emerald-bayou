@@ -47,7 +47,7 @@ export function gamepadBoatInput(state, out = {}) {
 
 export function gamepadActionCode(index, context = {}) {
   if (index === GAMEPAD_BUTTON.SOUTH) return context.overlay ? 'Enter' : 'KeyE';
-  if (index === GAMEPAD_BUTTON.EAST) return context.overlay ? 'Escape' : context.fishing ? 'KeyX' : 'KeyF';
+  if (index === GAMEPAD_BUTTON.EAST) return context.overlay ? 'Escape' : context.fishing || context.cageFouled ? 'KeyX' : 'KeyF';
   if (index === GAMEPAD_BUTTON.WEST) return 'KeyC';
   if (index === GAMEPAD_BUTTON.NORTH) return context.result ? 'KeyR' : 'KeyG';
   if (index === GAMEPAD_BUTTON.LEFT_BUMPER) return 'KeyL';

@@ -257,7 +257,7 @@ export class StormHazards {
         this.airNoticeT = 14;
       }
     }
-    if (debug) this.game.toast(airborne ? 'Debris in the air' : 'Debris in the channel', airborne ? 'Keep the cage pointed into it.' : 'Slow down. It can get into the prop.', 2.7);
+    if (debug) this.game.toast(airborne ? 'Debris in the air' : 'Debris in the channel', airborne ? 'Keep the cage pointed into it.' : 'Slow down. It can catch under the hull.', 2.7);
     return true;
   }
 
@@ -273,14 +273,17 @@ export class StormHazards {
   deactivateDebris(d) { d.active = false; d.airborne = false; d.mesh.visible = false; }
 
   hitDebris(d, into, nx, nz, boat = null) {
-    if (d.hitCd > 0 || into < 1.5) return;
     const wasAirborne = d.airborne, impact = wasAirborne ? Math.max(into, 5.2 + Math.abs(d.vy) * 0.35) : into;
+    // Retain this on the collider until BoatCondition reads the same-frame hit. A second hull circle can touch the
+    // newly landed piece during the callback, so do not erase a true cage strike while its collision cooldown is live.
+    if (wasAirborne) d.obs.cageImpact = true; else if (d.hitCd <= 0) d.obs.cageImpact = false;
+    if (d.hitCd > 0 || into < 1.5) return;
     if (boat && wasAirborne) { boat.hit = Math.max(boat.hit, impact); boat.hitTag = 'storm-debris'; boat.hitObj = d.obs; }
     if (wasAirborne) { this.landDebris(d, 0); this.stats.airborneHits++; }
     d.hitCd = 0.75; d.vx -= nx * impact * 0.42; d.vz -= nz * impact * 0.42; d.spin += (Math.random() - 0.5) * impact * 0.22;
     this.audio.knock(clamp(impact / 8, 0.2, 0.9)); this.game.shake = Math.max(this.game.shake, clamp(impact / 14, 0.08, 0.45));
     this.alert(wasAirborne ? 'Flying debris' : 'Debris strike', wasAirborne ? (d.kind === 'sheet' ? 'Sheet metal hit the cage.' : 'Lumber hit the cage.') : impact > 5 ? 'Check the prop and hull.' : 'Something hard passed under the cage.', 2.6);
-    if (impact > 3) this.game.toast(wasAirborne ? 'Windborne strike' : 'Storm debris', wasAirborne ? 'The cage took the impact.' : impact > 6 ? 'Hard hit. The prop took some of it.' : 'Branches under the hull.', 2.3);
+    if (impact > 3) this.game.toast(wasAirborne ? 'Windborne strike' : 'Storm debris', wasAirborne ? 'The cage took the impact.' : impact > 6 ? 'Hard hit under the stern.' : 'Branches under the hull.', 2.3);
     for (let i = 0; i < 18; i++) this.spray.emit(d.x + (Math.random() - 0.5) * 2, this.water.level + 0.08, d.z + (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 3, 0.8 + Math.random() * 2, (Math.random() - 0.5) * 3, 0.018 + Math.random() * 0.025, 0.35 + Math.random() * 0.35, 0.65);
     this.stats.debrisHits = (this.stats.debrisHits || 0) + 1; this.game.persist();
   }

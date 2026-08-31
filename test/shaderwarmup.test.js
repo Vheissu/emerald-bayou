@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deferredShaderObjects, shaderVariantKey, warmDeferredShaders } from '../src/shaderwarmup.js';
+import { deferredShaderObjects, shaderVariantKey, warmDeferredShaders, warmRetainedObject } from '../src/shaderwarmup.js';
 
 const material = (id, shader = true, source = id) => ({ uuid: id, isShaderMaterial: shader, vertexShader: `vertex:${source}`, fragmentShader: `fragment:${source}` });
 const object = (id, ownMaterial = null, children = []) => ({
@@ -47,4 +47,19 @@ test('deferred shader warm-up falls back to the synchronous compiler', async () 
   const result = await warmDeferredShaders(renderer, { id: 'camera' }, [scene], () => 0);
   assert.deepEqual(calls, [['scene', 'camera', 'scene']]);
   assert.equal(result.completed, 1); assert.equal(result.failures, 0);
+});
+
+test('an explicit retained stock-material object warms once and restores visibility', async () => {
+  const target = { id: 'prop-wrap', visible: false }, scene = { id: 'scene' }, camera = { id: 'camera' }, calls = [];
+  const renderer = { async compileAsync(object, view, targetScene) { calls.push([object.id, object.visible, view.id, targetScene.id]); } };
+  let clock = 10;
+  const result = await warmRetainedObject(renderer, camera, scene, target, () => (clock += 3));
+  assert.deepEqual(calls, [['prop-wrap', true, 'camera', 'scene']]); assert.equal(target.visible, false);
+  assert.deepEqual(result, { attempted: 1, completed: 1, failures: 0, durationMs: 3 });
+});
+
+test('explicit retained warm-up contains failure and still restores a visible object', async () => {
+  const target = { visible: true }, renderer = { compile() { throw new Error('compile failed'); } };
+  const result = await warmRetainedObject(renderer, {}, {}, target, () => 0);
+  assert.equal(target.visible, true); assert.deepEqual(result, { attempted: 1, completed: 0, failures: 1, durationMs: 0 });
 });

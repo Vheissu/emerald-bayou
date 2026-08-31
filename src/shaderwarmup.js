@@ -49,3 +49,20 @@ export async function warmDeferredShaders(renderer, camera, scenes = [], now = (
     durationMs: Math.max(0, now() - startedAt),
   };
 }
+
+// A few retained first-use objects use stock Three materials rather than ShaderMaterial, so the custom-material scan
+// intentionally skips them. Warm one explicit object behind the loading card without changing its live visibility.
+export async function warmRetainedObject(renderer, camera, targetScene, object, now = () => performance.now()) {
+  const startedAt = now();
+  if (!object) return { attempted: 0, completed: 0, failures: 0, durationMs: 0 };
+  const visible = object.visible; object.visible = true;
+  let completed = 0, failures = 0;
+  try {
+    if (typeof renderer?.compileAsync === 'function') await renderer.compileAsync(object, camera, targetScene);
+    else if (typeof renderer?.compile === 'function') renderer.compile(object, camera, targetScene);
+    else throw new Error('renderer has no shader compiler');
+    completed = 1;
+  } catch (error) { failures = 1; }
+  finally { object.visible = visible; }
+  return { attempted: 1, completed, failures, durationMs: Math.max(0, now() - startedAt) };
+}

@@ -92,6 +92,28 @@ export function updateAirboatWetness(boat, conditions) {
   return setAirboatWetness(boat, airboatWetnessStep(boat?.surfaceWetness, conditions));
 }
 
+// One player-only line buffer suggests vines and splintered brush wound through the prop disc. It is created once,
+// hidden when the cage is clear and never rebuilt as fouling changes.
+export function makePropWrapVisual() {
+  const turns = 24, positions = new Float32Array(turns * 2 * 3 + 8 * 2 * 3);
+  let cursor = 0;
+  const point = (x, y, z) => { positions[cursor++] = x; positions[cursor++] = y; positions[cursor++] = z; };
+  for (let i = 0; i < turns; i++) {
+    const a0 = i / turns * Math.PI * 3.6 - 0.6, a1 = (i + 1) / turns * Math.PI * 3.6 - 0.6;
+    const r0 = 0.2 + i / turns * 0.92, r1 = 0.2 + (i + 1) / turns * 0.92;
+    point(Math.cos(a0) * r0, Math.sin(a0) * r0, -0.035); point(Math.cos(a1) * r1, Math.sin(a1) * r1, -0.035);
+  }
+  for (let i = 0; i < 8; i++) {
+    const a = i / 8 * Math.PI * 2 + 0.23, bend = 0.15 * Math.sin(i * 2.7);
+    point(Math.cos(a) * 1.08, Math.sin(a) * 1.08, -0.045);
+    point(Math.cos(a + 1.72) * (0.31 + bend), Math.sin(a + 1.72) * (0.31 + bend), -0.055);
+  }
+  const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3)); geometry.computeBoundingSphere();
+  const material = new THREE.LineBasicMaterial({ color: 0x83734a, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: true });
+  const wrap = new THREE.LineSegments(geometry, material); wrap.name = 'airboat prop wrap'; wrap.visible = false; wrap.renderOrder = 4;
+  return wrap;
+}
+
 // Persistent world airboats share the immutable template's PBR materials, so one global storm-film registration
 // makes every copy react to rain, hail and dew without per-boat clones. The player keeps its independent spray film.
 export function registerAirboatEnvironmentWetness(group) {
@@ -299,11 +321,12 @@ export function buildAirboat({ dynamicWetness = false, initialWetness = 0.06, pr
   // player requests the small unique set whose roughness and colour respond to rain and spray.
   blur.material = blur.material.clone();
   group.userData.airboatDynamicWetness = dynamicWetness;
-  const boat = { group, prop, blur, rudders, cage, wetSurfaceMaterials: EMPTY_WET_SURFACES, surfaceWetness: 0, hullDamage: null };
+  const boat = { group, prop, blur, rudders, cage, propWrap: null, wetSurfaceMaterials: EMPTY_WET_SURFACES, surfaceWetness: 0, hullDamage: null };
   if (dynamicWetness) {
     boat.wetSurfaceMaterials = prepareAirboatWetSurfaces(group);
     const damageSurface = boat.wetSurfaceMaterials.find(surface => surface.damageSurface);
     if (damageSurface) boat.hullDamage = new HullDamageMaterial(damageSurface.material, profile);
+    boat.propWrap = makePropWrapVisual(); prop.add(boat.propWrap);
     setAirboatWetness(boat, initialWetness);
   }
   return boat;

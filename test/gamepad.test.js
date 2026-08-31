@@ -45,6 +45,7 @@ test('analogue boat controls preserve the airboat reverse range and contextual f
   assert.equal(gamepadActionCode(GAMEPAD_BUTTON.SOUTH, { overlay: false }), 'KeyE');
   assert.equal(gamepadActionCode(GAMEPAD_BUTTON.SOUTH, { overlay: true }), 'Enter');
   assert.equal(gamepadActionCode(GAMEPAD_BUTTON.EAST, { fishing: true }), 'KeyX');
+  assert.equal(gamepadActionCode(GAMEPAD_BUTTON.EAST, { cageFouled: true }), 'KeyX');
   assert.equal(gamepadActionCode(GAMEPAD_BUTTON.EAST, { fishing: false }), 'KeyF');
   assert.equal(gamepadActionCode(GAMEPAD_BUTTON.EAST, { overlay: true }), 'Escape');
   assert.equal(gamepadActionCode(GAMEPAD_BUTTON.NORTH, { result: true }), 'KeyR');

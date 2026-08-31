@@ -64,6 +64,16 @@ test('forced windborne debris uses the fixed pool, stays non-solid aloft and lan
   assert.ok(hazards.obstacles.includes(debris.obs));
 });
 
+test('only an airborne storm strike marks the retained collider as reaching the cage', () => {
+  const { hazards, phys } = makeHazards(), debris = hazards.debris.find(item => item.kind !== 'log');
+  Object.assign(debris, { active: true, airborne: true, x: 0, y: 6, z: 0, vy: -2, hitCd: 0 });
+  hazards.hitDebris(debris, 6, 1, 0, phys);
+  assert.equal(debris.obs.cageImpact, true); assert.equal(phys.hitTag, 'storm-debris'); assert.equal(phys.hitObj, debris.obs);
+  debris.hitCd = 0; debris.airborne = false; phys.hit = 0; phys.hitTag = ''; phys.hitObj = null;
+  hazards.hitDebris(debris, 6, 1, 0, phys);
+  assert.equal(debris.obs.cageImpact, false); assert.equal(phys.hit, 0);
+});
+
 test('storm wake stamps reuse their retained objects and omit debris while it is airborne', () => {
   const { hazards } = makeHazards(), debris = hazards.debris[0];
   debris.active = true; debris.airborne = false; debris.x = 0; debris.z = 0;

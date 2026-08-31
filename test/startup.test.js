@@ -15,7 +15,8 @@ test('cinematic hardware warms shaders without blocking the title on authored mo
   assert.equal(plan.deferOptionalModels, true);
   assert.equal(plan.releaseModelsAtTitle, true);
   assert.equal(plan.titleModelReleaseDelayMs, 1200);
-  assert.equal(plan.modelConcurrency, 2);
+  assert.equal(plan.modelConcurrency, 1);
+  assert.equal(plan.modelBatchDelayMs, 420);
   assert.equal(plan.modelPressureMaxWaitMs, 6000);
   assert.equal(plan.solidGrass, 'deferred');
   assert.deepEqual(plan.disabledModels, []);

@@ -55,7 +55,7 @@ import {
 } from './chasecamera.js';
 import { environmentCaptureAllowed, SkyEnvironmentMap } from './environmentmap.js';
 import { sampleWakeFields } from './wakefield.js';
-import { warmDeferredShaders } from './shaderwarmup.js';
+import { warmDeferredShaders, warmRetainedObject } from './shaderwarmup.js';
 import { GAMEPAD_BUTTON, STANDARD_GAMEPAD_BUTTONS, StandardGamepadInput, gamepadActionCode, gamepadBoatInput } from './gamepad.js';
 
 const app = document.getElementById('app');
@@ -279,7 +279,7 @@ async function init() {
   game.encounters = encounters;
   environment.onPlayerHorn = prolonged => encounters.notePlayerHorn(prolonged);
   law.onAttention = attention => { encounters.requestPatrol(attention); };
-  const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, hullDamage: boat.hullDamage, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
+  const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, hullDamage: boat.hullDamage, wrapVisual: boat.propWrap, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
   const anchor = new BoatAnchor({ scene, terrain, water, phys, game, audio, environment, currents }); condition.anchor = anchor; game.anchor = anchor;
   loadingProgress('Waking the backcountry', 0.68);
   const hazards = new StormHazards({ scene, terrain, world, water, phys, game, audio, environment, currents, condition, plume, spray });
@@ -409,7 +409,7 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
-  let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, durationMs: 0 };
+  let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, retainedObjects: 0, retainedCompleted: 0, retainedFailures: 0, durationMs: 0 };
   let controller = null, cameraView = BOAT_CAMERA_CHASE, setCameraView = () => false;
   window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
@@ -700,6 +700,7 @@ async function init() {
       }
       controllerActionContext.overlay = game.menuOpen || game.mapOpen || game.resultOpen;
       controllerActionContext.fishing = fishing.blocking();
+      controllerActionContext.cageFouled = condition.needsCageClear();
       controllerActionContext.result = game.resultOpen;
       const code = gamepadActionCode(index, controllerActionContext);
       controllerKeyCodes[index] = code; emitControllerKey('keydown', code);
@@ -1147,6 +1148,11 @@ async function init() {
   // or retaining shader variants for the complete streamed map.
   loadingProgress('Checking the emergency gear', 0.93);
   deferredShaderWarmup = await warmDeferredShaders(renderer, camera, [scene, water.scene, fxScene]);
+  const propWrapWarmup = await warmRetainedObject(renderer, camera, scene, boat.propWrap);
+  deferredShaderWarmup.retainedObjects = propWrapWarmup.attempted;
+  deferredShaderWarmup.retainedCompleted = propWrapWarmup.completed;
+  deferredShaderWarmup.retainedFailures = propWrapWarmup.failures;
+  deferredShaderWarmup.durationMs += propWrapWarmup.durationMs;
   startupTiming.deferredShaderWarmupMs = deferredShaderWarmup.durationMs;
   spray.clear(); plume.clear(); game.beacon.hide(); game.beacon2.hide();
   loadingProgress('Pulling the boat off the trailer', 0.96);

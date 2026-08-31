@@ -62,12 +62,13 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 | `Tab` | chart |
 | `L` | spotlight |
 | `H` | horn; one prolonged blast in dense fog |
+| `X` | cut a fishing line, or cut cage debris after the prop settles |
 | `R` | reset the boat |
 | controller `RT` / `LT` | analogue throttle and reverse |
 | controller left stick | rudder; pitch and spin while airborne; click to switch camera |
 | controller right stick | look; click to centre the camera |
 | controller `A / Cross` | interact |
-| controller `X / Square`, `B / Circle`, `Y / Triangle` | fish, alternate action or cut the line, anchor |
+| controller `X / Square`, `B / Circle`, `Y / Triangle` | fish, alternate action or cut line/cage debris, anchor |
 | controller `LB`, `RB`, View, Menu | spotlight, horn, chart, pause |
 
 The D-pad works throughout the title and pause menus. D-pad up opens the jobs board while you are on the water. Supported controllers also rumble with hull strikes and hard landings.
@@ -108,7 +109,9 @@ At idle, `G` drops the bow anchor. Water depth sets the amount of rode, and the 
 
 Rain stays on the world after the curtain passes. Banks and tidal mud keep a dark wet film, while roofs, dock timber, trees and sawgrass lose roughness and catch sharper light until the sun and wind dry them. Hail melt and dense night fog can leave moisture too. The pass changes two terrain uniforms and the existing cached materials; it creates no textures, meshes, draw calls, render targets or shader programs.
 
-Severe tropical bands can now lift loose planks and sheet metal over the channel. They move with the gusts, tumble, become solid only as they drop to cage height, then splash down and remain as floating prop hazards. Logs stay in the water. The behavior follows National Weather Service and National Hurricane Center guidance that tropical-storm and hurricane winds can turn loose outdoor material into [windborne debris](https://www.weather.gov/mhx/hurricaneprep) and [flying missiles](https://www.nhc.noaa.gov/prepare/hazards.php); the debris left obstructing shallow channels follows [NOAA's account of storm-driven marine debris](https://oceanservice.noaa.gov/facts/disaster-debris.html).
+Severe tropical bands can now lift loose planks and sheet metal over the channel. They move with the gusts, tumble, become solid only as they drop to cage height, then splash down and remain as floating hull hazards. Logs stay in the water. The behavior follows National Weather Service and National Hurricane Center guidance that tropical-storm and hurricane winds can turn loose outdoor material into [windborne debris](https://www.weather.gov/mhx/hurricaneprep) and [flying missiles](https://www.nhc.noaa.gov/prepare/hazards.php); the debris left obstructing shallow channels follows [NOAA's account of storm-driven marine debris](https://oceanservice.noaa.gov/facts/disaster-debris.html).
+
+The air prop fails like an air prop. Floating deadheads hammer the hull, but standing cypress limbs and windborne debris can enter the cage, visibly wrap the prop, choke thrust and load the engine. Bring the throttle to idle and hold `X` (`B / Circle` on a controller) to cut the debris free from aboard. Pinning the throttle tightens it. The wrap is one fixed player-only line with a 768-byte position buffer that stays hidden when the cage is clear. Its stock line program is prepared behind the loading card, so the first cage strike does not compile a shader in play.
 
 Lightning no longer fades as one unbranched line. Each strike fills a fixed 72-segment buffer with a 24-step main channel, two major forks and a bounded set of smaller branches. Three return strokes run through the same channel with dark gaps between them, relighting the sky and water each time. Thunder still arrives by distance, and a nearby strike can still damage the boat or knock out settlement power. The line geometry and its scratch buffer total 3,756 bytes. There is one draw call and no texture.
 
