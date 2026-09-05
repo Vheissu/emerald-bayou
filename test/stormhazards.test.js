@@ -92,6 +92,21 @@ test('a waterspout publishes its cloud motion and one special marine warning', (
   assert.equal(reported, hazards.spout); assert.ok(Math.hypot(hazards.spout.motionX, hazards.spout.motionZ) >= 5.15);
 });
 
+test('waterspout foam stays in broken perimeter streaks instead of filling its pressure depression', () => {
+  const { hazards } = makeHazards(), spout = hazards.spout;
+  Object.assign(spout, { active: true, x: 0, z: 0, life: 20, maxLife: 40, spin: 0.6 });
+  const stamps = []; hazards.stamps(stamps);
+  assert.equal(stamps.length, 5); assert.equal(stamps[0].foam, 0); assert.ok(stamps[0].height < 0);
+  assert.equal('ring' in spout, false);
+  for (const stamp of stamps.slice(1)) {
+    assert.ok(Math.hypot(stamp.x, stamp.z) > 6);
+    assert.ok(stamp.foam < 0.9); assert.ok(stamp.foamRadius < 1.5);
+  }
+  const retained = stamps[1]; spout.life = 40;
+  const appearing = []; hazards.stamps(appearing);
+  assert.equal(appearing[1], retained); assert.ok(appearing.every(stamp => stamp.foam === 0));
+});
+
 test('one retained downburst cell publishes radial wind without growing storm resources', () => {
   const { hazards, phys, game } = makeHazards(); let reported = null;
   hazards.radio = { downburstCall(cell) { reported = cell; } };

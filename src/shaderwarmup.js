@@ -2,6 +2,33 @@ const materialsFor = object => Array.isArray(object?.material) ? object.material
 
 const sortedDefines = defines => Object.entries(defines || {}).sort(([a], [b]) => a.localeCompare(b));
 
+// Compilation must use the same HDR output path as gameplay. A canvas/sRGB warm-up otherwise prepares a different
+// program. Restore the target immediately after starting compilation so asynchronous waits cannot hijack live frames.
+export async function prepareRenderShaders(renderer, camera, targetScene, object, renderTarget = null) {
+  const canBind = typeof renderer.setRenderTarget === 'function';
+  const previous = canBind ? renderer.getRenderTarget() : null;
+  const face = canBind ? renderer.getActiveCubeFace?.() || 0 : 0, mip = canBind ? renderer.getActiveMipmapLevel?.() || 0 : 0;
+  const programs = new Set(); let pending;
+  try {
+    if (canBind) renderer.setRenderTarget(renderTarget);
+    if (typeof renderer.compileAsync === 'function') pending = renderer.compileAsync(object, camera, targetScene);
+    else if (typeof renderer.compile === 'function') renderer.compile(object, camera, targetScene);
+    else throw new Error('renderer has no shader compiler');
+    object.traverse?.(node => {
+      for (const material of materialsFor(node)) {
+        const properties = renderer.properties?.get(material);
+        if (properties?.programs) for (const program of properties.programs.values()) programs.add(program);
+        else if (properties?.currentProgram) programs.add(properties.currentProgram);
+      }
+    });
+  } finally { if (canBind) renderer.setRenderTarget(previous, face, mip); }
+  await pending;
+  // Three defers diagnostics and uniform/attribute locations until first use, even after compileAsync resolves.
+  // Finish those driver queries here, while the loading card or the procedural stand-in still covers the object.
+  for (const program of programs) { program.getUniforms?.(); program.getAttributes?.(); }
+  return object;
+}
+
 // Uniform values do not change a compiled program. Shader source, defines and the GPU primitive path do. Using this
 // key prevents pooled fuel sheens, search beams and other copies from each doing the same startup compilation.
 export function shaderVariantKey(material, object = {}) {
@@ -33,14 +60,12 @@ export function deferredShaderObjects(scenes = []) {
   return { objects, materials: materials.size, variants: variants.size };
 }
 
-export async function warmDeferredShaders(renderer, camera, scenes = [], now = () => performance.now()) {
+export async function warmDeferredShaders(renderer, camera, scenes = [], now = () => performance.now(), renderTarget = null) {
   const startedAt = now(), deferred = deferredShaderObjects(scenes);
   let completed = 0, failures = 0;
   for (const { object, targetScene } of deferred.objects) {
     try {
-      if (typeof renderer?.compileAsync === 'function') await renderer.compileAsync(object, camera, targetScene);
-      else if (typeof renderer?.compile === 'function') renderer.compile(object, camera, targetScene);
-      else throw new Error('renderer has no shader compiler');
+      await prepareRenderShaders(renderer, camera, targetScene, object, renderTarget);
       completed++;
     } catch (error) { failures++; }
   }
@@ -52,15 +77,13 @@ export async function warmDeferredShaders(renderer, camera, scenes = [], now = (
 
 // A few retained first-use objects use stock Three materials rather than ShaderMaterial, so the custom-material scan
 // intentionally skips them. Warm one explicit object behind the loading card without changing its live visibility.
-export async function warmRetainedObject(renderer, camera, targetScene, object, now = () => performance.now()) {
+export async function warmRetainedObject(renderer, camera, targetScene, object, now = () => performance.now(), renderTarget = null) {
   const startedAt = now();
   if (!object) return { attempted: 0, completed: 0, failures: 0, durationMs: 0 };
   const visible = object.visible; object.visible = true;
   let completed = 0, failures = 0;
   try {
-    if (typeof renderer?.compileAsync === 'function') await renderer.compileAsync(object, camera, targetScene);
-    else if (typeof renderer?.compile === 'function') renderer.compile(object, camera, targetScene);
-    else throw new Error('renderer has no shader compiler');
+    await prepareRenderShaders(renderer, camera, targetScene, object, renderTarget);
     completed = 1;
   } catch (error) { failures = 1; }
   finally { object.visible = visible; }

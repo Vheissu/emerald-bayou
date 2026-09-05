@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deferredShaderObjects, shaderVariantKey, warmDeferredShaders, warmRetainedObject } from '../src/shaderwarmup.js';
+import { deferredShaderObjects, prepareRenderShaders, shaderVariantKey, warmDeferredShaders, warmRetainedObject } from '../src/shaderwarmup.js';
 
 const material = (id, shader = true, source = id) => ({ uuid: id, isShaderMaterial: shader, vertexShader: `vertex:${source}`, fragmentShader: `fragment:${source}` });
 const object = (id, ownMaterial = null, children = []) => ({
@@ -62,4 +62,29 @@ test('explicit retained warm-up contains failure and still restores a visible ob
   const target = { visible: true }, renderer = { compile() { throw new Error('compile failed'); } };
   const result = await warmRetainedObject(renderer, {}, {}, target, () => 0);
   assert.equal(target.visible, true); assert.deepEqual(result, { attempted: 1, completed: 0, failures: 1, durationMs: 0 });
+});
+
+test('HDR preparation restores the live target before waiting and finishes driver queries after readiness', async () => {
+  const hdr = {}, live = {}, scene = {}, camera = {}, mat = {}, calls = [];
+  const root = { traverse(visit) { visit({ material: mat }); visit({ material: mat }); } };
+  let target = live, release;
+  const ready = new Promise(resolve => { release = resolve; });
+  const program = { getUniforms() { calls.push('uniforms'); }, getAttributes() { calls.push('attributes'); } };
+  const renderer = {
+    getRenderTarget: () => target, getActiveCubeFace: () => 3, getActiveMipmapLevel: () => 2,
+    setRenderTarget(next, face, mip) { target = next; if (next === live) assert.deepEqual([face, mip], [3, 2]); },
+    compileAsync(object, view, destination) { assert.equal(target, hdr); assert.equal(object, root); assert.equal(view, camera); assert.equal(destination, scene); calls.push('compile'); return ready; },
+    properties: { get: () => ({ programs: new Map([['hdr', program]]) }) },
+  };
+  const preparation = prepareRenderShaders(renderer, camera, scene, root, hdr);
+  assert.equal(target, live); assert.deepEqual(calls, ['compile']);
+  release(); assert.equal(await preparation, root);
+  assert.deepEqual(calls, ['compile', 'uniforms', 'attributes']);
+});
+
+test('a compiler error cannot leave the game rendering into its warm-up target', async () => {
+  const live = {}, hdr = {}; let target = live;
+  const renderer = { getRenderTarget: () => target, setRenderTarget: value => { target = value; }, compile() { throw new Error('compile failed'); } };
+  await assert.rejects(prepareRenderShaders(renderer, {}, {}, {}, hdr), /compile failed/);
+  assert.equal(target, live);
 });

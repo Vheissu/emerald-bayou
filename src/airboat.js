@@ -8,6 +8,7 @@ import { person } from './folk.js';
 import { mulberry32 } from './noise.js';
 import { registerWetMaterial } from './surfacewetness.js';
 import { bottomStrikeSeverity } from './boatdamage.js';
+import { instanceStaticChildren } from './staticinstances.js';
 
 // Boat local frame: +X starboard, +Y up, -Z forward (bow at -Z).
 // The player boat and scheduled traffic use the same detailed hull. Keep one immutable render template so its
@@ -307,6 +308,7 @@ function createAirboatTemplate() {
   for (const sx of [-1, 1]) for (const sz of [-2.0, 2.2]) { const c = new THREE.Mesh(boxGeo(0.16, 0.05, 0.05), steel); c.position.set(sx * 1.05, 0.66, sz); g.add(c); }
 
   g.traverse(o => { if (o.isMesh) { o.castShadow = o.castShadow || true; o.receiveShadow = true; } });
+  g.userData.batchedDraws = instanceStaticChildren(g, new Set([prop, ...rudders]));
   return { group: g, prop, blur, rudders, cage };
 }
 

@@ -86,6 +86,7 @@ export class Water {
       reflMatrix: { value: this.textureMatrix }, resolution: { value: this.size },
       near: { value: 0.3 }, far: { value: 5000 }, uTime: { value: 0 },
       sunDir: { value: sunDir.clone().normalize() }, sunColor: { value: new THREE.Color(1.0, 0.96, 0.88) },
+      foamLight: { value: new THREE.Color(1, 1, 1) },
       absorb: { value: new THREE.Vector3(0.52, 0.13, 0.50) },
       scatterColor: { value: new THREE.Color(0.010, 0.15, 0.085) },
       scatterK: { value: 0.3 },
@@ -117,7 +118,7 @@ export class Water {
         precision highp float;
         uniform sampler2D tRefr, tDepth, tRefl, tNormal, tFoam, tWake;
         uniform vec2 resolution; uniform float near, far, uTime;
-        uniform vec3 sunDir, sunColor, absorb, scatterColor; uniform float scatterK;
+        uniform vec3 sunDir, sunColor, foamLight, absorb, scatterColor; uniform float scatterK;
         uniform vec2 wakeOrigin; uniform float wakeSize, wakeTexel, rippleStrength, wakeStrength; uniform int dbg;
         uniform float seaState; uniform vec2 weatherWind; uniform float rainAmount, hailAmount, precipitationRipples;
         uniform float bioluminescence; uniform vec3 bioColor;
@@ -270,7 +271,7 @@ export class Water {
           spec = min(spec, vec3(8.0));
           vec3 Nf = normalize(vec3(nt.x * 2.2 + (n3.x + n4.x) * 0.25 * rippleStrength * distFade, 1.0, nt.y * 2.2 + (n3.y + n4.y) * 0.25 * rippleStrength * distFade));
           float sparkle = pow(max(dot(Nf, H), 0.0), 1400.0) * 5.0 * distFade;
-          spec += sunColor * sparkle;
+          spec += sunColor * sunIntensity * sparkle;
           spec *= shadow * (1.0 - dw);
           vec3 col = mix(waterCol, refl, F) + spec;
           { float dn2 = texture2D(tFoam, w * 1.6).r * 0.6 + texture2D(tFoam, w * 4.1).r * 0.4; vec3 duckCol = mix(vec3(0.045, 0.085, 0.018), vec3(0.11, 0.16, 0.04), dn2) * (0.35 + 0.65 * shadow) * (0.7 + 0.3 * max(sunDir.y, 0.0)); col = mix(col, duckCol, dw * 0.92); }
@@ -287,7 +288,7 @@ export class Water {
           fm += windCaps * (0.35 + 0.65 * fn2);
           fm += precipitationCrown * impactFade * (1.0 - dw * 0.78);
           fm = clamp(fm, 0.0, 1.0);
-          vec3 foamCol = vec3(0.92, 0.95, 0.93) * (0.75 + 0.25 * max(dot(vec3(0.0, 1.0, 0.0), sunDir), 0.0)) * (0.5 + 0.5 * shadow);
+          vec3 foamCol = foamLight * vec3(0.92, 0.95, 0.93) * (0.5 + 0.5 * shadow);
           float bioWake = smoothstep(0.012, 0.42, fmRaw * (0.7 + fn + fn2 * 0.45) + abs(wh) * 2.4);
           float bio = bioluminescence * clamp(bioWake + shore * 0.62, 0.0, 1.0) * (1.0 - silt * 0.62);
           foamCol = mix(foamCol, vec3(0.11, 0.62, 0.86), bioluminescence * 0.68);

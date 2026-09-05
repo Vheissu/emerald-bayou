@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { installZeroContributionLightCulling } from './lightshader.js';
 
 export const SCENE_POINT_LIGHTS = 12;
 export const SCENE_SPOT_LIGHTS = 4;
@@ -8,11 +9,12 @@ const capacity = (value, maximum) => Number.isFinite(value) ? Math.max(0, Math.m
 // owns its lamps, strobes and hidden rigs. Only these proxy lights participate in rendering; unused slots stay at zero.
 export class SceneLightPool {
   constructor(scene, { points = SCENE_POINT_LIGHTS, spots = SCENE_SPOT_LIGHTS } = {}) {
+    const zeroLightCulling = installZeroContributionLightCulling();
     this.scene = scene; this.sources = []; this.registered = new WeakSet();
     this.group = new THREE.Group(); this.group.name = 'fixed scene light pool';
     this.points = this.makeSlots(capacity(points, SCENE_POINT_LIGHTS), false);
     this.spots = this.makeSlots(capacity(spots, SCENE_SPOT_LIGHTS), true);
-    this.stats = { sources: 0, pointSlots: this.points.length, spotSlots: this.spots.length, activePoints: 0, activeSpots: 0, omittedPoints: 0, omittedSpots: 0 };
+    this.stats = { sources: 0, pointSlots: this.points.length, spotSlots: this.spots.length, activePoints: 0, activeSpots: 0, omittedPoints: 0, omittedSpots: 0, zeroLightCulling };
     this.register(scene); scene.add(this.group);
     // Recovery rigs are built and released as the player reaches them. Inspect only the affected subtree, never the
     // streamed scene each frame, and release detached sources so this registry cannot keep old wrecks alive.

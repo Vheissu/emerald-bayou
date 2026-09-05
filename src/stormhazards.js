@@ -83,13 +83,13 @@ function warpFunnel(geo, height, seed) {
 
 function funnelMaterial(color, phase) {
   return new THREE.ShaderMaterial({
-    uniforms: { uColor: { value: new THREE.Color(color) }, uTime: { value: 0 }, uOpacity: { value: 0.2 }, uPhase: { value: phase } },
+    uniforms: { uColor: { value: new THREE.Color(color) }, uLight: { value: new THREE.Color(1, 1, 1) }, uTime: { value: 0 }, uOpacity: { value: 0.2 }, uPhase: { value: phase } },
     vertexShader: `
       varying vec2 vUv;
       void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
     `,
     fragmentShader: `
-      uniform vec3 uColor; uniform float uTime, uOpacity, uPhase; varying vec2 vUv;
+      uniform vec3 uColor, uLight; uniform float uTime, uOpacity, uPhase; varying vec2 vUv;
       void main() {
         float a = vUv.x * 6.2831853;
         float s1 = sin(a * 5.0 - vUv.y * 48.0 + uTime * 5.8 + uPhase);
@@ -99,7 +99,7 @@ function funnelMaterial(color, phase) {
         float ends = smoothstep(0.0, 0.055, vUv.y) * (1.0 - smoothstep(0.9, 1.0, vUv.y));
         float alpha = uOpacity * ends * (0.22 + wisps * 0.95);
         vec3 col = mix(uColor, vec3(0.82, 0.91, 0.92), wisps * 0.42 + vUv.y * 0.12);
-        gl_FragColor = vec4(col, alpha);
+        gl_FragColor = vec4(col * uLight, alpha);
       }
     `,
     transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
@@ -124,9 +124,8 @@ function makeSpout() {
     const mat = new THREE.LineBasicMaterial({ color: 0xdce7e6, transparent: true, opacity: 0.2, depthWrite: false });
     const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat); spirals.push(line); group.add(line);
   }
-  const ringMat = new THREE.MeshBasicMaterial({ color: 0xe7f1ed, transparent: true, opacity: 0.34, depthWrite: false, side: THREE.DoubleSide });
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(7.8, 0.13, 6, 52), ringMat); ring.rotation.x = Math.PI / 2; ring.position.y = 0.22; group.add(ring);
-  return { group, outer, inner, spirals, ring, active: false, x: 0, z: 0, motionX: 0, motionZ: 0, life: 0, maxLife: 1, spin: 0, emit: 0, damageCd: 0 };
+  // Airborne mist and broken wake streaks form the base. A solid torus read as a drawn circle on the water.
+  return { group, outer, inner, spirals, active: false, x: 0, z: 0, motionX: 0, motionZ: 0, life: 0, maxLife: 1, spin: 0, emit: 0, damageCd: 0 };
 }
 
 function makeStrike(scene) {
@@ -486,15 +485,19 @@ export class StormHazards {
     S.group.visible = appear > 0.01; S.group.scale.setScalar(appear); S.group.position.set(S.x, this.water.level, S.z); S.group.rotation.y = S.spin;
     S.outer.material.uniforms.uTime.value = t; S.outer.material.uniforms.uOpacity.value = 0.18 + V.storm * 0.09;
     S.inner.material.uniforms.uTime.value = t * 1.08; S.inner.material.uniforms.uOpacity.value = 0.11 + V.storm * 0.07;
-    S.ring.material.opacity = 0.22 + V.storm * 0.22;
+    const light = this.water.uniforms?.foamLight?.value;
+    if (light) {
+      S.outer.material.uniforms.uLight.value.copy(light); S.inner.material.uniforms.uLight.value.copy(light);
+      for (const spiral of S.spirals) spiral.material.color.copy(light);
+    }
     for (let i = 0; i < S.spirals.length; i++) S.spirals[i].material.opacity = 0.2 + V.rain * 0.17;
 
-    S.emit += dt * (34 + V.wind * 1.3);
+    S.emit += dt * (34 + V.wind * 1.3) * appear;
     while (S.emit >= 1) {
       S.emit--;
-      const a = Math.random() * Math.PI * 2, r = 3.5 + Math.random() * 6.5, tx = -Math.sin(a), tz = Math.cos(a);
-      this.plume.emit(S.x + Math.cos(a) * r, this.water.level + 0.18, S.z + Math.sin(a) * r, tx * (3 + Math.random() * 4), 1.2 + Math.random() * 3.5, tz * (3 + Math.random() * 4), 0.45 + Math.random() * 0.65, 1.5, 0.75 + Math.random() * 0.55, 0.38);
-      if (Math.random() < 0.55) this.spray.emit(S.x + Math.cos(a) * r, this.water.level + 0.08, S.z + Math.sin(a) * r, tx * (4 + Math.random() * 5), 2 + Math.random() * 4, tz * (4 + Math.random() * 5), 0.025 + Math.random() * 0.04, 0.45 + Math.random() * 0.5, 0.72);
+      const a = Math.random() * Math.PI * 2, r = 5.3 + Math.random() * 3, tx = -Math.sin(a), tz = Math.cos(a);
+      this.plume.emit(S.x + Math.cos(a) * r, this.water.level + 0.12, S.z + Math.sin(a) * r, tx * (3 + Math.random() * 4), 0.6 + Math.random() * 1.7, tz * (3 + Math.random() * 4), 0.2 + Math.random() * 0.25, 0.65, 0.45 + Math.random() * 0.4, 0.1 + Math.random() * 0.07);
+      if (Math.random() < 0.55) this.spray.emit(S.x + Math.cos(a) * r, this.water.level + 0.08, S.z + Math.sin(a) * r, tx * (4 + Math.random() * 5), 1.8 + Math.random() * 3, tz * (4 + Math.random() * 5), 0.008 + Math.random() * 0.012, 0.35 + Math.random() * 0.35, 0.55);
     }
     if (Math.random() < dt * 7) this.plume.emit(S.x + (Math.random() - 0.5) * 8, this.water.level + 72 + Math.random() * 10, S.z + (Math.random() - 0.5) * 8, this.environment.windDir.x * 2, 0.2, this.environment.windDir.z * 2, 3 + Math.random() * 3.5, 2.2, 2.2, 0.22);
 
@@ -542,8 +545,14 @@ export class StormHazards {
   stamps(out) {
     this.stampPool.reset();
     if (this.spout.active) {
-      const S = this.spout; this.stampPool.emit(S.x, S.z, 7.8, -1.5, 3.6, 8.6);
-      for (let i = 0; i < 4; i++) { const a = S.spin + i * Math.PI / 2; this.stampPool.emit(S.x + Math.cos(a) * 7, S.z + Math.sin(a) * 7, 2.2, 0.3, 1.1, 2.4); }
+      const S = this.spout, appear = smooth(0, 2.2, S.maxLife - S.life) * smooth(0, 3.2, S.life);
+      // A pressure depression is not a disk of foam. Four narrow, uneven streaks rotate around a darker core.
+      this.stampPool.emit(S.x, S.z, 3.4, -0.14 * appear, 0, 0);
+      for (let i = 0; i < 4; i++) {
+        const a = S.spin + i * Math.PI / 2, pulse = 0.5 + 0.5 * Math.sin(S.spin * 1.7 + i * 2.3);
+        const radius = 6.2 + pulse * 1.8;
+        this.stampPool.emit(S.x + Math.cos(a) * radius, S.z + Math.sin(a) * radius, 1.25, 0.05 * appear, (0.3 + pulse * 0.55) * appear, 1.45);
+      }
     }
     if (this.downburst.active) {
       const state = downburstSurfaceState(this.downburst, this.phys.pos.x, this.phys.pos.y, this._downburstField);

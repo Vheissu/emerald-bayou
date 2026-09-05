@@ -70,7 +70,7 @@ export class Fish {
     for (let i = 0; i < this.n; i++) { this._m.makeScale(0, 0, 0); this.mesh.setMatrixAt(i, this._m); }
     scene.add(this.mesh);
     this.nextT = 1; this.boilT = 0; this.activity = 1; this.time = 0;
-    loadGeo('fish_a').then(r => {
+    loadGeo('fish_a', { instanced: true }).then(r => {
       if (!r) return;
       const fallbackGeometry = this.mesh.geometry, fallbackMaterial = this.mesh.material;
       this.mesh.geometry = r.geo; this.mesh.material = r.mat;

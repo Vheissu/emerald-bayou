@@ -4,6 +4,18 @@ import * as THREE from 'three';
 import { Pipeline } from '../src/post.js';
 import { pixelRatioFor, qualityProfile } from '../src/renderquality.js';
 
+test('post preparation warms both FXAA destinations without resizing or retaining another target', async () => {
+  const live = {}, calls = []; let target = live;
+  const pipeline = Object.create(Pipeline.prototype);
+  pipeline.renderer = { getRenderTarget: () => target, setRenderTarget: value => { target = value; }, compileAsync: async root => { calls.push([root.name, target]); } };
+  for (const name of ['copy', 'bright', 'blur', 'grade', 'fxaa', 'final']) pipeline[name] = { scene: { name }, cam: {} };
+  for (const name of ['compRT', 'bloomA', 'bloomB', 'ldrRT', 'aaRT']) pipeline[name] = { name };
+  assert.equal(await pipeline.prepareShaders(), 7);
+  assert.deepEqual(calls.filter(([name]) => name === 'fxaa'), [['fxaa', pipeline.aaRT], ['fxaa', null]]);
+  assert.equal(calls.find(([name]) => name === 'final')[1], null);
+  assert.equal(target, live);
+});
+
 test('performance mode releases full-size optional post targets', () => {
   const renderer = { getDrawingBufferSize: target => target.set(1920, 1080) };
   const pipeline = new Pipeline(renderer, new THREE.PerspectiveCamera(52, 16 / 9, 0.3, 7500), qualityProfile(3));

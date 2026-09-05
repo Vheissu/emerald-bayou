@@ -65,6 +65,20 @@ export async function prepareModelForSwap(prepare, root, name, now = () => perfo
   }
 }
 
+export async function prepareInstancedModelForSwap(prepare, geometry, material, name) {
+  if (typeof prepare !== 'function') return prepareModelForSwap(null, null, name);
+  const instance = new THREE.InstancedMesh(geometry, material, 1); instance.receiveShadow = true;
+  try { return await prepareModelForSwap(prepare, instance, name); }
+  finally { instance.dispose(); } // Only the temporary instance buffer is owned here; geometry and material stay shared.
+}
+
+function recordPreparation(prepared) {
+  if (!prepared.attempted) return;
+  modelPreparation.attempted++; modelPreparation.totalMs += prepared.durationMs;
+  modelPreparation.maxMs = Math.max(modelPreparation.maxMs, prepared.durationMs);
+  if (prepared.completed) modelPreparation.completed++; else modelPreparation.failures++;
+}
+
 // Optional GLBs replace procedural stand-ins. A bad gameplay frame therefore buys the renderer some quiet time before
 // the next fetch/decode batch; sustained low-end pressure still admits a batch periodically instead of starving detail.
 export function modelFrameBackoffMs(frameSeconds) {
@@ -104,11 +118,7 @@ function fetchModel(name) {
     // The clone shares these materials. Prepare their programs while the authored model is still detached so its
     // first visible replacement cannot turn an ordinary gameplay frame into a shader-compilation pause.
     const prepared = await prepareModelForSwap(prepareModel, root, name);
-    if (prepared.attempted) {
-      modelPreparation.attempted++; modelPreparation.totalMs += prepared.durationMs;
-      modelPreparation.maxMs = Math.max(modelPreparation.maxMs, prepared.durationMs);
-      if (prepared.completed) modelPreparation.completed++; else modelPreparation.failures++;
-    }
+    recordPreparation(prepared);
     cacheDone.set(name, root); fit(name, root);
     return root;
   }).catch(e => { console.warn('model', name, e); return null; });
@@ -224,12 +234,13 @@ export function spawn(name, placeholder = null, onReady = null) {
   return g;
 }
 // a single merged geometry + material out of a loaded model, for instancing (the models are one mesh each)
-export async function loadGeo(name, { releaseSource = false } = {}) {
+export async function loadGeo(name, { releaseSource = false, instanced = false } = {}) {
   const root = await loadModel(name); if (!root) return null;
   let mesh = null; root.traverse(o => { if (o.isMesh && !mesh) mesh = o; });
   const sp = fit(name, root); const geo = mesh.geometry.clone();
   geo.rotateY(sp.yaw); geo.scale(sp.scale, sp.scale, sp.scale); geo.translate(0, sp.y, 0); geo.computeBoundingBox();
   const result = { geo, mat: mesh.material, height: geo.boundingBox.max.y };
+  if (instanced) recordPreparation(await prepareInstancedModelForSwap(prepareModel, geo, mesh.material, `${name}:instanced`));
   // Instanced-only assets retain the baked geometry and texture, not an unused GLTF scene plus its source geometry.
   if (releaseSource) { cache.delete(name); cacheDone.delete(name); }
   return result;

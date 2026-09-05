@@ -900,6 +900,10 @@ export class Environment {
     this.water.uniforms.sunDir.value.copy(this.lightDir);
     this.water.uniforms.sunIntensity.value = Math.max(0.025, useMoon ? moonLight * 2.1 : daylight * 1.55 * stormShade) + this.flash * 2;
     this.water.uniforms.sunColor.value.copy(this.sun.color);
+    const foamLight = this.water.uniforms.foamLight.value, foamSun = this.sun.intensity * 0.32 * Math.max(0, this.lightDir.y);
+    foamLight.setRGB(this.hemi.color.r * this.hemi.intensity * 1.1 + this.sun.color.r * foamSun,
+      this.hemi.color.g * this.hemi.intensity * 1.1 + this.sun.color.g * foamSun,
+      this.hemi.color.b * this.hemi.intensity * 1.1 + this.sun.color.b * foamSun);
     this.water.uniforms.rippleStrength.value = 0.13 + V.sea * 0.075 + V.rain * 0.08;
 
     const fog = this.pipeline.grade.material.uniforms;

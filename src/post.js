@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { msaaSamplesFor } from './renderquality.js';
+import { prepareRenderShaders } from './shaderwarmup.js';
 
 const QUAD_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 const unit = value => {
@@ -327,6 +328,15 @@ export class Pipeline {
       estimatedAttachmentBytes: sceneBytes + compositeBytes + postBytes + bloomBytes,
     };
   }
+  async prepareShaders() {
+    // FXAA renders into a texture on Cinematic, directly to the canvas on the other profiles. Warm both output
+    // variants so an automatic quality change cannot compile a new fullscreen program in the middle of a run.
+    const passes = [[this.copy, this.compRT], [this.bright, this.bloomA], [this.blur, this.bloomB],
+      [this.grade, this.ldrRT], [this.fxaa, this.aaRT], [this.fxaa, null], [this.final, null]];
+    for (const [pass, target] of passes) await prepareRenderShaders(this.renderer, pass.cam, pass.scene, pass.scene, target);
+    return passes.length;
+  }
+
   // scene: opaque world. overlays: array of scenes rendered on top (water, fx)
   render(scene, camera, overlays, mode = 'full') {
     const r = this.renderer;

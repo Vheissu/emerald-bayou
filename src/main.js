@@ -57,7 +57,7 @@ import {
 } from './chasecamera.js';
 import { environmentCaptureAllowed, SkyEnvironmentMap } from './environmentmap.js';
 import { sampleWakeFields } from './wakefield.js';
-import { warmDeferredShaders, warmRetainedObject } from './shaderwarmup.js';
+import { prepareRenderShaders, warmDeferredShaders, warmRetainedObject } from './shaderwarmup.js';
 import { GAMEPAD_BUTTON, STANDARD_GAMEPAD_BUTTONS, StandardGamepadInput, gamepadActionCode, gamepadBoatInput } from './gamepad.js';
 
 const app = document.getElementById('app');
@@ -88,6 +88,8 @@ app.appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.3, 7500);
 camera.layers.enable(1); // layer 1: small foliage (grass, reeds, moss) drawn by the main camera only, not in the reflection
 const scene = new THREE.Scene();
+// Reflection and opaque passes share one world transform update after simulation, instead of walking it twice.
+scene.matrixWorldAutoUpdate = false;
 const fxScene = new THREE.Scene();
 
 const SUN_DIR = new THREE.Vector3(-0.42, 0.72, -0.55).normalize();
@@ -102,6 +104,7 @@ async function init() {
   let terrainReadinessState = { ready: false, timedOut: false, visibleAtStart: false, settled: false, queued: 0, finalizing: 0, inFlight: 0, visible: 0, building: '' };
   const markStartup = key => { startupTiming[key] = performance.now() - startupStartedAt; };
   const startup = startupPlan(renderProfile.id, { constrainedTransfer: constrainedAssetTransfer(navigator.connection) });
+  let sceneShaderTarget = null;
   configureModelLoading({
     deferOptional: startup.deferOptionalModels,
     concurrency: startup.modelConcurrency,
@@ -109,7 +112,7 @@ async function init() {
     idleTimeoutMs: startup.modelIdleTimeoutMs,
     pressureMaxWaitMs: startup.modelPressureMaxWaitMs,
     disabled: startup.disabledModels,
-    prepare: (root) => typeof renderer.compileAsync === 'function' ? renderer.compileAsync(root, camera, scene) : renderer.compile(root, camera, scene),
+    prepare: root => prepareRenderShaders(renderer, camera, scene, root, sceneShaderTarget),
   });
   // ---- sky & lighting ----
   const sky = new Sky(SUN_DIR, renderProfile);
@@ -229,6 +232,7 @@ async function init() {
 
   // ---- post ----
   const pipeline = new Pipeline(renderer, camera, renderProfile);
+  sceneShaderTarget = pipeline.sceneRT;
   pipeline.grade.material.uniforms.tNoise.value = groundTex.noise;
   pipeline.grade.material.uniforms.sunDir.value.copy(SUN_DIR);
   pipeline.reflTexture = water.reflRT.texture;
@@ -1058,7 +1062,9 @@ async function init() {
     game.projectMarker(camera, window.innerWidth, window.innerHeight);
 
     // render
+    scene.updateMatrixWorld();
     sceneLightPool.sync(camera);
+    sceneLightPool.group.updateMatrixWorld();
     if (renderFrameNo % renderProfile.reflectionInterval === 0) water.renderReflection(scene, camera);
     water.setShadow(sun);
     const mode = window.__dbg.mode;
@@ -1153,13 +1159,22 @@ async function init() {
   // includes zero-count collision spray/plume buffers and hidden mission, fire and pursuit visuals, without walking
   // or retaining shader variants for the complete streamed map.
   loadingProgress('Checking the emergency gear', 0.93);
-  deferredShaderWarmup = await warmDeferredShaders(renderer, camera, [scene, water.scene, fxScene]);
-  const propWrapWarmup = await warmRetainedObject(renderer, camera, scene, boat.propWrap);
+  deferredShaderWarmup = await warmDeferredShaders(renderer, camera, [scene, water.scene, fxScene, water.simScene], undefined, pipeline.sceneRT);
+  const propWrapWarmup = await warmRetainedObject(renderer, camera, scene, boat.propWrap, undefined, pipeline.sceneRT);
   deferredShaderWarmup.retainedObjects = propWrapWarmup.attempted;
   deferredShaderWarmup.retainedCompleted = propWrapWarmup.completed;
   deferredShaderWarmup.retainedFailures = propWrapWarmup.failures;
   deferredShaderWarmup.durationMs += propWrapWarmup.durationMs;
   startupTiming.deferredShaderWarmupMs = deferredShaderWarmup.durationMs;
+  const postWarmupStartedAt = performance.now();
+  await pipeline.prepareShaders();
+  startupTiming.postShaderWarmupMs = performance.now() - postWarmupStartedAt;
+  // The wake solver does not run at the title. Allocate and draw its empty buffers now so riding out cannot pay for
+  // a new simulation shader, framebuffer pair and vertex upload in the first gameplay frame.
+  const wakeWarmupStartedAt = performance.now(), previousWakeTarget = renderer.getRenderTarget();
+  try { stamps.reset(); wakeCenter.set(terrainFocus.x, terrainFocus.z); water.simulate(wakeCenter, stamps, 0); }
+  finally { renderer.setRenderTarget(previousWakeTarget); }
+  startupTiming.wakeWarmupMs = performance.now() - wakeWarmupStartedAt;
   spray.clear(); plume.clear(); game.beacon.hide(); game.beacon2.hide();
   loadingProgress('Pulling the boat off the trailer', 0.96);
   if (startup.compileDelayMs) await new Promise(r => setTimeout(r, startup.compileDelayMs));
