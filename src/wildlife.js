@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { spawn } from './models.js';
+import { loadModel, spawn } from './models.js';
+import { PelicanFlock } from './pelicans.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './noise.js';
 import { emitWakeStamp } from './wakestamps.js';
@@ -21,24 +22,30 @@ function birdGeo() {
   const head = new THREE.SphereGeometry(0.06, 8, 6); head.scale(1, 0.9, 1.5); head.translate(0, 0.13, -0.55);
   const beak = new THREE.ConeGeometry(0.02, 0.22, 6); beak.rotateX(-Math.PI / 2); beak.translate(0, 0.12, -0.72);
   const legs = new THREE.CylinderGeometry(0.012, 0.012, 0.5, 4); legs.rotateX(Math.PI / 2); legs.translate(0, -0.05, 0.45);
-  const wingL = new THREE.PlaneGeometry(0.95, 0.42, 6, 1); wingL.translate(0.5, 0.03, 0.02);
-  const wingR = new THREE.PlaneGeometry(0.95, 0.42, 6, 1); wingR.translate(-0.5, 0.03, 0.02);
-  wingL.rotateX(-Math.PI / 2); wingR.rotateX(-Math.PI / 2);
+  const outline = [[0.09, -0.08], [0.4, -0.15], [0.65, -0.09], [0.92, -0.045], [1, -0.01], [0.94, 0.03], [1, 0.08], [0.91, 0.10], [0.96, 0.16], [0.86, 0.16], [0.9, 0.22], [0.78, 0.21], [0.8, 0.28], [0.65, 0.24], [0.45, 0.24], [0.2, 0.14], [0.09, 0.1]];
+  const wingL = new THREE.ShapeGeometry(new THREE.Shape(outline.map(([x, z]) => new THREE.Vector2(x, -z))));
+  wingL.rotateX(-Math.PI / 2); wingL.translate(0, 0.03, 0);
+  const wingR = wingL.clone(); wingR.scale(-1, 1, 1);
   const tail = new THREE.PlaneGeometry(0.22, 0.3); tail.rotateX(-Math.PI / 2); tail.translate(0, 0.02, 0.36);
-  const parts = [body, neck, head, beak, legs, wingL, wingR, tail].map(g => g.toNonIndexed());
+  const sources = [body, neck, head, beak, legs, wingL, wingR, tail];
+  const parts = sources.map((g, i) => {
+    const part = g.index ? g.toNonIndexed() : g;
+    part.setAttribute('aWing', new THREE.Float32BufferAttribute(new Float32Array(part.attributes.position.count).fill(i === 5 || i === 6 ? 1 : 0), 1));
+    return part;
+  });
   const geo = mergeGeometries(parts, false);
-  // mark wing verts via attribute: wing factor = |x|
+  for (const part of new Set([...parts, ...sources])) part.dispose();
   return geo;
 }
 
 // Bird kinds: white ibis flocks wheeling over the trees, pelicans in single file a few metres off the water, vultures
 // turning high on the thermals, swallows skimming the surface, one osprey working the channel.
 const BIRD_KINDS = {
-  ibis: { n: 8, scale: 1, color: 0xf4f2ec, alt: [14, 40], radius: [60, 180], speed: [0.05, 0.1], flap: [0.6, 1.1], freq: 7.5, spread: 22, vspread: 6, wob: 4, bank: 0.35 },
-  pelican: { n: 5, scale: 2.3, color: 0x8e847a, alt: [4, 9], radius: [220, 380], speed: [0.028, 0.04], flap: [0.12, 0.28], freq: 3.0, spread: 0, vspread: 0.6, line: 5.5, wob: 0.4, bank: 0.2, water: true },
-  vulture: { n: 3, scale: 1.9, color: 0x1e1c1a, alt: [55, 120], speed: [0.07, 0.1], radius: [40, 90], flap: [0.04, 0.09], freq: 2.5, spread: 25, vspread: 12, wob: 2, bank: 0.3 },
-  swallow: { n: 10, scale: 0.45, color: 0x2f3a46, alt: [1.5, 6], radius: [14, 36], speed: [0.4, 0.7], flap: [0.9, 1.2], freq: 15, spread: 10, vspread: 3, wob: 3, bank: 0.6, water: true },
-  osprey: { n: 1, scale: 1.6, color: 0xe4ded2, alt: [40, 75], radius: [50, 110], speed: [0.05, 0.07], flap: [0.15, 0.3], freq: 4, spread: 0, vspread: 0, wob: 1, bank: 0.25, call: true },
+  ibis: { n: 8, scale: 0.5, color: 0xf4f2ec, alt: [14, 40], radius: [60, 180], speed: [0.05, 0.1], flap: [0.6, 1.1], freq: 7.5, spread: 22, vspread: 6, wob: 4, bank: 0.35 },
+  pelican: { n: 5, scale: 1, color: 0x8e847a, alt: [4, 9], radius: [220, 380], speed: [0.028, 0.04], flap: [0.12, 0.28], freq: 3.0, spread: 0, vspread: 0.6, line: 5.5, wob: 0.4, bank: 0.2, water: true },
+  vulture: { n: 3, scale: 0.87, color: 0x1e1c1a, alt: [55, 120], speed: [0.07, 0.1], radius: [40, 90], flap: [0.04, 0.09], freq: 2.5, spread: 25, vspread: 12, wob: 2, bank: 0.3 },
+  swallow: { n: 10, scale: 0.155, color: 0x2f3a46, alt: [1.5, 6], radius: [14, 36], speed: [0.4, 0.7], flap: [0.9, 1.2], freq: 15, spread: 10, vspread: 3, wob: 3, bank: 0.6, water: true },
+  osprey: { n: 1, scale: 0.84, color: 0xe4ded2, alt: [40, 75], radius: [50, 110], speed: [0.05, 0.07], flap: [0.15, 0.3], freq: 4, spread: 0, vspread: 0, wob: 1, bank: 0.25, call: true },
 };
 const FLOCKS = ['ibis', 'ibis', 'ibis', 'ibis', 'ibis', 'pelican', 'pelican', 'vulture', 'vulture', 'swallow', 'swallow', 'osprey'];
 
@@ -47,17 +54,31 @@ export class Birds {
     this.T = terrain;
     const geo = birdGeo();
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, side: THREE.DoubleSide });
+    this.birdTime = { value: 0 };
+    mat.customProgramCacheKey = () => 'jointed-flock-wings-v1';
     mat.onBeforeCompile = (s) => {
-      s.uniforms.uTime = { value: 0 };
+      s.uniforms.uTime = this.birdTime;
       this.shader = s;
       s.vertexShader = s.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uTime; attribute float aPhase; attribute float aFlap; attribute float aFreq;')
-        .replace('#include <begin_vertex>', `
-          vec3 transformed = vec3(position);
-          float wing = smoothstep(0.08, 0.2, abs(position.x));
-          float f = sin(uTime * aFreq + aPhase) * aFlap;
-          transformed.y += wing * f * (abs(position.x) * 0.9 + 0.12 * abs(position.x) * abs(position.x));
-          transformed.x *= 1.0 - wing * abs(f) * 0.12;`);
+        .replace('#include <common>', '#include <common>\nuniform float uTime; attribute float aPhase; attribute float aFlap; attribute float aFreq; attribute float aWing;')
+        .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+          vec3 birdPosition = position;
+          if (aWing > 0.5) {
+            float side = sign(position.x);
+            float stroke = uTime * aFreq + aPhase;
+            float outer = smoothstep(0.45, 0.7, abs(position.x));
+            float wrist = sin(stroke - 0.42) * aFlap * 0.24 * outer * side;
+            mat2 tipRotation = mat2(cos(wrist), sin(wrist), -sin(wrist), cos(wrist));
+            vec2 wristPivot = vec2(side * 0.55, 0.03);
+            birdPosition.xy = wristPivot + tipRotation * (birdPosition.xy - wristPivot);
+            objectNormal.xy = tipRotation * objectNormal.xy;
+            float shoulder = sin(stroke) * aFlap * 0.72 * side;
+            mat2 wingRotation = mat2(cos(shoulder), sin(shoulder), -sin(shoulder), cos(shoulder));
+            vec2 shoulderPivot = vec2(side * 0.09, 0.03);
+            birdPosition.xy = shoulderPivot + wingRotation * (birdPosition.xy - shoulderPivot);
+            objectNormal.xy = wingRotation * objectNormal.xy;
+          }`)
+        .replace('#include <begin_vertex>', 'vec3 transformed = birdPosition;');
     };
     const r = mulberry32(77);
     this.flocks = []; this.birds = [];
@@ -70,6 +91,8 @@ export class Birds {
       for (let i = 0; i < K.n; i++) this.birds.push({ flock: fi, i, off: new THREE.Vector3((r() - 0.5) * K.spread, (r() - 0.5) * K.vspread, (r() - 0.5) * K.spread), phase: r() * Math.PI * 2, flap: K.flap[0] + r() * (K.flap[1] - K.flap[0]) });
     }
     this.count = this.birds.length;
+    this.pelicans = null; this.pelicanLoadState = 'idle'; this.pelicanLoading = null; this.pelicanCapacity = 0;
+    for (const b of this.birds) b.pelicanSlot = this.flocks[b.flock].kind === 'pelican' ? this.pelicanCapacity++ : -1;
     this.mesh = new THREE.InstancedMesh(geo, mat, this.count);
     this.mesh.frustumCulled = false; this.mesh.castShadow = false;
     const phase = new Float32Array(this.count), flap = new Float32Array(this.count), freq = new Float32Array(this.count);
@@ -80,10 +103,37 @@ export class Birds {
     geo.setAttribute('aFreq', new THREE.InstancedBufferAttribute(freq, 1));
     this.mesh.instanceColor.needsUpdate = true;
     this._m = new THREE.Matrix4(); this._p = new THREE.Vector3(); this._q = new THREE.Quaternion(); this._s = new THREE.Vector3(1, 1, 1);
+    this._hidden = new THREE.Matrix4().makeScale(0, 0, 0);
     this._look = new THREE.Matrix4(); this._up = new THREE.Vector3(0, 1, 0); this._tgt = new THREE.Vector3(); this._bank = new THREE.Quaternion(); this._z = new THREE.Vector3(0, 0, 1);
     this.audio = null; this.activity = 1;
     // Feeding birds redirect existing instance slots. The event never allocates another flock or draw call.
     this.feeding = { active: false, x: 0, z: 0, intensity: 0, scatter: 0 };
+  }
+  loadPelicans(prepare = null, load = loadModel) {
+    if (this.pelicanLoading) return this.pelicanLoading;
+    this.pelicanLoadState = 'loading';
+    this.pelicanLoading = (async () => {
+      let pool = null;
+      try {
+        const root = await load('brown_pelican');
+        if (!root) { this.pelicanLoadState = 'unavailable'; return false; }
+        let source = null; root.traverse(object => { if (object.isMesh && !source) source = object; });
+        if (!source) throw new Error('Pelican asset contains no mesh');
+        pool = new PelicanFlock(source, this.pelicanCapacity);
+        // Compile the actual instanced morph path before replacing any visible stand-in.
+        if (prepare) await prepare(pool.mesh);
+        this.pelicans = pool; this.mesh.add(pool.mesh); this.pelicanLoadState = 'ready';
+        return true;
+      } catch (error) {
+        pool?.dispose(); this.pelicanLoadState = 'failed';
+        console.warn('Pelican flock kept its fallback:', error);
+        return false;
+      }
+    })();
+    return this.pelicanLoading;
+  }
+  resourceStats() {
+    return { birdCapacity: this.count, flocks: this.flocks.length, drawCalls: 1 + (this.pelicans?.resourceStats().drawCalls || 0), pelicanLoadState: this.pelicanLoadState, pelicans: this.pelicans?.resourceStats() || null };
   }
   setFeedingActivity(activity = null) {
     const F = this.feeding;
@@ -102,7 +152,8 @@ export class Birds {
     }
   }
   update(t, cam, dt = 1 / 60) {
-    if (this.shader) this.shader.uniforms.uTime.value = t;
+    this.birdTime.value = t;
+    this.pelicans?.beginFrame();
     if (cam) for (const f of this.flocks) {
       const feedTarget = f.feedingRole && this.feeding.active ? this.feeding.intensity : 0;
       f.feedBlend += (feedTarget - f.feedBlend) * (1 - Math.exp(-dt * (feedTarget > f.feedBlend ? 0.95 : 0.28)));
@@ -118,11 +169,13 @@ export class Birds {
       let y = f.alt + b.off.y + Math.sin(t * 0.9 + i * 2) * (f.kind === 'pelican' ? 0.3 : 1.5);
       const a2 = a + 0.02 * Math.sign(f.speed);
       let nx = f.cx + Math.cos(a2) * f.radius + b.off.x + wob, nz = f.cz + Math.sin(a2) * f.radius * 0.7 + b.off.z, ny = y;
+      let flightDive = 0;
       if (f.feedingRole && f.feedBlend > 0.001) {
         const osprey = f.feedingRole === 'osprey', cycleRate = osprey ? 0.086 : 0.071, cycleOffset = osprey ? 0 : b.i * 0.173;
         const cycle = fract(t * cycleRate + cycleOffset + f.ph * 0.09);
         const nextCycle = fract((t + 0.055) * cycleRate + cycleOffset + f.ph * 0.09);
         const dive = feedingDive(cycle, osprey, this.feeding.scatter), nextDive = feedingDive(nextCycle, osprey, this.feeding.scatter), orbit = osprey ? 24 : 34;
+        flightDive = smooth(0.3, 0.9, dive) * f.feedBlend;
         const feedA = t * (osprey ? 0.42 : 0.27) + f.ph + b.i * (osprey ? 0 : 1.18);
         const feedA2 = (t + 0.055) * (osprey ? 0.42 : 0.27) + f.ph + b.i * (osprey ? 0 : 1.18);
         const spread = 1 + this.feeding.scatter * 1.35;
@@ -139,15 +192,20 @@ export class Birds {
       }
       this._p.set(x, y, z); this._tgt.set(nx, y, nz);
       this._tgt.y = ny;
-      this._look.lookAt(this._tgt, this._p, this._up);
+      this._look.lookAt(this._p, this._tgt, this._up);
       this._q.setFromRotationMatrix(this._look);
       this._bank.setFromAxisAngle(this._z, Math.sign(f.speed) * K.bank);
       this._q.multiply(this._bank);
-      this._s.setScalar(i < this.count * this.activity || (f.feedingRole && f.feedBlend > 0.035) ? K.scale : 0);
+      const visible = i < this.count * this.activity || (f.feedingRole && f.feedBlend > 0.035);
+      this._s.setScalar(visible ? K.scale : 0);
       this._m.compose(this._p, this._q, this._s);
-      this.mesh.setMatrixAt(i, this._m);
+      if (this.pelicans && b.pelicanSlot >= 0) {
+        this.pelicans.setBird(b.pelicanSlot, this._m, t, b.phase, flightDive, visible);
+        this.mesh.setMatrixAt(i, this._hidden);
+      } else this.mesh.setMatrixAt(i, this._m);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.pelicans?.finishFrame();
   }
 }
 

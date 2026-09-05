@@ -1,0 +1,8 @@
+Use case: scientific-educational
+Asset type: photorealistic anatomy and plumage reference for a Blender game model
+Primary request: a detailed, anatomically consistent adult Atlantic brown pelican in flight, shown in three orthographic views on one clean reference sheet: a large dorsal view with wings fully spread, a large ventral view with wings fully spread, and a side profile gliding with its neck retracted.
+Scene/backdrop: plain warm gray studio background, no environment or props.
+Subject: adult brown pelican found in Florida coastal estuaries; broad bowed wings with distinct tapered outer primary feathers and layered gray-brown coverts; stocky streamlined torso; retracted S-shaped neck; pale cream-yellow head; small pale eye; very long gray-tan bill with a modest tucked olive-brown throat pouch; dark gray webbed feet held behind the body; short rounded tail. Consistent proportions across all three views. Approximately two metre wingspan; bird length around one metre in its tucked flight pose.
+Style/medium: high-resolution photorealistic wildlife model reference, fine natural feather detail, neutral diffuse illumination without baked dramatic shadows.
+Composition/framing: horizontal sheet, two large spread-wing views stacked above a smaller side view, all feather tips fully visible with clear margins; flight anatomy must remain legible.
+Constraints: exactly the same species and individual in all views; no white pelican, no gull, no exaggerated pouch, no eagle beak, no cartoon styling, no labels, no text, no watermark.

@@ -158,6 +158,8 @@ The same spotlight now shows the wet air it is cutting through. Clear air holds 
 
 On a moving tide, pelicans and the osprey can find a mullet school in open water. Hold 25–65 m off at idle and the bait stays up; drive through it or let your wake reach it and the birds lift while the school goes deep. The event redirects two existing bird flocks and borrows from the fixed fish and spray pools instead of creating another set of wildlife.
 
+The ten brown pelicans now share a textured Blender model with separate gliding, wingbeat and dive poses. Its head and long bill stay rigid while the wings move. One instanced draw handles both flocks, and a procedural stand-in stays visible until the model and its shaders are ready. The [editable source, image prompts and rebuild instructions](assets/wildlife/README.md) are included. Other flying birds keep their procedural models, with tapered wingtips, corrected scale and noses facing along their flight path.
+
 Bring the airboat to idle and press `C` to cast. Florida bass, bluegill and bowfin hold in the freshwater backwaters; common snook, juvenile tarpon and red drum work the mangrove and broad-river water. Depth, murk, current, time of day, tide, weather and recent prop wash all change the wait and the species on the line. During the fight, hold `C` to reel and let go when a hard run pushes the tension into the red. Every fish is measured over the gunwale, released, and written into the boat log with its region and personal best.
 
 The habitat split follows Florida Fish and Wildlife Conservation Commission profiles for [Florida bass](https://myfwc.com/wildlifehabitats/profiles/freshwater/largemouth-bass/), [bowfin](https://myfwc.com/wildlifehabitats/profiles/freshwater/bowfin/), [snook](https://myfwc.com/wildlifehabitats/profiles/saltwater/snook/snook/), [tarpon](https://myfwc.com/wildlifehabitats/profiles/saltwater/tarpon/tarpon/) and [red drum](https://myfwc.com/wildlifehabitats/profiles/saltwater/drums/red-drum/). The release animation follows the agency’s [catch-and-release handling guidance](https://myfwc.com/fishing/freshwater/fishing-tips/): short air exposure and head-first return to the water.
@@ -249,6 +251,7 @@ __dbg.fishing.resourceStats()            // fixed rod, line, lure and landing-fi
 __dbg.nocturnal.setActivityOverride(1, true) // force bank fireflies for inspection
 __dbg.nocturnal.resourceStats()           // point count, draw count and geometry bytes
 __dbg.gators.resourceStats()               // 18 animals and the fixed 36-eye instanced pool
+__dbg.birds.resourceStats()                // 77 birds, authored pelican load state and shared draw budget
 Alt+Shift+U                                // stage one resident-boat/manatee crossing in development
 __dbg.environment.setRainbow(1)            // force both bows; pass null to restore live weather
 __dbg.environment.settlementPowerSnapshot() // five-light pool, live grid stress and saved strike outages

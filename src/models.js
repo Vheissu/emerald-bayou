@@ -9,7 +9,7 @@ const deferredQueue = [];
 const deferredByName = new Map();
 const DEFERRED_PRIORITY = Object.freeze({
   driver: 0, beau_boat: 0, boat_dreams: 0, sandbox_boat: 1,
-  fish_a: 2, turtle_boat: 2, realistic_alligator: 3,
+  fish_a: 2, turtle_boat: 2, realistic_alligator: 3, brown_pelican: 3,
   grass_a: 4, grass_d: 4,
   tree_c: 10,
 });
@@ -21,6 +21,7 @@ let disabledModels = new Set();
 const skippedModels = new Set();
 const modelRoot = `${import.meta.env?.BASE_URL || '/'}models/`;
 export const SPEC = {
+  brown_pelican: { scale: 1, yaw: 0, y: 0, path: '../wildlife/brown-pelican.glb' },
   beau_boat: { scale: 2.3, yaw: -Math.PI / 2, y: 0.27, len: 4.4 },
   boat_dreams: { scale: 2.7, yaw: -Math.PI / 2, y: 0.62, len: 5.4 },
   sandbox_boat: { scale: 2.1, yaw: -Math.PI / 2, y: 0.37, len: 4.0 },
@@ -112,7 +113,7 @@ export function orderDeferredModelNames(names) {
 }
 
 function fetchModel(name) {
-  return loader.loadAsync(`${modelRoot}${name}.glb`).then(async g => {
+  return loader.loadAsync(`${modelRoot}${SPEC[name]?.path || `${name}.glb`}`).then(async g => {
     const root = g.scene;
     root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; const m = o.material; if (m) { if (m.map) { m.map.anisotropy = 4; m.map.colorSpace = THREE.SRGBColorSpace; } m.roughness = Math.max(m.roughness ?? 1, 0.55); } } });
     // The clone shares these materials. Prepare their programs while the authored model is still detached so its

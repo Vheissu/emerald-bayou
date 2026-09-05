@@ -217,6 +217,7 @@ async function init() {
   // ---- wildlife ----
   const birds = new Birds(terrain, new THREE.Vector3(startX, 0, startZ - 120));
   scene.add(birds.mesh);
+  birds.loadPelicans(root => prepareRenderShaders(renderer, camera, scene, root, sceneShaderTarget));
   const waders = new Waders(terrain, 16, startX, startZ - 60);
   for (const w of waders.list) scene.add(w.mesh);
   const manatees = new Manatees(terrain, 4, new THREE.Vector3(startX, 0, startZ));

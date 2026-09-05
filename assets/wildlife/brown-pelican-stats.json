@@ -1,0 +1,12 @@
+{
+  "vertices": 3128,
+  "triangles": 4048,
+  "materials": 1,
+  "morphTargets": [
+    "Upstroke",
+    "Downstroke",
+    "Dive"
+  ],
+  "wingspanMetres": 2.0603106021881104,
+  "glbBytes": 568960
+}
