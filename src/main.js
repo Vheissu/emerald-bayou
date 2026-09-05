@@ -8,6 +8,8 @@ import { airboatSprayExposure, buildAirboat, AirboatPhysics, installDriver, upda
 import { Birds, Waders, Manatees, Gators } from './wildlife.js';
 import { SkiffAI } from './npc.js';
 import { Spray, Plume } from './particles.js';
+import { createParticleLighting, updateParticleLighting } from './particlelighting.js';
+import { SceneLightPool } from './scenelightpool.js';
 import { Pipeline } from './post.js';
 import { Minimap } from './hud.js';
 import { EngineAudio, selectOutboardSource } from './audio.js';
@@ -220,8 +222,9 @@ async function init() {
   scene.add(gators.eyeshine);
 
   // ---- fx ----
-  const spray = new Spray(startup.effectBudget.spray);
-  const plume = new Plume(startup.effectBudget.plume);
+  const particleLighting = createParticleLighting();
+  const spray = new Spray(startup.effectBudget.spray, particleLighting);
+  const plume = new Plume(startup.effectBudget.plume, particleLighting);
   fxScene.add(plume.mesh, spray.points);
 
   // ---- post ----
@@ -236,7 +239,7 @@ async function init() {
   plume.mat.uniforms.resolution.value.copy(pipeline.size);
   plume.mat.uniforms.near.value = camera.near; plume.mat.uniforms.far.value = camera.far;
   markStartup('renderTargetsReadyMs');
-  const sunView = new THREE.Vector3(); const camVel = new THREE.Vector3(); const camPrev = new THREE.Vector3();
+  const camVel = new THREE.Vector3(); const camPrev = new THREE.Vector3();
   // wind: slowly veering direction, gusty strength
   const wind = new THREE.Vector3(0.8, 1.0, 0.6);
 
@@ -409,9 +412,10 @@ async function init() {
       mapMarkers: game.mapMarkerPool.stats(game.mapMarkers.length),
     },
   }) : null;
+  const sceneLightPool = new SceneLightPool(scene);
   let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, retainedObjects: 0, retainedCompleted: 0, retainedFailures: 0, durationMs: 0 };
   let controller = null, cameraView = BOAT_CAMERA_CHASE, setCameraView = () => false;
-  window.__dbg = { renderer, camera, scene, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, sceneLightPool, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }), controllerStats: () => controller?.snapshot?.() || { connected: false }, cameraStats: () => ({ mode: cameraView, fov: camera.fov, driverVisible: playerDriver?.visible !== false }) };
@@ -985,9 +989,7 @@ async function init() {
     }
 
     // ---- spray ----
-    // sun direction in view space drives the lighting of droplets / plume
-    sunView.copy(environment.lightDir).transformDirection(camera.matrixWorldInverse);
-    spray.mat.uniforms.sunView.value.copy(sunView); plume.mat.uniforms.sunView.value.copy(sunView);
+    updateParticleLighting(particleLighting, environment, camera);
     const emissionDt = started && !game.paused ? dt : 0;
     const washF = Math.max(0, rpm - 0.2) * wet; // prop wash strength (0 at idle, nothing to blow when out of the water)
     camVel.subVectors(camera.position, camPrev).multiplyScalar(1 / Math.max(dt, 1e-3)); camPrev.copy(camera.position);
@@ -1056,6 +1058,7 @@ async function init() {
     game.projectMarker(camera, window.innerWidth, window.innerHeight);
 
     // render
+    sceneLightPool.sync(camera);
     if (renderFrameNo % renderProfile.reflectionInterval === 0) water.renderReflection(scene, camera);
     water.setShadow(sun);
     const mode = window.__dbg.mode;

@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import * as TEX from './textures.js';
 import { updateAttributePrefix } from './cache.js';
+import { createParticleLighting, PARTICLE_SPOT_VERTEX } from './particlelighting.js';
 
 // ---------------------------------------------------------------------------
 // Droplets: tiny fast-moving point sprites (ballistic), lit by the sun.
 // ---------------------------------------------------------------------------
 export class Spray {
-  constructor(max = 12000) {
+  constructor(max = 12000, lighting = createParticleLighting()) {
     this.max = Math.max(1, Math.floor(max));
     const capacity = this.max;
     this.pos = new Float32Array(capacity * 3); this.vel = new Float32Array(capacity * 3); this.life = new Float32Array(capacity); this.maxLife = new Float32Array(capacity); this.size = new Float32Array(capacity); this.alpha = new Float32Array(capacity); this.baseAlpha = new Float32Array(capacity);
@@ -16,17 +17,18 @@ export class Spray {
     this.geo.setAttribute('aAlpha', new THREE.BufferAttribute(this.alpha, 1).setUsage(THREE.DynamicDrawUsage));
     this.geo.setDrawRange(0, 0);
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { tSprite: { value: TEX.spraySprite() }, uScale: { value: 1400 }, sunView: { value: new THREE.Vector3(0, 1, 0) }, bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) } },
+      uniforms: { ...lighting, tSprite: { value: TEX.spraySprite() }, uScale: { value: 1400 }, bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) } },
       vertexShader: `
+        ${PARTICLE_SPOT_VERTEX}
         attribute float aSize, aAlpha; varying float vA; uniform float uScale;
-        void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = min(aSize * uScale / max(-mv.z, 0.5), 160.0); vA = aAlpha * smoothstep(0.6, 2.5, -mv.z); }`,
+        void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = min(aSize * uScale / max(-mv.z, 0.5), 160.0); vA = aAlpha * smoothstep(0.6, 2.5, -mv.z); vParticleSpot = particleSpotIrradiance((modelMatrix * vec4(position, 1.0)).xyz); }`,
       fragmentShader: `
-        uniform sampler2D tSprite; uniform vec3 sunView, bioColor; uniform float bioluminescence; varying float vA;
+        uniform sampler2D tSprite; uniform vec3 sunView, sunCol, skyCol, particleSpotColor, bioColor; uniform float bioluminescence; varying float vA, vParticleSpot;
         void main() {
           vec4 s = texture2D(tSprite, gl_PointCoord);
           // fake sphere shading: sun side bright, opposite side sky-tinted
           vec2 o = gl_PointCoord - 0.5; float lit = clamp(dot(normalize(o + 1e-4), sunView.xy) * 0.5 + 0.5, 0.0, 1.0);
-          vec3 col = mix(vec3(0.70, 0.80, 0.92), vec3(1.08, 1.05, 0.98), lit * 0.5 + 0.45);
+          vec3 col = skyCol + sunCol * (lit * 0.68 + 0.24) + particleSpotColor * vParticleSpot;
           col = mix(col, bioColor, bioluminescence * 0.72); col += bioColor * bioluminescence * 0.26;
           gl_FragColor = vec4(col, s.a * vA);
         }`,
@@ -87,7 +89,7 @@ export class Spray {
 // lit from the sun's screen-space direction, soft-blended against scene depth.
 // ---------------------------------------------------------------------------
 export class Plume {
-  constructor(max = 2600) {
+  constructor(max = 2600, lighting = createParticleLighting()) {
     this.max = Math.max(1, Math.floor(max));
     const capacity = this.max;
     this.pos = new Float32Array(capacity * 3); this.vel = new Float32Array(capacity * 3);
@@ -107,13 +109,14 @@ export class Plume {
     this.geo = geo;
     this.mat = new THREE.ShaderMaterial({
       uniforms: {
+        ...lighting,
         tSprite: { value: TEX.plumeSprite() }, tNoise: { value: TEX.noiseTex() }, tDepth: { value: null },
         resolution: { value: new THREE.Vector2(1, 1) }, near: { value: 0.3 }, far: { value: 5000 }, uTime: { value: 0 },
-        sunView: { value: new THREE.Vector3(0, 1, 0) }, camVel: { value: new THREE.Vector3() },
-        sunCol: { value: new THREE.Color(1.12, 1.08, 1.0) }, skyCol: { value: new THREE.Color(0.58, 0.70, 0.82) },
+        camVel: { value: new THREE.Vector3() },
         bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) },
       },
       vertexShader: `
+        ${PARTICLE_SPOT_VERTEX}
         attribute vec3 aPos; attribute vec4 aData; attribute float aAlpha; attribute vec3 aVel;
         uniform vec3 camVel;
         varying vec2 vUv; varying vec2 vOff; varying float vAge, vSeed, vAlpha, vZ, vSmoke;
@@ -123,6 +126,7 @@ export class Plume {
           vec2 off = vec2(position.x * c - position.y * s, position.x * s + position.y * c);
           // stretch the puff along its apparent (camera-relative) motion so sheets streak instead of balling up
           vec4 mv = viewMatrix * vec4(aPos, 1.0);
+          vParticleSpot = particleSpotIrradiance(aPos);
           vec3 rv = (viewMatrix * vec4(aVel - camVel, 0.0)).xyz;
           vec2 sv = rv.xy / max(-mv.z, 0.5); float sl = length(sv);
           vec2 dir = sl > 1e-3 ? sv / sl : vec2(1.0, 0.0); vec2 perp = vec2(-dir.y, dir.x);
@@ -140,7 +144,8 @@ export class Plume {
       fragmentShader: `
         precision highp float;
         uniform sampler2D tSprite, tNoise, tDepth; uniform vec2 resolution; uniform float near, far, uTime;
-        uniform vec3 sunView, sunCol, skyCol, bioColor; uniform float bioluminescence;
+        uniform vec3 sunView, sunCol, skyCol, particleSpotColor, bioColor; uniform float bioluminescence;
+        varying float vParticleSpot;
         varying vec2 vUv; varying vec2 vOff; varying float vAge, vSeed, vAlpha, vZ, vSmoke;
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
         void main() {
@@ -159,11 +164,13 @@ export class Plume {
           // lighting: sun side of the puff is bright, far side takes sky light; thin edges glow
           float lit = clamp(dot(normalize(vOff + 1e-4), sunView.xy) * 0.5 + 0.5, 0.0, 1.0);
           float thin = 1.0 - smoothstep(0.0, 0.9, dens);
-          vec3 col = mix(skyCol, sunCol, lit * 0.7 + 0.22);
+          vec3 illumination = skyCol + sunCol * (lit * 0.7 + 0.22);
+          vec3 col = illumination;
           col += sunCol * thin * 0.1;
           col *= 0.9 + 0.1 * n;
           vec3 soot = mix(vec3(0.075, 0.082, 0.08), vec3(0.23, 0.235, 0.22), lit * 0.22 + thin * 0.12);
-          col = mix(col, soot, vSmoke);
+          col = mix(col, soot * illumination, vSmoke);
+          col += particleSpotColor * vParticleSpot * mix(1.0, 0.18, vSmoke);
           float glow = bioluminescence * (1.0 - vSmoke) * (1.0 - smoothstep(0.48, 0.94, vAge));
           col = mix(col, bioColor, glow * 0.72); col += bioColor * glow * 0.34;
           gl_FragColor = vec4(col, a);
