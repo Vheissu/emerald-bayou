@@ -110,6 +110,8 @@ Spray leaves the hull along the local water slope and settles at the current tid
 
 Spray and mist take their light from the scene. Moonlight leaves a faint blue return, cloud cover dims the sheets, and lightning catches them for the duration of the flash. The bow spotlight picks out droplets inside its cone; spray beside or behind the lamp stays dark. Blue-fire wakes keep their own glow. Both particle shaders share the light uniforms and retain their existing geometry and textures.
 
+The water column and duckweed now follow that light too. Unlit cuts go dark at night, while the bow lamp reveals a moving patch of disturbed water, foam and floating vegetation ahead. The water and spray share the lamp's position, direction, range and fog loss. Blue fire stays emissive. The change uses the existing water pass and adds no texture or render target.
+
 Camp lamps, patrol strobes and mission searchlights feed a fixed rendering pool of twelve point lights and four spotlights. Hidden or extinguished sources release their slots, with nearby bright lamps taking priority when the pool is full. The renderer keeps unused slots at zero intensity, so switching a rescue strobe on changes uniforms instead of recompiling the swamp's materials. New storm-recovery rigs register their lamps when they enter the scene and release those records when they leave.
 
 Rain stays on the world after the curtain passes. Banks and tidal mud keep a dark wet film, while roofs, dock timber, trees and sawgrass lose roughness and catch sharper light until the sun and wind dry them. Hail melt and dense night fog can leave moisture too. The pass changes two terrain uniforms and the existing cached materials; it creates no textures, meshes, draw calls, render targets or shader programs.
@@ -161,6 +163,8 @@ Bring the airboat to idle and press `C` to cast. Florida bass, bluegill and bowf
 The habitat split follows Florida Fish and Wildlife Conservation Commission profiles for [Florida bass](https://myfwc.com/wildlifehabitats/profiles/freshwater/largemouth-bass/), [bowfin](https://myfwc.com/wildlifehabitats/profiles/freshwater/bowfin/), [snook](https://myfwc.com/wildlifehabitats/profiles/saltwater/snook/snook/), [tarpon](https://myfwc.com/wildlifehabitats/profiles/saltwater/tarpon/tarpon/) and [red drum](https://myfwc.com/wildlifehabitats/profiles/saltwater/drums/red-drum/). The release animation follows the agency’s [catch-and-release handling guidance](https://myfwc.com/fishing/freshwater/fishing-tips/): short air exposure and head-first return to the water.
 
 Fishing owns one rod, one dynamic line buffer, one lure and one landing fish. Those resources are reused on every cast, and the recent-catch ledger stops at twelve entries.
+
+The ambient fish pool only draws active jumps. Its shaders prepare without launching animals into the world, and the pool starts empty when the title opens.
 
 A hooked fish can now pull a nearby swimming alligator into the fight. A hard run carries farther than a small splash; one eligible animal may turn, throw a visible wake and close on the fish. Pull it clear or press `X` to cut the line. Banks block the approach, while basking, submerged, handled and recently fed animals stay out of it. If the alligator gets there first, the fish is gone and the boat log keeps the loss.
 

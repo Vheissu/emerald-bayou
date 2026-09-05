@@ -8,7 +8,7 @@ import { airboatSprayExposure, buildAirboat, AirboatPhysics, installDriver, upda
 import { Birds, Waders, Manatees, Gators } from './wildlife.js';
 import { SkiffAI } from './npc.js';
 import { Spray, Plume } from './particles.js';
-import { createParticleLighting, updateParticleLighting } from './particlelighting.js';
+import { createParticleLighting, shareSpotlightUniforms, updateParticleLighting } from './particlelighting.js';
 import { SceneLightPool } from './scenelightpool.js';
 import { Pipeline } from './post.js';
 import { Minimap } from './hud.js';
@@ -227,6 +227,7 @@ async function init() {
 
   // ---- fx ----
   const particleLighting = createParticleLighting();
+  shareSpotlightUniforms(water.uniforms, particleLighting);
   const spray = new Spray(startup.effectBudget.spray, particleLighting);
   const plume = new Plume(startup.effectBudget.plume, particleLighting);
   fxScene.add(plume.mesh, spray.points);
@@ -1133,7 +1134,6 @@ async function init() {
         b.mesh.visible = true; b.mesh.position.set(startX + 8, 0, startZ - 10);
         if (b.searchRig) { b.searchRig.visible = true; b.searchLight.intensity = 0.01; b.searchBeam.visible = true; b.searchBeam.position.set(startX + 8, 0.05, startZ - 10); b.searchBeam.scale.set(b.searchWidth * 0.004, b.searchLength * 0.004, 1); }
       }
-      for (let k = 0; k < 6; k++) life.fish.launch(startX + k, startZ - 6, 3, 0, 0, 1, 0, true);
       { const pr = mulberry32(11); let k = 0; for (const pose of ['stand', 'sit', 'sitEdge', 'crouch']) { const pp = person(pr, { pose, rod: k % 2 === 0, gun: k === 3 }); pp.position.set(startX - 8 + k * 2, 0.4, startZ - 6); warm.add(pp); k++; } const cn = canoe(pr); cn.position.set(startX + 6, 0, startZ - 8); warm.add(cn); }
       // Deferred model callbacks belong only to live stand-ins. Attaching one to this soon-disposed warm-up tree
       // would retain the detached group until the late model request completed.
@@ -1166,10 +1166,11 @@ async function init() {
   deferredShaderWarmup = await warmDeferredShaders(renderer, camera, [scene, water.scene, fxScene, water.simScene], undefined, pipeline.sceneRT);
   const propWrapWarmup = await warmRetainedObject(renderer, camera, scene, boat.propWrap, undefined, pipeline.sceneRT);
   const currentWarmup = await warmRetainedObject(renderer, camera, fxScene, currents.mesh, undefined, pipeline.sceneRT);
-  deferredShaderWarmup.retainedObjects = propWrapWarmup.attempted + currentWarmup.attempted;
-  deferredShaderWarmup.retainedCompleted = propWrapWarmup.completed + currentWarmup.completed;
-  deferredShaderWarmup.retainedFailures = propWrapWarmup.failures + currentWarmup.failures;
-  deferredShaderWarmup.durationMs += propWrapWarmup.durationMs + currentWarmup.durationMs;
+  const fishWarmup = await warmRetainedObject(renderer, camera, scene, life.fish.mesh, undefined, pipeline.sceneRT);
+  deferredShaderWarmup.retainedObjects = propWrapWarmup.attempted + currentWarmup.attempted + fishWarmup.attempted;
+  deferredShaderWarmup.retainedCompleted = propWrapWarmup.completed + currentWarmup.completed + fishWarmup.completed;
+  deferredShaderWarmup.retainedFailures = propWrapWarmup.failures + currentWarmup.failures + fishWarmup.failures;
+  deferredShaderWarmup.durationMs += propWrapWarmup.durationMs + currentWarmup.durationMs + fishWarmup.durationMs;
   startupTiming.deferredShaderWarmupMs = deferredShaderWarmup.durationMs;
   const postWarmupStartedAt = performance.now();
   await pipeline.prepareShaders();
@@ -1180,7 +1181,7 @@ async function init() {
   try { stamps.reset(); wakeCenter.set(terrainFocus.x, terrainFocus.z); water.simulate(wakeCenter, stamps, 0); }
   finally { renderer.setRenderTarget(previousWakeTarget); }
   startupTiming.wakeWarmupMs = performance.now() - wakeWarmupStartedAt;
-  spray.clear(); plume.clear(); game.beacon.hide(); game.beacon2.hide();
+  spray.clear(); plume.clear(); life.fish.clear(); game.beacon.hide(); game.beacon2.hide();
   loadingProgress('Pulling the boat off the trailer', 0.96);
   if (startup.compileDelayMs) await new Promise(r => setTimeout(r, startup.compileDelayMs));
   if (warm) {

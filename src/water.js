@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as TEX from './textures.js';
+import { createSpotlightUniforms, SPOTLIGHT_FALLOFF_GLSL } from './particlelighting.js';
 
 export const MAX_WAKE_STAMPS = 20;
 const MURK_SIZE = 2400, MURK_PX = 240; // 10 m per texel
@@ -81,6 +82,7 @@ export class Water {
 
     // ---- water surface ----
     this.uniforms = {
+      ...createSpotlightUniforms(),
       tRefr: { value: null }, tDepth: { value: null }, tRefl: { value: this.reflRT.texture },
       tNormal: { value: TEX.waterNormal() }, tFoam: { value: TEX.foam() }, tWake: { value: this.wakeA.texture },
       reflMatrix: { value: this.textureMatrix }, resolution: { value: this.size },
@@ -116,6 +118,8 @@ export class Water {
         }`,
       fragmentShader: `
         precision highp float;
+        ${SPOTLIGHT_FALLOFF_GLSL}
+        uniform vec3 particleSpotColor;
         uniform sampler2D tRefr, tDepth, tRefl, tNormal, tFoam, tWake;
         uniform vec2 resolution; uniform float near, far, uTime;
         uniform vec3 sunDir, sunColor, foamLight, absorb, scatterColor; uniform float scatterK;
@@ -247,7 +251,18 @@ export class Water {
           rUv = clamp(rUv, vec2(0.002), vec2(0.998));
           vec3 refl = texture2D(tRefl, rUv, 1.6 + (1.0 - distFade) * 1.5).rgb;
           float shadow = sunShadow(vWorld);
-          scat *= 0.3 + 0.7 * shadow;
+          // Scattering and floating vegetation reflect incoming light; they do not keep a daytime green glow at night.
+          // Share the existing boat lamp's cone/range data with spray. The uniform branch skips its math when off.
+          vec3 waterLight = clamp(foamLight * 1.25, vec3(0.0), vec3(1.0));
+          vec3 waterLampLight = vec3(0.0);
+          if (particleSpotShape.w > 0.0) {
+            float lamp = particleSpotIrradiance(vWorld);
+            if (lamp > 0.0) {
+              vec3 toLamp = normalize(particleSpotPosition - vWorld);
+              waterLampLight = particleSpotColor * lamp * max(dot(N, toLamp), 0.0);
+            }
+          }
+          scat *= waterLight * (0.3 + 0.7 * shadow) + waterLampLight;
           waterCol = under + scat;
           // duckweed: a matte green skin on the shaded still water, in patches, pushed aside by the wake
           float dn = texture2D(tFoam, w * 0.045 + vec2(0.003, -0.002) * t).r * 0.65 + texture2D(tFoam, w * 0.23 - vec2(0.004, 0.003) * t).r * 0.45;
@@ -274,7 +289,7 @@ export class Water {
           spec += sunColor * sunIntensity * sparkle;
           spec *= shadow * (1.0 - dw);
           vec3 col = mix(waterCol, refl, F) + spec;
-          { float dn2 = texture2D(tFoam, w * 1.6).r * 0.6 + texture2D(tFoam, w * 4.1).r * 0.4; vec3 duckCol = mix(vec3(0.045, 0.085, 0.018), vec3(0.11, 0.16, 0.04), dn2) * (0.35 + 0.65 * shadow) * (0.7 + 0.3 * max(sunDir.y, 0.0)); col = mix(col, duckCol, dw * 0.92); }
+          { float dn2 = texture2D(tFoam, w * 1.6).r * 0.6 + texture2D(tFoam, w * 4.1).r * 0.4; vec3 duckCol = mix(vec3(0.045, 0.085, 0.018), vec3(0.11, 0.16, 0.04), dn2) * (waterLight * (0.35 + 0.65 * shadow) + waterLampLight); col = mix(col, duckCol, dw * 0.92); }
           // foam
           float fn = texture2D(tFoam, w * 0.55 + vec2(t * 0.03, -t * 0.02)).r;
           float fn2 = texture2D(tFoam, w * 1.7 - vec2(t * 0.05, t * 0.04)).r;
@@ -288,13 +303,13 @@ export class Water {
           fm += windCaps * (0.35 + 0.65 * fn2);
           fm += precipitationCrown * impactFade * (1.0 - dw * 0.78);
           fm = clamp(fm, 0.0, 1.0);
-          vec3 foamCol = foamLight * vec3(0.92, 0.95, 0.93) * (0.5 + 0.5 * shadow);
+          vec3 foamCol = vec3(0.92, 0.95, 0.93) * (foamLight * (0.5 + 0.5 * shadow) + waterLampLight);
           float bioWake = smoothstep(0.012, 0.42, fmRaw * (0.7 + fn + fn2 * 0.45) + abs(wh) * 2.4);
           float bio = bioluminescence * clamp(bioWake + shore * 0.62, 0.0, 1.0) * (1.0 - silt * 0.62);
           foamCol = mix(foamCol, vec3(0.11, 0.62, 0.86), bioluminescence * 0.68);
           col = mix(col, foamCol, fm);
           col += bioColor * bio * (0.42 + fn * 0.38 + fn2 * 0.56);
-          if (dbg == 1) col = refl; else if (dbg == 2) col = vec3(F); else if (dbg == 3) col = vec3(th / 10.0); else if (dbg == 4) col = vec3(rUv, 0.0); else if (dbg == 5) col = N * 0.5 + 0.5; else if (dbg == 6) col = vec3(shadow); else if (dbg == 7) col = spec; else if (dbg == 8) col = vec3(sediment);
+          if (dbg == 1) col = refl; else if (dbg == 2) col = vec3(F); else if (dbg == 3) col = vec3(th / 10.0); else if (dbg == 4) col = vec3(rUv, 0.0); else if (dbg == 5) col = N * 0.5 + 0.5; else if (dbg == 6) col = vec3(shadow); else if (dbg == 7) col = spec; else if (dbg == 8) col = vec3(sediment); else if (dbg == 9) col = waterLight; else if (dbg == 10) col = waterLampLight;
           gl_FragColor = vec4(col, 1.0);
         }`,
     });

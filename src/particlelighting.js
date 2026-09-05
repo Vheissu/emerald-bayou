@@ -3,15 +3,28 @@ import * as THREE from 'three';
 // Spray and mist share these records. Changing a light writes uniforms, never material defines or particle buffers.
 export function createParticleLighting() {
   return {
+    ...createSpotlightUniforms(),
     sunView: { value: new THREE.Vector3(0, 1, 0) },
     sunCol: { value: new THREE.Color(0, 0, 0) },
     skyCol: { value: new THREE.Color(0, 0, 0) },
+  };
+}
+
+const SPOTLIGHT_UNIFORMS = Object.freeze(['particleSpotPosition', 'particleSpotDirection', 'particleSpotColor', 'particleSpotShape', 'particleExtinction']);
+
+export function createSpotlightUniforms() {
+  return {
     particleSpotPosition: { value: new THREE.Vector3() },
     particleSpotDirection: { value: new THREE.Vector3(0, 0, -1) },
     particleSpotColor: { value: new THREE.Color(0, 0, 0) },
     particleSpotShape: { value: new THREE.Vector4(1, 1, 110, 0) },
     particleExtinction: { value: 0 },
   };
+}
+
+export function shareSpotlightUniforms(target, source) {
+  for (const name of SPOTLIGHT_UNIFORMS) target[name] = source[name];
+  return target;
 }
 
 export function updateParticleLighting(uniforms, environment, camera) {
@@ -35,19 +48,20 @@ export function updateParticleLighting(uniforms, environment, camera) {
   return uniforms;
 }
 
-// Evaluate the existing lamp once per particle vertex, not per translucent fragment. Its real world transform keeps
-// the cone on the bow when the hull pitches or rolls; range, penumbra and fog leave nearby unlit spray in the dark.
-export const PARTICLE_SPOT_VERTEX = `
+// Shared lamp attenuation. Particles evaluate it per vertex; water evaluates it only while the lamp is powered.
+// The world transform keeps the cone on the bow through pitch and roll, with the same range, penumbra and fog loss.
+export const SPOTLIGHT_FALLOFF_GLSL = `
   uniform vec3 particleSpotPosition, particleSpotDirection;
   uniform vec4 particleSpotShape;
   uniform float particleExtinction;
-  varying float vParticleSpot;
   float particleSpotIrradiance(vec3 worldPosition) {
     if (particleSpotShape.w <= 0.0) return 0.0;
     vec3 offset = worldPosition - particleSpotPosition;
     float distanceSq = max(dot(offset, offset), 0.01);
+    if (distanceSq >= particleSpotShape.z * particleSpotShape.z) return 0.0;
     float distanceToLight = sqrt(distanceSq);
     float angleCos = dot(offset / distanceToLight, particleSpotDirection);
+    if (angleCos <= particleSpotShape.x) return 0.0;
     float cone = smoothstep(particleSpotShape.x, max(particleSpotShape.x + 0.00001, particleSpotShape.y), angleCos);
     float rangeRatio = distanceToLight / particleSpotShape.z;
     float rangeFade = max(0.0, 1.0 - pow(rangeRatio, 4.0));
@@ -55,3 +69,5 @@ export const PARTICLE_SPOT_VERTEX = `
       * exp(-distanceToLight * particleExtinction);
   }
 `;
+
+export const PARTICLE_SPOT_VERTEX = `${SPOTLIGHT_FALLOFF_GLSL}\nvarying float vParticleSpot;`;

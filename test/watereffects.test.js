@@ -70,9 +70,30 @@ test('fish launch and re-entry follow the water at their position across tides',
     const phys = { pos: new THREE.Vector2(), wet: 1, speed: 0, groundH: -4 };
     for (let i = 0; i < 100 && body.on; i++) fish.update(1 / 60, i / 60, phys);
     assert.equal(body.on, false); assert.ok(splashes.length > 0);
+    assert.equal(fish.mesh.count, 0);
     for (const y of splashes) close(y, surface(body.x, body.z) + 0.05);
     fish.mesh.geometry.dispose(); fish.mesh.material.dispose();
   }
+});
+
+test('fish render only active slots and loading cleanup releases the warm-up school', () => {
+  const fish = new Fish({ heightAt: () => -4 }, new THREE.Scene(), {
+    waveFn: () => 0, plume: { emit() {} }, spray: { emit() {} }, audio: { plip() {} }, emitStamp() {},
+  });
+  fish.activity = 0; fish.nextT = 100;
+  const geometry = fish.mesh.geometry, material = fish.mesh.material, instances = fish.mesh.instanceMatrix;
+  assert.equal(fish.mesh.count, 0);
+  const first = fish.launch(1, 0, 3, 0, 0, 1, 0, true);
+  const second = fish.launch(5, 0, 3, 0, 0, 1, 0, true);
+  const phys = { pos: new THREE.Vector2(), wet: 1, speed: 0, groundH: -4 };
+  fish.update(1 / 60, 0, phys); assert.equal(fish.mesh.count, 2);
+  first.on = false; fish.update(1 / 60, 1 / 60, phys);
+  assert.equal(fish.mesh.count, 1);
+  const matrix = new THREE.Matrix4(); fish.mesh.getMatrixAt(0, matrix);
+  assert.equal(matrix.elements[12], second.x);
+  fish.clear(); assert.equal(fish.mesh.count, 0); assert.ok(fish.list.every(body => !body.on));
+  assert.equal(fish.mesh.geometry, geometry); assert.equal(fish.mesh.material, material); assert.equal(fish.mesh.instanceMatrix, instances);
+  geometry.dispose(); material.dispose(); fish.mesh.dispose();
 });
 
 test('hull spray uses the attitude water samples without extra wave queries', () => {

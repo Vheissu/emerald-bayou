@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { createParticleLighting, updateParticleLighting } from '../src/particlelighting.js';
+import { createParticleLighting, shareSpotlightUniforms, updateParticleLighting } from '../src/particlelighting.js';
 import { Spray, Plume } from '../src/particles.js';
+import { Water } from '../src/water.js';
 
 const fixture = () => ({
   lightDir: new THREE.Vector3(0.3, 0.8, 0.5).normalize(),
@@ -77,4 +78,28 @@ test('day, night and spotlight changes share uniform records without rebuilding 
   assert.equal(spray.mat.version, sprayVersion); assert.equal(plume.mat.version, plumeVersion);
   assert.equal(spray.mat.uniforms.bioluminescence.value, 1); assert.equal(plume.mat.uniforms.bioluminescence.value, 1);
   spray.geo.dispose(); spray.mat.dispose(); plume.geo.dispose(); plume.mat.dispose();
+});
+
+test('water sees the same moving spotlight without duplicating samplers, buffers or light updates', () => {
+  const water = new Water({ getDrawingBufferSize: out => out.set(320, 180) }, new THREE.Vector3(0, 1, 0));
+  const lighting = createParticleLighting(), env = fixture(), camera = new THREE.PerspectiveCamera();
+  const geometry = water.mesh.geometry, version = water.material.version, bytes = water.memoryStats().estimatedAttachmentBytes;
+  const textures = Object.values(water.uniforms).filter(uniform => uniform.value?.isTexture).map(uniform => uniform.value);
+  assert.equal(shareSpotlightUniforms(water.uniforms, lighting), water.uniforms);
+  for (const key of ['particleSpotPosition', 'particleSpotDirection', 'particleSpotColor', 'particleSpotShape', 'particleExtinction']) {
+    assert.equal(water.material.uniforms[key], lighting[key]);
+  }
+  water.uniforms.bioluminescence.value = 1;
+  env.spotlight.position.set(12, 1.4, 20); env.spotlight.target.position.set(12, 0, -35); env.spotlight.intensity = 1250;
+  updateParticleLighting(lighting, env, camera);
+  assert.deepEqual(water.uniforms.particleSpotPosition.value.toArray(), [12, 1.4, 20]);
+  assert.ok(water.uniforms.particleSpotShape.value.w > 0);
+  env.spotlight.intensity = 0; updateParticleLighting(lighting, env, camera);
+  assert.equal(water.uniforms.particleSpotShape.value.w, 0);
+  assert.equal(water.uniforms.bioluminescence.value, 1);
+  assert.equal(water.mesh.geometry, geometry); assert.equal(water.material.version, version);
+  assert.equal(water.memoryStats().estimatedAttachmentBytes, bytes);
+  assert.deepEqual(Object.values(water.uniforms).filter(uniform => uniform.value?.isTexture).map(uniform => uniform.value), textures);
+  water.reflRT.dispose(); water.wakeA.dispose(); water.wakeB.dispose(); water.murkTex.dispose();
+  water.mesh.geometry.dispose(); water.material.dispose(); water.simQuad.geometry.dispose(); water.simMat.dispose();
 });

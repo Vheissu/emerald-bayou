@@ -67,7 +67,7 @@ export class Fish {
     this.fallbackReleased = false;
     this.list = []; for (let i = 0; i < this.n; i++) this.list.push({ on: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, t: 0, s: 1, hops: 0, roll: 0 });
     this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler(); this._p = new THREE.Vector3(); this._s = new THREE.Vector3();
-    for (let i = 0; i < this.n; i++) { this._m.makeScale(0, 0, 0); this.mesh.setMatrixAt(i, this._m); }
+    this.mesh.count = 0;
     scene.add(this.mesh);
     this.nextT = 1; this.boilT = 0; this.activity = 1; this.time = 0;
     loadGeo('fish_a', { instanced: true }).then(r => {
@@ -80,6 +80,7 @@ export class Fish {
     });
   }
   free() { for (const f of this.list) if (!f.on) return f; return null; }
+  clear() { for (const fish of this.list) fish.on = false; this.mesh.count = 0; }
   surfaceAt(x, z) { return this.fx.waveFn ? this.fx.waveFn(x, z, this.time) : 0; }
   launch(x, z, vy, vx, vz, s = 1, hops = 0, quiet = false) {
     const f = this.free(); if (!f) return null;
@@ -120,6 +121,7 @@ export class Fish {
         for (let i = 0; i < n; i++) { const side = Math.random() < 0.5 ? -1 : 1; const x = bx + f.x * (3 + Math.random() * 4) + rgt.x * side * (1 + Math.random() * 2), z = bz + f.y * (3 + Math.random() * 4) + rgt.y * side * (1 + Math.random() * 2); this.launch(x, z, 1.6 + Math.random() * 1.4, rgt.x * side * (2 + Math.random() * 2) + f.x * 1.5, rgt.y * side * (2 + Math.random() * 2) + f.y * 1.5, 0.45 + Math.random() * 0.2, 0, true); }
       }
     }
+    let visible = 0;
     for (let i = 0; i < this.n; i++) {
       const f = this.list[i]; if (!f.on) continue;
       f.t += dt; f.vy -= 9.8 * dt; f.x += f.vx * dt; f.z += f.vz * dt; f.y += f.vy * dt;
@@ -127,14 +129,15 @@ export class Fish {
       if (f.y < surface - 0.2 && f.vy < 0) {
         this.splash(f.x, f.z, 0.7 * f.s, bx, bz);
         if (f.hops > 0 && Math.random() < 0.6) { f.hops--; f.y = surface - 0.15; f.vy = Math.abs(f.vy) * (0.55 + Math.random() * 0.25); f.roll = (Math.random() - 0.5) * 2.4; }
-        else { f.on = false; this._m.makeScale(0, 0, 0); this.mesh.setMatrixAt(i, this._m); continue; }
+        else { f.on = false; continue; }
       }
       const hs = Math.hypot(f.vx, f.vz);
       this._e.set(-Math.atan2(f.vy, hs), Math.atan2(-f.vx, -f.vz), f.roll * Math.sin(Math.min(1, f.t * 2.5) * Math.PI), 'YXZ');
       this._q.setFromEuler(this._e); this._p.set(f.x, f.y, f.z); this._s.setScalar(f.s);
-      this._m.compose(this._p, this._q, this._s); this.mesh.setMatrixAt(i, this._m);
+      this._m.compose(this._p, this._q, this._s); this.mesh.setMatrixAt(visible++, this._m);
     }
-    this.mesh.instanceMatrix.needsUpdate = true;
+    this.mesh.count = visible;
+    if (visible) this.mesh.instanceMatrix.needsUpdate = true;
   }
 }
 
