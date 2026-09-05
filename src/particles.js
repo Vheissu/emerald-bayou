@@ -53,17 +53,19 @@ export class Spray {
     this.vel[a] = this.vel[b]; this.vel[a + 1] = this.vel[b + 1]; this.vel[a + 2] = this.vel[b + 2];
     this.life[i] = this.life[last]; this.maxLife[i] = this.maxLife[last]; this.size[i] = this.size[last]; this.alpha[i] = this.alpha[last]; this.baseAlpha[i] = this.baseAlpha[last];
   }
-  update(dt) {
+  update(dt, waterLevel = 0, windX = 0, windZ = 0) {
     const p = this.pos, v = this.vel;
+    // Share frame constants across the pool. Tide moves the contact plane; wind drags droplets toward the air velocity.
+    const drag = Math.exp(-dt * 1.4), windStep = 1 - drag, floor = waterLevel + 0.02;
     let i = 0;
     while (i < this.count) {
       if (this.life[i] <= 0) { this.remove(i); continue; }
       this.life[i] -= dt;
       v[i * 3 + 1] -= 9.8 * dt;
-      const drag = Math.exp(-dt * 1.4);
-      v[i * 3] *= drag; v[i * 3 + 2] *= drag;
+      v[i * 3] = v[i * 3] * drag + windX * windStep;
+      v[i * 3 + 2] = v[i * 3 + 2] * drag + windZ * windStep;
       p[i * 3] += v[i * 3] * dt; p[i * 3 + 1] += v[i * 3 + 1] * dt; p[i * 3 + 2] += v[i * 3 + 2] * dt;
-      if (p[i * 3 + 1] < 0.02) { p[i * 3 + 1] = 0.02; v[i * 3 + 1] = 0; this.life[i] -= dt * 6; }
+      if (p[i * 3 + 1] < floor) { p[i * 3 + 1] = floor; v[i * 3 + 1] = 0; this.life[i] -= dt * 6; }
       this.size[i] += dt * 0.1;
       if (this.life[i] <= 0) { this.remove(i); continue; }
       const t = this.life[i] / this.maxLife[i];
@@ -193,20 +195,23 @@ export class Plume {
     this.life[i] = this.life[last]; this.maxLife[i] = this.maxLife[last]; this.size[i] = this.size[last]; this.grow[i] = this.grow[last];
     this.rot[i] = this.rot[last]; this.rotV[i] = this.rotV[last]; this.seed[i] = this.seed[last]; this.alpha[i] = this.alpha[last]; this.baseAlpha[i] = this.baseAlpha[last];
   }
-  update(dt, t) {
+  update(dt, t, waterLevel = 0, windX = 0, windZ = 0) {
     const p = this.pos, v = this.vel, d = this.data;
     this.mat.uniforms.uTime.value = t;
+    const mistDrag = Math.exp(-dt * 1.7), smokeDrag = Math.exp(-dt * 0.58), verticalDrag = Math.exp(-dt * 1.2);
     let i = 0;
     while (i < this.count) {
       if (this.life[i] <= 0) { this.remove(i); continue; }
       this.life[i] -= dt;
       const smoke = this.baseAlpha[i] < 0;
       v[i * 3 + 1] += (smoke ? 0.32 : -0.55) * dt;
-      const drag = Math.exp(-dt * (smoke ? 0.58 : 1.7));
-      v[i * 3] *= drag; v[i * 3 + 2] *= drag; v[i * 3 + 1] *= Math.exp(-dt * 1.2);
+      const drag = smoke ? smokeDrag : mistDrag, windStep = 1 - drag;
+      v[i * 3] = v[i * 3] * drag + windX * windStep;
+      v[i * 3 + 2] = v[i * 3 + 2] * drag + windZ * windStep;
+      v[i * 3 + 1] *= verticalDrag;
       p[i * 3] += v[i * 3] * dt; p[i * 3 + 1] += v[i * 3 + 1] * dt; p[i * 3 + 2] += v[i * 3 + 2] * dt;
       if (!smoke) {
-        const floor = 0.05 + this.size[i] * 0.35;
+        const floor = waterLevel + 0.05 + this.size[i] * 0.35;
         if (p[i * 3 + 1] < floor) { p[i * 3 + 1] += (floor - p[i * 3 + 1]) * Math.min(1, dt * 6); v[i * 3 + 1] = Math.max(v[i * 3 + 1], 0); }
       }
       this.size[i] += this.grow[i] * dt; this.rot[i] += this.rotV[i] * dt;

@@ -513,6 +513,7 @@ export class AirboatPhysics {
     this.bottomStrike = 0; // fast first contact with a submerged bed
     this.hit = 0; this.hitNormal = new THREE.Vector2(); // collision speed into an obstacle this frame
     this.surfH = 0; this.prevFloor = null; this.groundH = 0; this.waterH = 0;
+    this.waterSlopeForward = 0; this.waterSlopeRight = 0;
     this.grounded = 0; this.bob = 0;
     this.obstacles = []; // [{x,z,r}] or [{ax,az,bx,bz,r}] capsules
     this.trunkGrid = new Map(); this.cell = 10; this.nearTrunks = [];
@@ -737,6 +738,8 @@ export class AirboatPhysics {
     // ---- attitude ----
     const wb = waveFn(px + fwd.x * 2.5, pz + fwd.y * 2.5, t), ws = waveFn(px - fwd.x * 2.3, pz - fwd.y * 2.3, t);
     const wl = waveFn(px - rgt.x * 1.1, pz - rgt.y * 1.1, t), wr = waveFn(px + rgt.x * 1.1, pz + rgt.y * 1.1, t);
+    // Spray follows the same local water plane without sampling waves for thousands of emitted droplets.
+    this.waterSlopeForward = (wb - ws) / 4.8; this.waterSlopeRight = (wr - wl) / 2.2;
     const wavePitch = Math.atan2(wb - ws, 4.8) * wet, waveRoll = Math.atan2(wr - wl, 2.2) * wet;
     const landPitch = Math.atan2(hBow - hStern, 4.9) * land, landRoll = Math.atan2(hR - hL, 2.2) * land;
     const accelF = thrust + df;

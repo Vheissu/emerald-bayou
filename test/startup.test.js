@@ -196,7 +196,9 @@ test('a finished ground mesh is selectable while its vegetation is still buildin
   assert.equal(visible.has(chunk), true);
 });
 
-test('a dock-scale result interrupts coarse foliage without retaining another build', () => {
+test('a dock-scale result interrupts coarse foliage without retaining another build', t => {
+  // Test priority and resumption, not whether the host happens to finish inside a wall-clock frame budget.
+  let now = 0; t.mock.method(performance, 'now', () => (now += 0.05));
   const endless = function* () { while (true) yield; };
   const quick = function* () { yield; };
   const coarse = { key: '4:0:0', prio: 0, level: 4, groundReady: true, ready: false, mesh: {}, build: endless() };

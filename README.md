@@ -56,13 +56,12 @@ The GitHub Pages workflow downloads and verifies this archive before it builds t
 | `V` | switch between chase and helm cameras |
 | `E` | interact (job posts, docks, traps, field notes, aid reports) |
 | `C` | cast, set the hook, and reel while held |
-| `X` | reel in or cut the line |
+| `X` | reel in, cut the fishing line, or cut cage debris after the prop settles |
 | `G` | set or weigh the anchor while nearly stopped |
 | `M` | jobs board |
 | `Tab` | chart |
 | `L` | spotlight |
 | `H` | horn; one prolonged blast in dense fog |
-| `X` | cut a fishing line, or cut cage debris after the prop settles |
 | `R` | reset the boat |
 | controller `RT` / `LT` | analogue throttle and reverse |
 | controller left stick | rudder; pitch and spin while airborne; click to switch camera |
@@ -106,6 +105,8 @@ The marked channels now match the radio traffic. Red aids carry even numbers, gr
 The water is the part that took longest. Real reflection and refraction passes, a tannin absorption map rendered by the terrain workers so still shaded water goes black and grows duckweed, a tide that moves the shoreline about 0.4 m either way, and a wake that stamps into the surface and shoves floating debris around. Run skinny water and the hull pressure wave lifts a brown sediment plume from the bed; it spreads with speed, thickens in soft tannin backwaters and drifts with the same current as the wake. The plume uses the wake target's previously unused alpha channel and one existing trailing stamp, so it adds no texture, render target, material, geometry, scene object or draw call.
 
 At idle, `G` drops the bow anchor. Water depth sets the amount of rode, and the hull drifts within that scope before the line comes tight. Firm mud holds best; soft muck, shell and sawgrass give sooner. Current, storm load or too much throttle can make the anchor drag while the bow swings into the load. The rode is one fixed 12-point line, reused for every drop.
+
+Spray leaves the hull along the local water slope and settles at the current tide height. Fish jumps, gator splashes, working-boat wakes and ramp launches rise with surge too. Gusts carry droplets, mist and engine smoke downwind. These effects reuse the existing particle buffers, while the hull shares the five wave samples already used for buoyancy and attitude. Pausing stops the player and chase-skiff spray emitters.
 
 Rain stays on the world after the curtain passes. Banks and tidal mud keep a dark wet film, while roofs, dock timber, trees and sawgrass lose roughness and catch sharper light until the sun and wind dry them. Hail melt and dense night fog can leave moisture too. The pass changes two terrain uniforms and the existing cached materials; it creates no textures, meshes, draw calls, render targets or shader programs.
 

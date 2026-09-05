@@ -69,7 +69,7 @@ export class Fish {
     this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler(); this._p = new THREE.Vector3(); this._s = new THREE.Vector3();
     for (let i = 0; i < this.n; i++) { this._m.makeScale(0, 0, 0); this.mesh.setMatrixAt(i, this._m); }
     scene.add(this.mesh);
-    this.nextT = 1; this.boilT = 0; this.activity = 1;
+    this.nextT = 1; this.boilT = 0; this.activity = 1; this.time = 0;
     loadGeo('fish_a').then(r => {
       if (!r) return;
       const fallbackGeometry = this.mesh.geometry, fallbackMaterial = this.mesh.material;
@@ -80,21 +80,23 @@ export class Fish {
     });
   }
   free() { for (const f of this.list) if (!f.on) return f; return null; }
+  surfaceAt(x, z) { return this.fx.waveFn ? this.fx.waveFn(x, z, this.time) : 0; }
   launch(x, z, vy, vx, vz, s = 1, hops = 0, quiet = false) {
     const f = this.free(); if (!f) return null;
-    Object.assign(f, { on: true, x, y: -0.15, z, vx, vy, vz, t: 0, s, hops, roll: (Math.random() - 0.5) * 2.4 });
+    Object.assign(f, { on: true, x, y: this.surfaceAt(x, z) - 0.15, z, vx, vy, vz, t: 0, s, hops, roll: (Math.random() - 0.5) * 2.4 });
     if (!quiet) this.splash(x, z, 0.45 * s);
     return f;
   }
   splash(x, z, k, bx, bz) {
     const { plume, spray, audio, emitStamp } = this.fx;
-    const n = Math.floor(3 + 4 * k);
-    for (let i = 0; i < n; i++) plume.emit(x + jitter() * 0.3, 0.05, z + jitter() * 0.3, jitter() * 1.2 * k, 0.8 + Math.random() * 1.6 * k, jitter() * 1.2 * k, 0.1 + Math.random() * 0.12 * k, 0.9, 0.45 + Math.random() * 0.3, 0.3);
-    for (let i = 0; i < n * 4; i++) spray.emit(x + jitter() * 0.3, 0.03, z + jitter() * 0.3, jitter() * 2.2 * k, 0.8 + Math.random() * 2.4 * k, jitter() * 2.2 * k, 0.012 + Math.random() * 0.02, 0.35 + Math.random() * 0.3, 0.6);
+    const n = Math.floor(3 + 4 * k), surface = this.surfaceAt(x, z);
+    for (let i = 0; i < n; i++) plume.emit(x + jitter() * 0.3, surface + 0.05, z + jitter() * 0.3, jitter() * 1.2 * k, 0.8 + Math.random() * 1.6 * k, jitter() * 1.2 * k, 0.1 + Math.random() * 0.12 * k, 0.9, 0.45 + Math.random() * 0.3, 0.3);
+    for (let i = 0; i < n * 4; i++) spray.emit(x + jitter() * 0.3, surface + 0.03, z + jitter() * 0.3, jitter() * 2.2 * k, 0.8 + Math.random() * 2.4 * k, jitter() * 2.2 * k, 0.012 + Math.random() * 0.02, 0.35 + Math.random() * 0.3, 0.6);
     emitStamp(x, z, 0.45 + k * 0.3, -0.3 * k, 0.9 * k, 0.5 + k * 0.3);
     if (bx !== undefined) { const d = Math.hypot(x - bx, z - bz); audio.plip(Math.min(0.45, 0.6 * k) * Math.max(0, 1 - d / 70), x, z); }
   }
   update(dt, t, phys) {
+    this.time = t;
     const bx = phys.pos.x, bz = phys.pos.y;
     // a mullet somewhere near the boat every second or two
     this.nextT -= dt;
@@ -102,14 +104,15 @@ export class Fish {
       this.nextT = (0.6 + Math.random() * 1.6) / Math.max(0.16, this.activity);
       if (Math.random() < this.activity) for (let k = 0; k < 20; k++) {
         const a = Math.random() * 6.283, r = 12 + Math.random() * 60; const x = bx + Math.cos(a) * r, z = bz + Math.sin(a) * r;
-        if (this.T.heightAt(x, z) > -0.8) continue;
+        if (this.T.heightAt(x, z) > this.surfaceAt(x, z) - 0.8) continue;
         const ang = Math.random() * 6.283, hs = 0.8 + Math.random() * 2.2;
         this.launch(x, z, 3.0 + Math.random() * 1.6, Math.cos(ang) * hs, Math.sin(ang) * hs, 0.85 + Math.random() * 0.4, 2);
         break;
       }
     }
     // bait boiling away from the bow in the shallows
-    if (phys.wet > 0.5 && phys.speed > 5 && phys.groundH > -1.9 && phys.groundH < -0.45) {
+    const depth = this.surfaceAt(bx, bz) - phys.groundH;
+    if (phys.wet > 0.5 && phys.speed > 5 && depth < 1.9 && depth > 0.45) {
       this.boilT -= dt;
       if (this.boilT <= 0) {
         this.boilT = 0.5 + Math.random() * 1.6;
@@ -120,9 +123,10 @@ export class Fish {
     for (let i = 0; i < this.n; i++) {
       const f = this.list[i]; if (!f.on) continue;
       f.t += dt; f.vy -= 9.8 * dt; f.x += f.vx * dt; f.z += f.vz * dt; f.y += f.vy * dt;
-      if (f.y < -0.2 && f.vy < 0) {
+      const surface = this.surfaceAt(f.x, f.z);
+      if (f.y < surface - 0.2 && f.vy < 0) {
         this.splash(f.x, f.z, 0.7 * f.s, bx, bz);
-        if (f.hops > 0 && Math.random() < 0.6) { f.hops--; f.y = -0.15; f.vy = Math.abs(f.vy) * (0.55 + Math.random() * 0.25); f.roll = (Math.random() - 0.5) * 2.4; }
+        if (f.hops > 0 && Math.random() < 0.6) { f.hops--; f.y = surface - 0.15; f.vy = Math.abs(f.vy) * (0.55 + Math.random() * 0.25); f.roll = (Math.random() - 0.5) * 2.4; }
         else { f.on = false; this._m.makeScale(0, 0, 0); this.mesh.setMatrixAt(i, this._m); continue; }
       }
       const hs = Math.hypot(f.vx, f.vz);
@@ -1266,8 +1270,8 @@ export class Traffic {
         this.fx.emitStamp(b.x - fx * 1.8, b.z - fz * 1.8, b.kind === 'air' ? 1.5 : 1.1, 0.6 * sp, (b.kind === 'air' ? 2.2 : 1.6) * sp, 1.1);
         this.fx.emitStamp(b.x + fx * 1.8, b.z + fz * 1.8, 1, -0.7 * sp, 0.1 * sp, 0.7);
         const { plume, spray } = this.fx; const n = Math.floor((b.kind === 'air' ? 160 : 70) * dt * sp + Math.random());
-        for (let i = 0; i < n; i++) plume.emit(b.x - fx * 2.6 + jitter() * 0.8, 0.1, b.z - fz * 2.6 + jitter() * 0.8, -fx * (1 + Math.random() * 2) + jitter(), 0.6 + Math.random() * 1.6 * sp, -fz * (1 + Math.random() * 2) + jitter(), 0.25 + Math.random() * 0.3, 0.9, 0.6 + Math.random() * 0.5, 0.25);
-        for (let i = 0; i < n * 5; i++) spray.emit(b.x - fx * 2.4 + jitter() * 1.2, 0.05, b.z - fz * 2.4 + jitter() * 1.2, -fx * (1 + Math.random() * 3) + jitter() * 1.5, 0.5 + Math.random() * 2, -fz * (1 + Math.random() * 3) + jitter() * 1.5, 0.012 + Math.random() * 0.03, 0.4 + Math.random() * 0.5, 0.5);
+        for (let i = 0; i < n; i++) plume.emit(b.x - fx * 2.6 + jitter() * 0.8, wy + 0.1, b.z - fz * 2.6 + jitter() * 0.8, -fx * (1 + Math.random() * 2) + jitter(), 0.6 + Math.random() * 1.6 * sp, -fz * (1 + Math.random() * 2) + jitter(), 0.25 + Math.random() * 0.3, 0.9, 0.6 + Math.random() * 0.5, 0.25);
+        for (let i = 0; i < n * 5; i++) spray.emit(b.x - fx * 2.4 + jitter() * 1.2, wy + 0.05, b.z - fz * 2.4 + jitter() * 1.2, -fx * (1 + Math.random() * 3) + jitter() * 1.5, 0.5 + Math.random() * 2, -fz * (1 + Math.random() * 3) + jitter() * 1.5, 0.012 + Math.random() * 0.03, 0.4 + Math.random() * 0.5, 0.5);
       }
     }
     this.obLevel = ob; this.obPitch = obp; this.obX = obx; this.obZ = obz;
