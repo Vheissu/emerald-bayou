@@ -8,12 +8,34 @@ test('post preparation warms both FXAA destinations without resizing or retainin
   const live = {}, calls = []; let target = live;
   const pipeline = Object.create(Pipeline.prototype);
   pipeline.renderer = { getRenderTarget: () => target, setRenderTarget: value => { target = value; }, compileAsync: async root => { calls.push([root.name, target]); } };
-  for (const name of ['copy', 'bright', 'blur', 'grade', 'fxaa', 'final']) pipeline[name] = { scene: { name }, cam: {} };
+  for (const name of ['copy', 'bright', 'blur', 'grade', 'fxaa', 'final', 'blit']) pipeline[name] = { scene: { name }, cam: {} };
   for (const name of ['compRT', 'bloomA', 'bloomB', 'ldrRT', 'aaRT']) pipeline[name] = { name };
-  assert.equal(await pipeline.prepareShaders(), 7);
+  assert.equal(await pipeline.prepareShaders(), 8);
   assert.deepEqual(calls.filter(([name]) => name === 'fxaa'), [['fxaa', pipeline.aaRT], ['fxaa', null]]);
   assert.equal(calls.find(([name]) => name === 'final')[1], null);
   assert.equal(target, live);
+});
+
+test('a stable larger display reuses the finished composite for low-resolution antialiasing', () => {
+  let target = null; const calls = [];
+  const renderer = { autoClear: true, getDrawingBufferSize: out => out.set(1280, 720),
+    setRenderTarget: value => { target = value; }, setClearColor() {}, clear() {}, render: scene => calls.push([scene, target]) };
+  const camera = new THREE.PerspectiveCamera(), pipeline = new Pipeline(renderer, camera, qualityProfile(1));
+  const bytes = pipeline.memoryStats().estimatedAttachmentBytes;
+  pipeline.setDisplaySize(1920, 1080); pipeline.resize(1280, 720);
+  pipeline.render(new THREE.Scene(), camera, []);
+  assert.equal(pipeline.resampleOutput, true);
+  assert.equal(calls.find(([scene]) => scene === pipeline.fxaa.scene)[1], pipeline.compRT);
+  assert.equal(calls.at(-1)[0], pipeline.blit.scene); assert.equal(calls.at(-1)[1], null);
+  assert.equal(pipeline.fxaa.material.uniforms.tDiffuse.value, pipeline.ldrRT.texture);
+  assert.equal(pipeline.blit.material.uniforms.tColor.value, pipeline.compRT.texture);
+  assert.equal(pipeline.blit.material.uniforms.displayReady.value, 1);
+  assert.equal(pipeline.aaRT.width, 1); assert.equal(pipeline.memoryStats().estimatedAttachmentBytes, bytes);
+  pipeline.reflTexture = new THREE.Texture(); pipeline.render(new THREE.Scene(), camera, [], 'refl');
+  assert.equal(pipeline.blit.material.uniforms.displayReady.value, 0);
+  assert.equal(pipeline.blit.material.uniforms.tColor.value, pipeline.reflTexture);
+  pipeline.reflTexture.dispose();
+  pipeline.setDisplaySize(1280, 720); assert.equal(pipeline.resampleOutput, false);
 });
 
 test('performance mode releases full-size optional post targets', () => {

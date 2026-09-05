@@ -59,6 +59,7 @@ import { environmentCaptureAllowed, SkyEnvironmentMap } from './environmentmap.j
 import { sampleWakeFields } from './wakefield.js';
 import { prepareRenderShaders, warmDeferredShaders, warmRetainedObject } from './shaderwarmup.js';
 import { GAMEPAD_BUTTON, STANDARD_GAMEPAD_BUTTONS, StandardGamepadInput, gamepadActionCode, gamepadBoatInput } from './gamepad.js';
+import { resizeDrawingSurface } from './renderersize.js';
 
 const app = document.getElementById('app');
 const loadingProgress = (message, value) => window.__loadingScreen?.progress?.(message, value);
@@ -75,8 +76,8 @@ const hardwareQualityLevel = initialQualityLevel({
 let qualityPreference = readQualityPreference();
 const qualityController = new AdaptiveQualityController(qualityControllerConfig(qualityPreference, hardwareQualityLevel));
 let renderProfile = qualityController.profile;
-renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio));
-renderer.setSize(window.innerWidth, window.innerHeight);
+let renderPixelRatio = pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio);
+resizeDrawingSurface(renderer, window.innerWidth, window.innerHeight, renderPixelRatio);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.shadowMap.autoUpdate = false;
@@ -232,6 +233,7 @@ async function init() {
 
   // ---- post ----
   const pipeline = new Pipeline(renderer, camera, renderProfile);
+  pipeline.setDisplaySize(renderer.domElement.width, renderer.domElement.height);
   sceneShaderTarget = pipeline.sceneRT;
   pipeline.grade.material.uniforms.tNoise.value = groundTex.noise;
   pipeline.grade.material.uniforms.sunDir.value.copy(SUN_DIR);
@@ -420,7 +422,7 @@ async function init() {
   let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, retainedObjects: 0, retainedCompleted: 0, retainedFailures: 0, durationMs: 0 };
   let controller = null, cameraView = BOAT_CAMERA_CHASE, setCameraView = () => false;
   window.__dbg = { renderer, camera, scene, sceneLightPool, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
-    profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderer.getPixelRatio(), maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
+    profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderPixelRatio, displayPixelRatio: renderer.getPixelRatio(), displayPixels: renderer.domElement.width * renderer.domElement.height, maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }), controllerStats: () => controller?.snapshot?.() || { connected: false }, cameraStats: () => ({ mode: cameraView, fov: camera.fov, driverVisible: playerDriver?.visible !== false }) };
 
@@ -557,18 +559,19 @@ async function init() {
   });
   window.addEventListener('wheel', e => { setInputMode('keyboard'); if (cameraView === BOAT_CAMERA_CHASE) camDist = Math.max(5, Math.min(20, camDist + e.deltaY * 0.01)); });
   let resizeTimer = 0; const drawingSize = new THREE.Vector2();
-  const resize = () => {
+  const resize = (updateCanvas = true) => {
     if (pageHibernated) return false;
-    renderer.setPixelRatio(pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio));
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderPixelRatio = pixelRatioFor(window.innerWidth, window.innerHeight, window.devicePixelRatio, renderProfile.maxDrawPixels, renderProfile.maxDevicePixelRatio);
+    if (updateCanvas) resizeDrawingSurface(renderer, window.innerWidth, window.innerHeight, renderPixelRatio);
     camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
-    renderer.getDrawingBufferSize(drawingSize);
+    drawingSize.set(Math.floor(window.innerWidth * renderPixelRatio), Math.floor(window.innerHeight * renderPixelRatio));
+    pipeline.setDisplaySize(renderer.domElement.width, renderer.domElement.height);
     pipeline.resize(drawingSize.x, drawingSize.y); water.resize(drawingSize.x, drawingSize.y); plume.mat.uniforms.resolution.value.copy(drawingSize);
     qualityController.reset();
     return true;
   };
   let renderFrameNo = 0;
-  const applyRenderQuality = profile => {
+  const applyRenderQuality = (profile, updateCanvas = !started || game.paused) => {
     renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); sky.setQuality(profile); condition.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile); environmentReflections.setProfile(profile);
     if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
       sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
@@ -581,7 +584,7 @@ async function init() {
       // turn one missed frame into a multi-second quality-change cascade.
       if (!started) scheduleEnvironmentReflections('quality');
     }
-    renderFrameNo = 0; resize();
+    renderFrameNo = 0; resize(updateCanvas);
   };
   window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = window.setTimeout(resize, 120); });
   const startEl = document.getElementById('start');
@@ -618,7 +621,7 @@ async function init() {
   const cycleRenderQuality = () => {
     qualityPreference = writeQualityPreference(nextQualityPreference(qualityPreference));
     const profile = qualityController.configure(qualityControllerConfig(qualityPreference, hardwareQualityLevel));
-    applyRenderQuality(profile); renderTitle();
+    applyRenderQuality(profile, true); renderTitle();
     if (started && !game.menuOpen) game.toast('Graphics changed', qualityPreferenceLabel(qualityPreference, profile.id), 1.8);
     return profile;
   };
@@ -633,6 +636,7 @@ async function init() {
     fishing.cancel('', false);
     setCameraView(BOAT_CAMERA_CHASE, false);
     started = false; game.playing = false; game.paused = true;
+    resize(); // Reconcile the display surface at the title, outside an active run.
     for (const key in keys) keys[key] = false;
     if (persist) game.persist();
     renderTitle(); startEl.classList.remove('hidden'); startEl.setAttribute('aria-hidden', 'false');
@@ -1084,7 +1088,7 @@ async function init() {
     pipeline.hibernate(); water.hibernate();
     minimap.releaseTiles(); worldMap.hibernate();
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; water.uniforms.shadowOn.value = 0; }
-    renderer.setPixelRatio(1); renderer.setSize(1, 1, false); qualityController.reset(); void audio.suspend();
+    resizeDrawingSurface(renderer, 1, 1, 1, false); qualityController.reset(); void audio.suspend();
     pageLifecycle.hibernated = true; pageLifecycle.hiddenAt = Date.now(); pageLifecycle.releasedAttachmentBytes = Math.max(0, before - attachmentBytes());
     pageLifecycle.releasedCanvasBytes = Math.max(0, canvasBefore - minimap.memoryStats().estimatedBackingBytes - worldMap.memoryStats().estimatedBackingBytes); pageLifecycle.activations++;
     return true;
@@ -1161,10 +1165,11 @@ async function init() {
   loadingProgress('Checking the emergency gear', 0.93);
   deferredShaderWarmup = await warmDeferredShaders(renderer, camera, [scene, water.scene, fxScene, water.simScene], undefined, pipeline.sceneRT);
   const propWrapWarmup = await warmRetainedObject(renderer, camera, scene, boat.propWrap, undefined, pipeline.sceneRT);
-  deferredShaderWarmup.retainedObjects = propWrapWarmup.attempted;
-  deferredShaderWarmup.retainedCompleted = propWrapWarmup.completed;
-  deferredShaderWarmup.retainedFailures = propWrapWarmup.failures;
-  deferredShaderWarmup.durationMs += propWrapWarmup.durationMs;
+  const currentWarmup = await warmRetainedObject(renderer, camera, fxScene, currents.mesh, undefined, pipeline.sceneRT);
+  deferredShaderWarmup.retainedObjects = propWrapWarmup.attempted + currentWarmup.attempted;
+  deferredShaderWarmup.retainedCompleted = propWrapWarmup.completed + currentWarmup.completed;
+  deferredShaderWarmup.retainedFailures = propWrapWarmup.failures + currentWarmup.failures;
+  deferredShaderWarmup.durationMs += propWrapWarmup.durationMs + currentWarmup.durationMs;
   startupTiming.deferredShaderWarmupMs = deferredShaderWarmup.durationMs;
   const postWarmupStartedAt = performance.now();
   await pipeline.prepareShaders();

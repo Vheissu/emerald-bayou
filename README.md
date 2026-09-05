@@ -140,6 +140,8 @@ Repeated cage bars, rails and engine fittings now share static instance batches,
 
 Shaders are prepared for the HDR targets used in play, including the first-use driver queries. Fish also prepare their instanced draw variant before replacing the stand-in. Both fullscreen antialiasing paths and the empty wake solver are ready before the title opens, so riding out or changing profiles does not compile those passes during a run.
 
+The surface-current flecks prepare both sides of their material before play too. Auto adjusts the internal render targets while keeping the displayed canvas stable. Antialiasing runs at the internal resolution and reuses the finished composite target for the copy to the display, without another attachment. Explicit graphics changes, window resizing and returning to the title reconcile the canvas size; backgrounding still collapses it to one pixel.
+
 Waterspouts leave a darker center surrounded by uneven foam streaks and fine airborne spray. Foam and funnel wisps follow the scene's light level. Their footprint fades with the funnel and reuses five wake records.
 
 The sky reflection convolution follows the same budget. Fallback, Performance, Balanced and Cinematic use 32, 64, 128 and 128 px environment maps. The map is convolved behind loading or at the title and then held through active play, because rebuilding it on an idle callback can still stop the main thread. Cinematic now retains about 2.25 MiB of half-float colour and capture depth instead of the old 9 MiB target.

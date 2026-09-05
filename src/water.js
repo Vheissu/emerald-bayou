@@ -324,9 +324,12 @@ export class Water {
   setQuality(quality = {}) {
     this.reflectionScale = quality.reflectionScale ?? 0.5;
     this.reflectionMipmaps = quality.reflectionMipmaps !== false;
-    this.reflRT.texture.generateMipmaps = this.reflectionMipmaps;
-    this.reflRT.texture.minFilter = this.reflectionMipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
-    this.reflRT.texture.needsUpdate = true;
+    const minFilter = this.reflectionMipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+    if (this.reflRT.texture.generateMipmaps !== this.reflectionMipmaps || this.reflRT.texture.minFilter !== minFilter) {
+      this.reflRT.texture.generateMipmaps = this.reflectionMipmaps;
+      this.reflRT.texture.minFilter = minFilter;
+      this.reflRT.texture.needsUpdate = true;
+    }
     const wakeResolution = Math.max(128, Math.round(quality.wakeResolution ?? 512));
     this.wakeMaxStamps = Math.max(1, Math.min(MAX_WAKE_STAMPS, Math.round(quality.wakeMaxStamps ?? MAX_WAKE_STAMPS)));
     this.simMat.uniforms.stampCount.value = this.wakeMaxStamps;

@@ -34,7 +34,7 @@ export class Pipeline {
     this.renderer = renderer; this.camera = camera;
     this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false; this.lensWetness = 0; this.dormant = false;
     const size = new THREE.Vector2(); renderer.getDrawingBufferSize(size);
-    this.size = size;
+    this.size = size; this.displaySize = null; this.resampleOutput = false;
     const w = size.x, h = size.y;
     const depthA = new THREE.DepthTexture(w, h); depthA.format = THREE.DepthFormat; depthA.type = THREE.UnsignedIntType;
     this.sceneRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthTexture: depthA, depthBuffer: true, samples: msaaSamplesFor(w, h, quality.msaaSamples) });
@@ -220,8 +220,8 @@ export class Pipeline {
       depthTest: false, depthWrite: false,
     }));
     this.blit = quadPass(new THREE.ShaderMaterial({
-      uniforms: { tColor: { value: null } }, vertexShader: QUAD_VS,
-      fragmentShader: `uniform sampler2D tColor; varying vec2 vUv; void main(){ vec3 c = texture2D(tColor, vUv).rgb; gl_FragColor = vec4(pow(c / (1.0 + c), vec3(1.0/2.2)), 1.0); }`, depthTest: false, depthWrite: false }));
+      uniforms: { tColor: { value: null }, displayReady: { value: 0 } }, vertexShader: QUAD_VS,
+      fragmentShader: `uniform sampler2D tColor; uniform float displayReady; varying vec2 vUv; void main(){ vec3 c = texture2D(tColor, vUv).rgb; gl_FragColor = vec4(displayReady > 0.5 ? c : pow(c / (1.0 + c), vec3(1.0/2.2)), 1.0); }`, depthTest: false, depthWrite: false }));
     this.fxaa = quadPass(new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.clone(FXAAShader.uniforms), vertexShader: FXAAShader.vertexShader, fragmentShader: FXAAShader.fragmentShader, depthTest: false, depthWrite: false,
     }));
@@ -297,9 +297,15 @@ export class Pipeline {
     u.lensWind.value = Math.max(-1, Math.min(1, Number(conditions.windScreen) || 0));
     return this.lensWetness;
   }
+  setDisplaySize(w, h) {
+    if (!this.displaySize) this.displaySize = new THREE.Vector2();
+    this.displaySize.set(w, h);
+    this.resampleOutput = w !== this.size.x || h !== this.size.y;
+  }
   resize(w, h) {
     w = Math.max(1, Math.floor(w)); h = Math.max(1, Math.floor(h));
     this.size.set(w, h);
+    this.resampleOutput = Boolean(this.displaySize && (this.displaySize.x !== w || this.displaySize.y !== h));
     const samples = msaaSamplesFor(w, h, this.quality.msaaSamples), sameSize = this.sceneRT.width === w && this.sceneRT.height === h;
     if (this.sceneRT.samples !== samples) { this.sceneRT.samples = samples; if (sameSize) this.sceneRT.dispose(); }
     this.sceneRT.setSize(w, h); this.compRT.setSize(w, h); this.ldrRT.setSize(w, h);
@@ -319,7 +325,7 @@ export class Pipeline {
     const bloomBytes = this.bloomEnabled ? Math.floor(width / 4) * Math.floor(height / 4) * 16 : 16;
     const grade = this.grade.material.uniforms;
     return {
-      width, height, pixels, samples, dormant: this.dormant, bloom: this.bloomEnabled, finalPass: this.finalEnabled,
+      width, height, pixels, samples, dormant: this.dormant, bloom: this.bloomEnabled, finalPass: this.finalEnabled, resampleOutput: this.resampleOutput,
       surfaceMist: grade.mistQuality.value, heatHaze: grade.heatQuality.value, heatHazeAmount: grade.heatAmount.value,
       heatHazeExtraPasses: 0, heatHazeExtraPrograms: 0, heatHazeExtraTextures: 0, heatHazeExtraAttachmentBytes: 0,
       cloudShadows: grade.cloudShadowQuality.value, cloudShadowAmount: grade.cloudShadowAmount.value,
@@ -329,10 +335,10 @@ export class Pipeline {
     };
   }
   async prepareShaders() {
-    // FXAA renders into a texture on Cinematic, directly to the canvas on the other profiles. Warm both output
-    // variants so an automatic quality change cannot compile a new fullscreen program in the middle of a run.
+    // FXAA can render into a texture or directly to the canvas. Warm both encodings and the display copy so an
+    // automatic quality change cannot compile a new fullscreen program in the middle of a run.
     const passes = [[this.copy, this.compRT], [this.bright, this.bloomA], [this.blur, this.bloomB],
-      [this.grade, this.ldrRT], [this.fxaa, this.aaRT], [this.fxaa, null], [this.final, null]];
+      [this.grade, this.ldrRT], [this.fxaa, this.aaRT], [this.fxaa, null], [this.final, null], [this.blit, null]];
     for (const [pass, target] of passes) await prepareRenderShaders(this.renderer, pass.cam, pass.scene, pass.scene, target);
     return passes.length;
   }
@@ -341,7 +347,7 @@ export class Pipeline {
   render(scene, camera, overlays, mode = 'full') {
     const r = this.renderer;
     r.setRenderTarget(this.sceneRT); r.setClearColor(0x000000, 1); r.clear(); r.render(scene, camera);
-    if (mode === 'refl' && this.reflTexture) { this.blit.material.uniforms.tColor.value = this.reflTexture; r.setRenderTarget(null); r.render(this.blit.scene, this.blit.cam); return; }
+    if (mode === 'refl' && this.reflTexture) { this.blit.material.uniforms.tColor.value = this.reflTexture; this.blit.material.uniforms.displayReady.value = 0; r.setRenderTarget(null); r.render(this.blit.scene, this.blit.cam); return; }
     if (mode === 'depth') { r.setRenderTarget(null); r.render(this.depthView.scene, this.depthView.cam); return; }
     r.setRenderTarget(this.compRT); r.clear();
     r.render(this.copy.scene, this.copy.cam);
@@ -364,6 +370,13 @@ export class Pipeline {
     if (this.finalEnabled) {
       r.setRenderTarget(this.aaRT); r.render(this.fxaa.scene, this.fxaa.cam);
       r.setRenderTarget(null); r.render(this.final.scene, this.final.cam);
+    } else if (this.resampleOutput) {
+      // Grading has finished reading the composite target. Reuse it for antialiasing at internal resolution, then
+      // copy that result to the stable display surface. This adds no attachment and avoids full-display FXAA work.
+      r.setRenderTarget(this.compRT); r.render(this.fxaa.scene, this.fxaa.cam);
+      this.blit.material.uniforms.tColor.value = this.compRT.texture;
+      this.blit.material.uniforms.displayReady.value = 1;
+      r.setRenderTarget(null); r.render(this.blit.scene, this.blit.cam);
     } else {
       r.setRenderTarget(null); r.render(this.fxaa.scene, this.fxaa.cam);
     }
