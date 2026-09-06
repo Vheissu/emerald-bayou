@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { loadModel, spawn } from './models.js';
 import { PelicanFlock } from './pelicans.js';
+import { instanceStaticChildren } from './staticinstances.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './noise.js';
 import { emitWakeStamp } from './wakestamps.js';
@@ -403,6 +404,7 @@ function buildGator() {
   const legGeometry = new THREE.CapsuleGeometry(0.07, 0.3, 4, 6);
   for (const sx of [-1, 1]) for (const sz of [-0.7, 0.7]) { const leg = new THREE.Mesh(legGeometry, hide); leg.position.set(sx * 0.38, -0.12, sz); leg.rotation.z = sx * 1.2; g.add(leg); }
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  g.userData.batchedDraws = instanceStaticChildren(g);
   g.position.y = 0.36; // belly on the origin like the model
   return g;
 }

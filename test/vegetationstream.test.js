@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { crossedFoliageCardGeometry, foliageInstanceCount, normalizeFoliageDetail, Vegetation } from '../src/vegetation.js';
+import { crossedFoliageCardGeometry, foliageInstanceCount, foliageRangeVisible, normalizeFoliageDetail, Vegetation } from '../src/vegetation.js';
+import { surfaceWetMaterialStats } from '../src/surfacewetness.js';
 
 function deferredVegetation(chunks) {
   const terrain = {
@@ -193,4 +194,110 @@ test('replaces compact grass upgrades without duplicating meshes or disposing sh
   assert.equal(chunk.veg.children.length, 2);
   assert.equal(chunk.solidGrassRevision, 2);
   assert.equal(first.geo.getAttribute('position'), sharedPosition);
+});
+
+test('deferred grass warms its actual wind and compact-instance shader before any visible upgrade', async () => {
+  const chunk = levelZeroChunk('prepared', 4000), vegetation = deferredVegetation([chunk]), resource = grassResource();
+  const position = resource.geo.attributes.position;
+  let release, warmMesh, disposed = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const preparing = vegetation.prepareSolids([resource], async mesh => {
+    warmMesh = mesh;
+    assert.equal(mesh.geometry.isInstancedBufferGeometry, true);
+    assert.equal(mesh.geometry.instanceCount, 1);
+    assert.ok(mesh.geometry.attributes.iPosition.isInstancedBufferAttribute);
+    assert.equal(mesh.material.side, THREE.FrontSide);
+    assert.equal(mesh.receiveShadow, true); assert.equal(mesh.castShadow, false);
+    assert.equal(mesh.layers.mask, 2);
+    const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
+    mesh.material.onBeforeCompile(shader);
+    assert.match(shader.vertexShader, /compactRotate/); assert.match(shader.vertexShader, /windOffset/);
+    mesh.geometry.addEventListener('dispose', () => disposed++);
+    await gate;
+  });
+  assert.equal(vegetation.solid.length, 0); assert.equal(vegetation.solidRevision, 0);
+  assert.equal(vegetation.solidRefreshQueue.length, 0); assert.equal(disposed, 0);
+  release(); assert.equal(await preparing, 1);
+  assert.equal(vegetation.solid[0].mat, warmMesh.material);
+  assert.equal(vegetation.solidRefreshQueue.length, 1); assert.equal(disposed, 1);
+  assert.equal(resource.geo.attributes.position, position);
+  assert.deepEqual(vegetation.solidPreparation, { attempted: 1, completed: 1, failed: 0 });
+});
+
+test('a failed derived grass shader keeps the existing cards and leaves source buffers intact', async t => {
+  t.mock.method(console, 'warn', () => {});
+  const vegetation = deferredVegetation([levelZeroChunk('failed', 4000)]), resource = grassResource();
+  const registered = surfaceWetMaterialStats().registered;
+  let sourceDisposals = 0;
+  resource.geo.addEventListener('dispose', () => sourceDisposals++); resource.mat.addEventListener('dispose', () => sourceDisposals++);
+  const result = await vegetation.prepareSolids([resource], async () => { throw new Error('test compile failure'); });
+  assert.equal(result, 0); assert.equal(vegetation.solid.length, 0); assert.equal(vegetation.solidRefreshQueue.length, 0);
+  assert.equal(sourceDisposals, 0);
+  assert.equal(surfaceWetMaterialStats().registered, registered);
+  assert.deepEqual(vegetation.solidPreparation, { attempted: 1, completed: 0, failed: 1 });
+});
+
+test('hero-tree materials receive wind before the loader can warm and expose their shared clones', () => {
+  const vegetation = deferredVegetation([]); vegetation.extraMats = [];
+  const root = new THREE.Group(), geometry = new THREE.BoxGeometry(2, 6, 2), material = new THREE.MeshStandardMaterial();
+  root.add(new THREE.Mesh(geometry, material), new THREE.Mesh(geometry, material));
+  const position = geometry.attributes.position, previousKey = material.customProgramCacheKey();
+  assert.equal(vegetation.prepareHeroTree(root, { height: 13, scale: 1 }), 1);
+  assert.equal(vegetation.extraMats.length, 1); assert.notEqual(material.customProgramCacheKey(), previousKey);
+  assert.match(material.customProgramCacheKey(), /^hero--3-3-/);
+  assert.equal(geometry.attributes.position, position);
+  assert.ok(root.userData.box instanceof THREE.Box3);
+  const clone = root.clone(true); assert.equal(clone.children[0].material, material);
+  geometry.dispose(); material.dispose();
+});
+
+test('range culling is conservative at corners and half-float position boundaries', () => {
+  const range = { minX: 100, maxX: 200, minZ: -50, maxZ: 50, end: 210, padding: 0.25 };
+  assert.equal(foliageRangeVisible(range, { x: 150, z: 0 }), true);
+  assert.equal(foliageRangeVisible(range, { x: -110.2, z: 0 }), true);
+  assert.equal(foliageRangeVisible(range, { x: -110.3, z: 0 }), false);
+  for (let x = -150; x <= 450; x += 13) for (let z = -300; z <= 300; z += 17) {
+    for (const [px, pz] of [[100, -50], [200, 50], [150, 0], [100, 50], [200, -50]]) {
+      if (Math.hypot(x - px, z - pz) < range.end) assert.equal(foliageRangeVisible(range, { x, z }), true);
+    }
+  }
+});
+
+test('solid grass keeps its buffers and placement while leaving and re-entering the existing fade range', () => {
+  const chunk = levelZeroChunk('range', 4000), vegetation = deferredVegetation([chunk]);
+  vegetation.terrain.visible = new Set([chunk]);
+  vegetation.addSolids([grassResource()]); vegetation.updateSolidChunks();
+  const mesh = chunk.veg.children[0], geometry = mesh.geometry, positions = geometry.attributes.iPosition.array;
+  const range = mesh.userData.foliageRange;
+  assert.equal(range.end, 210);
+  assert.ok(range.minX >= 4000 && range.maxX <= 4100);
+  assert.ok(range.minZ >= 4000 && range.maxZ <= 4100);
+  vegetation.updateRangeVisibility({ x: 4050, z: 4050 }); assert.equal(mesh.visible, true);
+  vegetation.updateRangeVisibility({ x: 0, z: 0 }); assert.equal(mesh.visible, false);
+  assert.equal(vegetation.rangeCulling.culledMeshes, 1); assert.equal(vegetation.rangeCulling.culledInstances, 34);
+  vegetation.updateRangeVisibility({ x: 4050, z: 4050 }); assert.equal(mesh.visible, true);
+  assert.equal(mesh.geometry, geometry); assert.equal(geometry.attributes.iPosition.array, positions);
+  assert.equal(mesh.userData.instanceCount, 34); assert.equal(chunk.solidGrassRevision, 1);
+});
+
+test('meshes without an existing non-shadow fade remain visible', () => {
+  const chunk = levelZeroChunk('shadow', 4000), vegetation = deferredVegetation([chunk]), tree = new THREE.Object3D();
+  tree.castShadow = true; chunk.veg.add(tree); vegetation.terrain.visible = new Set([chunk]);
+  vegetation.updateRangeVisibility({ x: -9000, z: 9000 });
+  assert.equal(tree.visible, true); assert.equal(vegetation.rangeCulling.eligibleMeshes, 0);
+});
+
+test('fully faded instances leave the vertex shader before normal and wind calculations', async () => {
+  const vegetation = deferredVegetation([]);
+  await vegetation.prepareSolids([grassResource()], async mesh => {
+    const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
+    mesh.material.onBeforeCompile(shader);
+    const earlyReturn = shader.vertexShader.indexOf('if (compactKeep <= 0.0)');
+    assert.ok(earlyReturn > 0 && earlyReturn < shader.vertexShader.indexOf('#include <beginnormal_vertex>'));
+    assert.match(shader.vertexShader, /gl_Position = vec4\(2\.0, 2\.0, 2\.0, 1\.0\); return/);
+    assert.deepEqual(shader.uniforms.uFade.value.toArray(), [150, 210]);
+    const depth = { uniforms: {}, vertexShader: THREE.ShaderLib.depth.vertexShader, fragmentShader: THREE.ShaderLib.depth.fragmentShader };
+    mesh.customDepthMaterial.onBeforeCompile(depth);
+    assert.deepEqual(depth.uniforms.uFade.value.toArray(), [1e8, 1e8 + 1]);
+  });
 });

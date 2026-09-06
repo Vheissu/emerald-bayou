@@ -23,7 +23,7 @@ import { WorldMap } from './worldmap.js';
 import { Life } from './life.js';
 import { pickSite, buildSite } from './sites.js';
 import { person, canoe } from './folk.js';
-import { configureModelLoading, loadGeo, loadModel, modelBox, modelLoadingStats, preload, releaseDeferredModels, reportModelFramePressure, spawn } from './models.js';
+import { configureModelLoading, loadGeo, loadModel, modelLoadingStats, preload, releaseDeferredModels, reportModelFramePressure, spawn, SPEC } from './models.js';
 import { Environment } from './environment.js';
 import { EncounterDirector } from './encounters.js';
 import { BoatCondition } from './condition.js';
@@ -60,11 +60,15 @@ import { sampleWakeFields } from './wakefield.js';
 import { prepareRenderShaders, warmDeferredShaders, warmRetainedObject } from './shaderwarmup.js';
 import { GAMEPAD_BUTTON, STANDARD_GAMEPAD_BUTTONS, StandardGamepadInput, gamepadActionCode, gamepadBoatInput } from './gamepad.js';
 import { resizeDrawingSurface } from './renderersize.js';
+import { SceneTransformCache } from './scenetransforms.js';
 
 const app = document.getElementById('app');
 const loadingProgress = (message, value) => window.__loadingScreen?.progress?.(message, value);
 loadingProgress('Launching the marsh', 0.06);
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
+// Shader log queries synchronously wait on the graphics driver. Keep diagnostics in development, not in the middle
+// of a production drive when a deferred model or encounter material first becomes visible.
+renderer.debug.checkShaderErrors = import.meta.env.DEV;
 const gpuRenderer = webglRendererName(renderer.getContext());
 const hardwareQualityLevel = initialQualityLevel({
   deviceMemory: navigator.deviceMemory,
@@ -113,7 +117,12 @@ async function init() {
     idleTimeoutMs: startup.modelIdleTimeoutMs,
     pressureMaxWaitMs: startup.modelPressureMaxWaitMs,
     disabled: startup.disabledModels,
-    prepare: root => prepareRenderShaders(renderer, camera, scene, root, sceneShaderTarget),
+    prepare: (root, name) => {
+      // Patch the tree before the loader resolves to any visible clone. Warming its plain GLB shader first would
+      // leave the wind variant to compile on the first frame at a camp or homestead.
+      if (name === 'tree_c') veg.prepareHeroTree(root, SPEC.tree_c);
+      return prepareRenderShaders(renderer, camera, scene, root, sceneShaderTarget);
+    },
   });
   // ---- sky & lighting ----
   const sky = new Sky(SUN_DIR, renderProfile);
@@ -182,11 +191,11 @@ async function init() {
   const installSolidGrass = async (blocking = false) => {
     if (blocking) await preload(solidGrassNames);
     const resources = (await Promise.all(solidGrassNames.map(name => loadGeo(name, { releaseSource: true })))).filter(Boolean);
-    if (resources.length) veg.addSolids(resources);
+    if (resources.length) await veg.prepareSolids(resources, mesh => prepareRenderShaders(renderer, camera, scene, mesh, sceneShaderTarget));
   };
   if (startup.solidGrass === 'blocking') await installSolidGrass(true);
   else if (startup.solidGrass === 'deferred') installSolidGrass().catch(error => console.warn('grass models failed to load', error));
-  loadModel('tree_c').then(root => { const f = modelBox('tree_c'); if (root && f) root.traverse(o => { if (o.isMesh) veg.windMat(o.material, f.box.min.y, f.box.max.y, f.scale, 0.28); }); });
+  loadModel('tree_c');
   markStartup('vegetationReadyMs');
 
   await new Promise(r => setTimeout(r, 10));
@@ -421,9 +430,10 @@ async function init() {
     },
   }) : null;
   const sceneLightPool = new SceneLightPool(scene);
+  const sceneTransforms = new SceneTransformCache(scene);
   let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, retainedObjects: 0, retainedCompleted: 0, retainedFailures: 0, durationMs: 0 };
   let controller = null, cameraView = BOAT_CAMERA_CHASE, setCameraView = () => false;
-  window.__dbg = { renderer, camera, scene, sceneLightPool, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, sceneLightPool, sceneTransforms, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderPixelRatio, displayPixelRatio: renderer.getPixelRatio(), displayPixels: renderer.domElement.width * renderer.domElement.height, maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }), controllerStats: () => controller?.snapshot?.() || { connected: false }, cameraStats: () => ({ mode: cameraView, fov: camera.fov, driverVisible: playerDriver?.visible !== false }) };
@@ -953,7 +963,7 @@ async function init() {
     // world updates
     sky.update(time, camera.position);
     terrain.update(time, camera.position);
-    veg.update(time, environment.lightDir, wind);
+    veg.update(time, environment.lightDir, wind, camera.position);
     birds.update(time, camera.position, dt);
     manatees.update(dt, time, phys.pos.x, phys.pos.y);
     gators.update(dt, time, phys.pos.x, phys.pos.y, phys.speed, phys.heading, environment.spotOn, environment.night, environment.restrictedVisibility, environment.values.storm, environment.waterLevel);

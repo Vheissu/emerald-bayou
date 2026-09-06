@@ -5,6 +5,11 @@ import { createSpotlightUniforms, SPOTLIGHT_FALLOFF_GLSL } from './particlelight
 export const MAX_WAKE_STAMPS = 20;
 const MURK_SIZE = 2400, MURK_PX = 240; // 10 m per texel
 export const WAKE_SIZE = 150; // metres covered by wake sim
+export const WATER_SHADOW_DISK = Object.freeze(Array.from({ length: 6 }, (_, i) => {
+  const angle = i * 2.399963, radius = Math.sqrt((i + 0.5) / 6);
+  return Object.freeze([Math.cos(angle) * radius, Math.sin(angle) * radius]);
+}));
+export const FOAM_NOISE_SHAPE = Object.freeze({ base: 0.35, coarse: 1.1, fine: 0.6, edge: 0.08, maximum: 2.051 });
 
 export class Water {
   constructor(renderer, sunDir, quality = {}) {
@@ -160,10 +165,14 @@ export class Water {
           vec4 sc = shadowMatrix * vec4(wp, 1.0); sc.xyz /= sc.w; sc.z -= 0.0006;
           if (any(lessThan(sc.xy, vec2(0.0))) || any(greaterThan(sc.xy, vec2(1.0))) || sc.z > 1.0) return 1.0;
           float phi = ign(gl_FragCoord.xy) * 6.2831853; float r = shadowTexel * 1.8;
+          vec2 rotation = vec2(cos(phi), sin(phi));
+          // Same six disk taps and per-pixel rotation, with one sine/cosine pair instead of six.
+          const vec2 disk[6] = vec2[6](${WATER_SHADOW_DISK.map(([x, y]) => `vec2(${x.toFixed(10)}, ${y.toFixed(10)})`).join(', ')});
           float s = 0.0;
           for (int i = 0; i < 6; i++) {
-            float a = phi + float(i) * 2.399963; float rr = r * sqrt((float(i) + 0.5) / 6.0);
-            s += texture(tShadow, vec3(sc.xy + vec2(cos(a), sin(a)) * rr, sc.z));
+            vec2 tap = disk[i];
+            vec2 offset = vec2(rotation.x * tap.x - rotation.y * tap.y, rotation.y * tap.x + rotation.x * tap.y) * r;
+            s += texture(tShadow, vec3(sc.xy + offset, sc.z));
           }
           return s / 6.0;
         }
@@ -171,6 +180,8 @@ export class Water {
           vec2 suv = gl_FragCoord.xy / resolution;
           vec3 V = cameraPosition - vWorld; float dist = length(V); V /= dist;
           vec2 w = vWorld.xz;
+          // Keep texture filtering well-defined inside spatially varying zero-contribution branches.
+          vec2 waterDx = dFdx(w), waterDy = dFdy(w);
           float t = uTime;
           vec3 n1 = texture2D(tNormal, w * 0.022 + vec2(0.008, 0.012) * t).xyz * 2.0 - 1.0;
           vec3 n2 = texture2D(tNormal, w * 0.07 + vec2(-0.016, 0.009) * t).xyz * 2.0 - 1.0;
@@ -265,9 +276,13 @@ export class Water {
           scat *= waterLight * (0.3 + 0.7 * shadow) + waterLampLight;
           waterCol = under + scat;
           // duckweed: a matte green skin on the shaded still water, in patches, pushed aside by the wake
-          float dn = texture2D(tFoam, w * 0.045 + vec2(0.003, -0.002) * t).r * 0.65 + texture2D(tFoam, w * 0.23 - vec2(0.004, 0.003) * t).r * 0.45;
-          float dw = smoothstep(0.50, 0.70, dn * (0.45 + duck * 0.8)) * smoothstep(0.2, 0.6, duck);
-          dw *= 1.0 - smoothstep(0.02, 0.25, abs(wh) * 6.0 + foam * 1.5 + sediment * 1.8);
+          float dw = 0.0;
+          if (duck > 0.2) {
+            float dn = textureGrad(tFoam, w * 0.045 + vec2(0.003, -0.002) * t, waterDx * 0.045, waterDy * 0.045).r * 0.65
+              + textureGrad(tFoam, w * 0.23 - vec2(0.004, 0.003) * t, waterDx * 0.23, waterDy * 0.23).r * 0.45;
+            dw = smoothstep(0.50, 0.70, dn * (0.45 + duck * 0.8)) * smoothstep(0.2, 0.6, duck);
+            dw *= 1.0 - smoothstep(0.02, 0.25, abs(wh) * 6.0 + foam * 1.5 + sediment * 1.8);
+          }
           // fresnel
           float NdV = max(dot(N, V), 0.0);
           float F = 0.025 + 0.975 * pow(max(1.0 - NdV, 0.0), 5.0);
@@ -289,23 +304,37 @@ export class Water {
           spec += sunColor * sunIntensity * sparkle;
           spec *= shadow * (1.0 - dw);
           vec3 col = mix(waterCol, refl, F) + spec;
-          { float dn2 = texture2D(tFoam, w * 1.6).r * 0.6 + texture2D(tFoam, w * 4.1).r * 0.4; vec3 duckCol = mix(vec3(0.045, 0.085, 0.018), vec3(0.11, 0.16, 0.04), dn2) * (waterLight * (0.35 + 0.65 * shadow) + waterLampLight); col = mix(col, duckCol, dw * 0.92); }
+          if (dw > 0.0) {
+            float dn2 = textureGrad(tFoam, w * 1.6, waterDx * 1.6, waterDy * 1.6).r * 0.6
+              + textureGrad(tFoam, w * 4.1, waterDx * 4.1, waterDy * 4.1).r * 0.4;
+            vec3 duckCol = mix(vec3(0.045, 0.085, 0.018), vec3(0.11, 0.16, 0.04), dn2) * (waterLight * (0.35 + 0.65 * shadow) + waterLampLight);
+            col = mix(col, duckCol, dw * 0.92);
+          }
           // foam
-          float fn = texture2D(tFoam, w * 0.55 + vec2(t * 0.03, -t * 0.02)).r;
-          float fn2 = texture2D(tFoam, w * 1.7 - vec2(t * 0.05, t * 0.04)).r;
-          float shore = (1.0 - smoothstep(0.0, 0.55, th)) * smoothstep(0.35, 0.75, fn * 0.7 + fn2 * 0.5) * 0.6;
           float fmRaw = clamp(foam, 0.0, 1.0);
-          float fm = smoothstep(0.08, 0.85, fmRaw * (0.35 + 1.1 * fn + 0.6 * fn2)) * (0.75 + 0.25 * fn2) + shore;
-          // Wind-driven caps arrive before the largest storm state. Two advected scales keep them in streaks,
-          // rather than turning the entire surface into static television noise.
-          float capNoise = texture2D(tFoam, w * 0.045 - weatherWind * t * 0.035).r * 0.7 + texture2D(tFoam, w * 0.13 + weatherWind * t * 0.06).r * 0.3;
-          float windCaps = smoothstep(0.74, 0.96, capNoise + length(nt) * 0.65) * smoothstep(0.45, 1.15, seaState) * clamp((seaState - 0.38) * 0.42, 0.0, 0.72);
-          fm += windCaps * (0.35 + 0.65 * fn2);
+          float fn = 0.0, fn2 = 0.0, shore = 0.0, fm = 0.0;
+          // The normalized foam texture cannot exceed 1. Below this conservative bound its shaped wake term is zero.
+          // Shore foam, storm caps and blue fire still use the complete original texture detail when they can appear.
+          if (fmRaw * ${FOAM_NOISE_SHAPE.maximum} > ${FOAM_NOISE_SHAPE.edge} || th < 0.55 || seaState > 0.45 || bioluminescence > 0.0) {
+            fn = textureGrad(tFoam, w * 0.55 + vec2(t * 0.03, -t * 0.02), waterDx * 0.55, waterDy * 0.55).r;
+            fn2 = textureGrad(tFoam, w * 1.7 - vec2(t * 0.05, t * 0.04), waterDx * 1.7, waterDy * 1.7).r;
+            shore = (1.0 - smoothstep(0.0, 0.55, th)) * smoothstep(0.35, 0.75, fn * 0.7 + fn2 * 0.5) * 0.6;
+            fm = smoothstep(${FOAM_NOISE_SHAPE.edge}, 0.85, fmRaw * (${FOAM_NOISE_SHAPE.base} + ${FOAM_NOISE_SHAPE.coarse} * fn + ${FOAM_NOISE_SHAPE.fine} * fn2)) * (0.75 + 0.25 * fn2) + shore;
+            if (seaState > 0.45) {
+              float capNoise = textureGrad(tFoam, w * 0.045 - weatherWind * t * 0.035, waterDx * 0.045, waterDy * 0.045).r * 0.7
+                + textureGrad(tFoam, w * 0.13 + weatherWind * t * 0.06, waterDx * 0.13, waterDy * 0.13).r * 0.3;
+              float windCaps = smoothstep(0.74, 0.96, capNoise + length(nt) * 0.65) * smoothstep(0.45, 1.15, seaState) * clamp((seaState - 0.38) * 0.42, 0.0, 0.72);
+              fm += windCaps * (0.35 + 0.65 * fn2);
+            }
+          }
           fm += precipitationCrown * impactFade * (1.0 - dw * 0.78);
           fm = clamp(fm, 0.0, 1.0);
           vec3 foamCol = vec3(0.92, 0.95, 0.93) * (foamLight * (0.5 + 0.5 * shadow) + waterLampLight);
-          float bioWake = smoothstep(0.012, 0.42, fmRaw * (0.7 + fn + fn2 * 0.45) + abs(wh) * 2.4);
-          float bio = bioluminescence * clamp(bioWake + shore * 0.62, 0.0, 1.0) * (1.0 - silt * 0.62);
+          float bio = 0.0;
+          if (bioluminescence > 0.0) {
+            float bioWake = smoothstep(0.012, 0.42, fmRaw * (0.7 + fn + fn2 * 0.45) + abs(wh) * 2.4);
+            bio = bioluminescence * clamp(bioWake + shore * 0.62, 0.0, 1.0) * (1.0 - silt * 0.62);
+          }
           foamCol = mix(foamCol, vec3(0.11, 0.62, 0.86), bioluminescence * 0.68);
           col = mix(col, foamCol, fm);
           col += bioColor * bio * (0.42 + fn * 0.38 + fn2 * 0.56);

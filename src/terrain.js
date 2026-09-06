@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { cacheStaticWorldTransforms } from './scenetransforms.js';
 import { WorldHeight, WORLD_HALF, HOME_X, HOME_Z } from './heightfield.js';
 
 export { WORLD_HALF, HOME_X, HOME_Z };
@@ -391,7 +392,7 @@ export class Terrain {
         if (!c.mesh) {
           c.mesh = new THREE.Mesh(this.makeGeometry(c), this.material);
           c.mesh.receiveShadow = true; c.mesh.castShadow = false; c.mesh.visible = false; c.mesh.name = 'terrain';
-          this.group.add(c.mesh); c.groundReady = true;
+          this.group.add(c.mesh); cacheStaticWorldTransforms(c.mesh); c.groundReady = true;
           c.build = this.hooks.ready ? this.hooks.ready(c) : null;
         }
         this.building = c;
@@ -435,7 +436,7 @@ export class Terrain {
   }
   finish(c) {
     this.building = null; c.build = null; c.ready = true;
-    if (c.veg) { c.veg.visible = this.visible.has(c); this.group.add(c.veg); }
+    if (c.veg) { c.veg.visible = this.visible.has(c); this.group.add(c.veg); cacheStaticWorldTransforms(c.veg); }
     if (this.hooks.done) this.hooks.done(c);
     // Normals and biome weights have done their job once geometry and foliage are baked. Only level 0 keeps heights,
     // because boat physics samples that ring; all higher levels render from their GPU buffers from here on.

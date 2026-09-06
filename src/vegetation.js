@@ -3,7 +3,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as TEX from './textures.js';
 import { mulberry32 } from './noise.js';
 import { HOME_X, HOME_Z } from './heightfield.js';
-import { registerWetMaterial } from './surfacewetness.js';
+import { registerWetMaterial, unregisterWetMaterial } from './surfacewetness.js';
+import { cacheStaticWorldTransforms } from './scenetransforms.js';
 
 const WIND_GLSL_V1 = `
 uniform float uTime; uniform vec3 uWind; // xz = direction, y = strength
@@ -93,13 +94,15 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
     }
     vs = vs.replace('void main() {', `void main() {
       vCompactColor = iColor;
-      ${hasCrown ? 'vec3 compactCrownCenter = iPosition + iCrown.xyz;' : ''}`)
+      ${hasCrown ? 'vec3 compactCrownCenter = iPosition + iCrown.xyz;' : ''}
+      vec3 compactWorldBase = (modelMatrix * vec4(${hasCrown ? 'compactCrownCenter' : 'iPosition'}, 1.0)).xyz;
+      float compactKeep = 1.0 - smoothstep(uFade.x, uFade.y, distance(cameraPosition, compactWorldBase));
+      // Every vertex of an instance uses the same base. A fully faded plant can leave before normals and wind work.
+      if (compactKeep <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }`)
       .replace('#include <begin_vertex>', `vec3 transformed = compactRotate(vec3(position) * iScale, iQuaternion) + iPosition;`);
     vs = vs.replace('#include <project_vertex>', `
-      vec3 localBase = ${hasCrown ? 'compactCrownCenter' : 'iPosition'};
-      vec3 wBase = (modelMatrix * vec4(localBase, 1.0)).xyz;
-      float keep = 1.0 - smoothstep(uFade.x, uFade.y, distance(cameraPosition, wBase));
-      vec4 mvPosition = vec4(iPosition + (transformed - iPosition) * keep, 1.0);
+      vec3 wBase = compactWorldBase;
+      vec4 mvPosition = vec4(iPosition + (transformed - iPosition) * compactKeep, 1.0);
       float hFac = ${pin === 'bottom' ? 'uv.y' : pin === 'top' ? '(1.0 - uv.y)' : pin === 'y' ? `clamp(position.y / ${pinH.toFixed(3)}, 0.0, 1.0)` : (hasCrown ? 'clamp(mvPosition.y / max(compactCrownCenter.y, 1.0), 0.0, 1.0)' : '1.0')};
       vec3 cardOrigin = (modelMatrix * vec4(iPosition, 1.0)).xyz;
       float gW = gust(wBase);
@@ -126,7 +129,7 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
       shader.fragmentShader = fs;
     }
   };
-  mat.customProgramCacheKey = () => `fol-${crownNormals}-${pin}-${pinH}-${amp}-${hasCrown}-${trans}-${isDepth}`; // uFade is a uniform, not part of the program
+  mat.customProgramCacheKey = () => `fol-fade-v2-${crownNormals}-${pin}-${pinH}-${amp}-${hasCrown}-${trans}-${isDepth}`; // uFade is a uniform, not part of the program
 }
 
 function makeDepthMat(map, alphaTest, opts) {
@@ -199,10 +202,20 @@ class Batch {
     const pos = new Uint16Array(this.n * 3), quat = new Int16Array(this.n * 4);
     const scale = new Uint16Array(this.n * 3), color = new Uint16Array(this.n * 3);
     const crown = k.opts.hasCrown ? new Uint16Array(this.n * 4) : null;
+    // These bounds cover instance bases, which drive the existing shader fade, not the moving leaf tips. Keep a
+    // conservative allowance for half-float positions. Shadow casters retain their separate depth-shader range.
+    const range = k.opts.fade && !k.shadow && !k.opts.hasCrown ? {
+      minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity,
+      end: k.opts.fade[1], padding: Math.max(0.25, bounds.radius / 512),
+    } : null;
     const matrix = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
     for (let i = 0; i < this.n; i++) {
       const mi = i * 16, pi = i * 3, qi = i * 4;
       matrix.fromArray(this.m, mi).decompose(p, q, s);
+      if (range) {
+        range.minX = Math.min(range.minX, p.x); range.maxX = Math.max(range.maxX, p.x);
+        range.minZ = Math.min(range.minZ, p.z); range.maxZ = Math.max(range.maxZ, p.z);
+      }
       // Every vegetation group is centred on its terrain chunk. Half-float local positions retain centimetre-scale
       // placement in the physical near ring and sub-metre placement at the 1.6 km horizon tier, while avoiding a
       // second 32-bit world-coordinate copy for every leaf card on both the CPU and GPU.
@@ -236,6 +249,7 @@ class Batch {
     mesh.castShadow = k.shadow; mesh.receiveShadow = true;
     mesh.boundingSphere = bounds; mesh.frustumCulled = true;
     mesh.userData.instanceCount = this.n;
+    if (range) mesh.userData.foliageRange = range;
     if (k.small) mesh.layers.set(1);
     mesh.customDepthMaterial = k.depth;
     return mesh;
@@ -275,6 +289,13 @@ export function foliageInstanceCount(count, detail = 1, minimum = 1) {
   if (!available) return 0;
   const floor = Math.max(0, Math.min(available, Math.ceil(Number(minimum) || 0)));
   return Math.min(available, Math.max(floor, Math.ceil(available * normalizeFoliageDetail(detail) - 1e-9)));
+}
+
+export function foliageRangeVisible(range, camera) {
+  const padding = range.padding || 0;
+  const dx = Math.max(range.minX - camera.x - padding, 0, camera.x - range.maxX - padding);
+  const dz = Math.max(range.minZ - camera.z - padding, 0, camera.z - range.maxZ - padding);
+  return dx * dx + dz * dz < range.end * range.end;
 }
 
 function chunkBounds(chunk) {
@@ -326,6 +347,8 @@ export class Vegetation {
     this.solidRevision = 0;
     this.solidRefreshQueue = [];
     this.solidRefreshQueued = new Set();
+    this.solidPreparation = { attempted: 0, completed: 0, failed: 0 };
+    this.rangeCulling = { eligibleMeshes: 0, culledMeshes: 0, culledInstances: 0, culledTriangles: 0 };
     this.extraMats = [];
 
     const patchTrunk = (mat, amp) => {
@@ -453,7 +476,7 @@ export class Vegetation {
       if (!mesh.userData.solidGrass) continue;
       chunk.veg.remove(mesh); disposeChunkMesh(mesh);
     }
-    for (const mesh of this.buildSolidMeshes(chunk)) chunk.veg.add(mesh);
+    for (const mesh of this.buildSolidMeshes(chunk)) { chunk.veg.add(mesh); cacheStaticWorldTransforms(mesh); }
     chunk.solidGrassRevision = this.solidRevision;
     return true;
   }
@@ -735,20 +758,60 @@ export class Vegetation {
   }
 
   // Solid clumps are optional decimated GLBs: same wind as the cards, bent by height instead of by UV.
-  addSolids(resources) {
-    let added = 0;
+  solidKinds(resources) {
+    const kinds = [];
     for (const resource of resources) {
       if (!resource?.geo || !resource?.mat) continue;
       const k = new Kind(resource.geo, resource.mat.map, { pin: 'y', pinH: resource.height, amp: 0.2, fade: [150, 210] }, { color: 0xd8dcc8, shadow: false, alphaTest: 0.01, small: true });
-      k.mat.side = THREE.FrontSide; this.kinds.push(k); this.solid.push(k); added++;
+      k.mat.side = THREE.FrontSide; kinds.push(k);
     }
-    if (!added) return 0;
+    return kinds;
+  }
+  installSolidKinds(kinds) {
+    if (!kinds.length) return 0;
+    this.kinds.push(...kinds); this.solid.push(...kinds);
     this.solidRevision++;
     for (const chunk of this.terrain.chunks.values()) this.queueSolidRefresh(chunk);
-    return added;
+    return kinds.length;
+  }
+  addSolids(resources) {
+    return this.installSolidKinds(this.solidKinds(resources));
+  }
+  async prepareSolids(resources, prepare) {
+    const kinds = this.solidKinds(resources), ready = [];
+    const stats = this.solidPreparation ||= { attempted: 0, completed: 0, failed: 0 };
+    for (const kind of kinds) {
+      // The downloaded GLB's plain material is not the final grass shader. Compile the real compact-instance layout,
+      // height-pinned wind, alpha test and receive-shadow combination before any chunk can install this kind.
+      const batch = new Batch(kind); batch.add(new THREE.Matrix4(), new THREE.Color(1, 1, 1));
+      const mesh = batch.build(new THREE.Sphere(new THREE.Vector3(), 2));
+      mesh.name = 'prepared solid-grass shader'; stats.attempted++;
+      try {
+        await prepare(mesh);
+        ready.push(kind); stats.completed++;
+      } catch (error) {
+        stats.failed++; unregisterWetMaterial(kind.mat); kind.mat.dispose(); kind.depth.dispose();
+        console.warn('Solid grass kept its procedural fallback:', error);
+      } finally { disposeChunkMesh(mesh); }
+    }
+    return this.installSolidKinds(ready);
   }
   addSolid(geo, mat, height) {
     return this.addSolids([{ geo, mat, height }]);
+  }
+  prepareHeroTree(root, specification) {
+    const box = root.userData.box ||= new THREE.Box3().setFromObject(root), height = box.max.y - box.min.y;
+    if (!(height > 0) || !Number.isFinite(height)) return 0;
+    const scale = specification.height ? specification.height / height : specification.scale;
+    const materials = new Set();
+    root.traverse(object => {
+      if (!object.isMesh) return;
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        if (!material || materials.has(material)) continue;
+        materials.add(material); this.windMat(material, box.min.y, box.max.y, scale, 0.28);
+      }
+    });
+    return materials.size;
   }
   // wind for a one-off model (a hero tree at a homestead): sway about its own origin, in metres despite the model's scale
   windMat(mat, yMin, yMax, scale, amp = 0.3) {
@@ -768,13 +831,31 @@ export class Vegetation {
     mat.customProgramCacheKey = () => `hero-${yMin}-${yMax}-${scale}-${amp}`; mat.needsUpdate = true;
     this.extraMats.push(mat);
   }
-  update(t, sunDir, wind) {
+  updateRangeVisibility(camera) {
+    if (!camera) return;
+    const stats = this.rangeCulling ||= { eligibleMeshes: 0, culledMeshes: 0, culledInstances: 0, culledTriangles: 0 };
+    stats.eligibleMeshes = 0; stats.culledMeshes = 0; stats.culledInstances = 0; stats.culledTriangles = 0;
+    for (const chunk of this.terrain.visible || []) {
+      if (!chunk.veg?.visible) continue;
+      for (const mesh of chunk.veg.children) {
+        const range = mesh.userData.foliageRange;
+        if (!range) continue;
+        mesh.visible = foliageRangeVisible(range, camera); stats.eligibleMeshes++;
+        if (!mesh.visible) {
+          stats.culledMeshes++; stats.culledInstances += mesh.userData.instanceCount;
+          stats.culledTriangles += (mesh.geometry.index?.count || mesh.geometry.attributes.position.count) / 3 * mesh.userData.instanceCount;
+        }
+      }
+    }
+  }
+  update(t, sunDir, wind, camera = null) {
     this.updateSolidChunks(); // one near chunk per frame keeps deferred upgrades below the terrain build budget
+    this.updateRangeVisibility(camera);
     for (const k of this.kinds) k.setTime(t, sunDir, wind);
     for (const m of this.extraMats) { const sh = m.userData.shader; if (sh) { sh.uniforms.uTime.value = t; if (wind) sh.uniforms.uWind.value.copy(wind); } }
     for (const m of [this.trunkMat, this.branchMat]) { const sh = m.userData.shader; if (sh) { sh.uniforms.uTime.value = t; if (wind) sh.uniforms.uWind.value.copy(wind); } }
   }
   resourceStats() {
-    return { detail: this.detail, nearTreeCollisions: 1, farStandDensity: this.detail >= 0.999 ? 1 : Math.max(0.42, this.detail), allocationScratch: 2, setupTimings: { ...this.setupTimings } };
+    return { detail: this.detail, nearTreeCollisions: 1, farStandDensity: this.detail >= 0.999 ? 1 : Math.max(0.42, this.detail), allocationScratch: 2, setupTimings: { ...this.setupTimings }, solidPreparation: { ...this.solidPreparation }, rangeCulling: { ...this.rangeCulling } };
   }
 }
