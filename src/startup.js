@@ -1,4 +1,4 @@
-const AUTHORED_MODEL_NAMES = Object.freeze(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a', 'driver', 'brown_pelican']);
+const AUTHORED_MODEL_NAMES = Object.freeze(['beau_boat', 'boat_dreams', 'sandbox_boat', 'realistic_alligator', 'turtle_boat', 'fish_a', 'driver', 'brown_pelican', 'great_egret']);
 export const OPTIONAL_MODEL_NAMES = Object.freeze([...AUTHORED_MODEL_NAMES, 'grass_a', 'grass_d', 'tree_c']);
 // Fallback and Performance keep the complete simulation with shared procedural stand-ins. Skipping every cosmetic
 // GLB removes their network, decode, texture and geometry cost. Balanced retains authored boats, animals and grass,

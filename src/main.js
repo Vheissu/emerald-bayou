@@ -227,8 +227,9 @@ async function init() {
   const birds = new Birds(terrain, new THREE.Vector3(startX, 0, startZ - 120));
   scene.add(birds.mesh);
   birds.loadPelicans(root => prepareRenderShaders(renderer, camera, scene, root, sceneShaderTarget));
-  const waders = new Waders(terrain, 16, startX, startZ - 60);
-  for (const w of waders.list) scene.add(w.mesh);
+  const waders = new Waders(terrain, 16, startX, startZ - 60, water.level);
+  scene.add(waders.group);
+  waders.loadEgrets(root => prepareRenderShaders(renderer, camera, scene, root, sceneShaderTarget));
   const manatees = new Manatees(terrain, 4, new THREE.Vector3(startX, 0, startZ));
   for (const m of manatees.list) scene.add(m.mesh);
   const gators = new Gators(terrain, 18);
@@ -381,7 +382,7 @@ async function init() {
     vegetation: veg.resourceStats(),
     minimap: minimap.memoryStats(),
     wildlife: {
-      waders: debugTreeResources(waders.list.map(w => w.mesh)),
+      waders: debugTreeResources([waders.group]),
       manatees: debugTreeResources(manatees.list.map(m => m.mesh)),
       gators: { ...debugTreeResources(gators.list.map(g => g.mesh)), ...gators.resourceStats() },
       dolphins: dolphins.resourceStats(),
@@ -967,7 +968,7 @@ async function init() {
     birds.update(time, camera.position, dt);
     manatees.update(dt, time, phys.pos.x, phys.pos.y);
     gators.update(dt, time, phys.pos.x, phys.pos.y, phys.speed, phys.heading, environment.spotOn, environment.night, environment.restrictedVisibility, environment.values.storm, environment.waterLevel);
-    waders.update(dt, time, phys.pos.x, phys.pos.y, phys.speed);
+    waders.update(started && !game.paused ? dt : 0, time, phys.pos.x, phys.pos.y, phys.speed, environment.waterLevel);
     world.update(dt, time, phys.pos.x, phys.pos.y);
     // Do not start resident shifts or write their first-seen state while the title card is still open.
     if (started && !game.paused) life.update(dt, time);

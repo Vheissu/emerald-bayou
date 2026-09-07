@@ -47,9 +47,11 @@ test('older-hardware profiles do not block on optional models or the full shader
   assert.deepEqual(performance.disabledModels, fallback.disabledModels);
   assert.deepEqual(balanced.disabledModels, ['tree_c']);
   assert.equal(balanced.modelConcurrency, 1);
-  assert.equal(fallback.disabledModels.length, 11);
+  assert.equal(fallback.disabledModels.length, 12);
   assert.ok(fallback.disabledModels.includes('brown_pelican'));
   assert.equal(balanced.disabledModels.includes('brown_pelican'), false);
+  assert.ok(fallback.disabledModels.includes('great_egret'));
+  assert.equal(balanced.disabledModels.includes('great_egret'), false);
   assert.deepEqual([fallback.solidGrass, performance.solidGrass, balanced.solidGrass], ['off', 'off', 'deferred']);
   assert.deepEqual([fallback.modelPressureMaxWaitMs, performance.modelPressureMaxWaitMs, balanced.modelPressureMaxWaitMs], [12000, 8000, 6000]);
   assert.deepEqual(['fallback', 'performance', 'balanced', 'cinematic'].map(id => startupPlan(id).blockingModels), [[], [], [], []]);

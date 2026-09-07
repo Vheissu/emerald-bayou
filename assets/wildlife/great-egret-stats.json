@@ -1,0 +1,16 @@
+{
+  "vertices": 3119,
+  "triangles": 4602,
+  "materials": 1,
+  "morphTargets": [
+    "Flight",
+    "Upstroke",
+    "Downstroke",
+    "Probe",
+    "StepLeft",
+    "StepRight"
+  ],
+  "standingHeightMetres": 1.0297345602884889,
+  "wingspanMetres": 1.420285701751709,
+  "glbBytes": 715496
+}

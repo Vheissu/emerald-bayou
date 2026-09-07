@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { loadModel, spawn } from './models.js';
 import { PelicanFlock } from './pelicans.js';
+import { EgretFlock } from './egrets.js';
 import { instanceStaticChildren } from './staticinstances.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './noise.js';
@@ -223,20 +224,98 @@ export function findNear(T, rand, bx, bz, rMin, rMax, hMin, hMax, tries = 60) {
 
 // Wading birds (egrets): stand in the shallows, flush when a boat comes in fast, settle again further off.
 export class Waders {
-  constructor(terrain, count, cx, cz) {
+  constructor(terrain, count, cx, cz, waterLevel = 0) {
     this.T = terrain; this.list = []; this.rand = mulberry32(5); this.activity = 1;
+    this.group = new THREE.Group(); this.group.name = 'Resident shorebirds';
+    this.waterLevel = waterLevel; this.poseTime = 0;
+    this.egrets = null; this.egretLoadState = 'idle'; this.egretLoading = null;
     for (let i = 0; i < count; i++) {
-      const spot = findNear(terrain, this.rand, cx, cz, 20, 260, -0.35, 0.05, 400) || { x: cx, z: cz, h: 0 };
-      const mesh = wadingBird(); mesh.position.set(spot.x, Math.max(spot.h, -0.1) + 0.02, spot.z); mesh.rotation.y = this.rand() * Math.PI * 2;
-      this.list.push({ mesh, x: spot.x, z: spot.z, y: mesh.position.y, fly: 0, vx: 0, vz: 0, vy: 0, ph: this.rand() * 6 });
+      const spot = findNear(terrain, this.rand, cx, cz, 20, 260, waterLevel - 0.26, waterLevel + 0.08, 400)
+        || { x: cx, z: cz, h: terrain.heightAt(cx, cz) };
+      const mesh = wadingBird(); mesh.position.set(spot.x, spot.h + 0.015, spot.z); mesh.rotation.y = this.rand() * Math.PI * 2;
+      this.group.add(mesh);
+      this.list.push({ mesh, x: spot.x, z: spot.z, y: mesh.position.y, fly: 0, vx: 0, vz: 0, vy: 0, ph: this.rand() * 6,
+        wings: [mesh.getObjectByName('egretWingL'), mesh.getObjectByName('egretWingR')],
+        flightBlend: 0, probe: 0, walking: 0, groundTime: this.rand() * 14, flightLandable: false,
+        flightDuration: 0, flightStartX: 0, flightStartY: 0, flightStartZ: 0, flightEndX: 0, flightEndY: 0, flightEndZ: 0,
+        flightArc: 0, flightWasAirborne: false, shoreX: spot.x, shoreZ: spot.z });
     }
+  }
+  loadEgrets(prepare = null, load = loadModel) {
+    if (this.egretLoading) return this.egretLoading;
+    this.egretLoadState = 'loading';
+    this.egretLoading = (async () => {
+      let pool = null;
+      try {
+        const root = await load('great_egret');
+        if (!root) { this.egretLoadState = 'unavailable'; return false; }
+        let source = null; root.traverse(object => { if (object.isMesh && !source) source = object; });
+        if (!source) throw new Error('Egret asset contains no mesh');
+        pool = new EgretFlock(source, this.list.length);
+        await pool.prepare(prepare);
+        this.egrets = pool; this.group.add(pool.mesh);
+        for (const w of this.list) for (const child of w.mesh.children) child.visible = false;
+        this.egretLoadState = 'ready'; this.syncEgrets();
+        return true;
+      } catch (error) {
+        pool?.dispose(); this.egretLoadState = 'failed';
+        console.warn('Egrets kept their procedural fallback:', error);
+        return false;
+      }
+    })();
+    return this.egretLoading;
+  }
+  syncEgrets() {
+    if (!this.egrets) {
+      // Older profiles and the loading stand-in still open actual wings, rather than rocking a wingless body.
+      for (const w of this.list) for (let i = 0; i < w.wings.length; i++) {
+        const wing = w.wings[i], side = i ? 1 : -1, air = w.flightBlend;
+        wing.visible = air > 0.005;
+        wing.scale.set(side * air, air, air);
+        wing.rotation.z = side * Math.sin(this.poseTime * 8.7 + w.ph) * 0.72;
+      }
+      return;
+    }
+    this.egrets.beginFrame();
+    for (let i = 0; i < this.list.length; i++) {
+      const w = this.list[i]; w.mesh.updateMatrix();
+      this.egrets.setBird(i, w.mesh.matrix, this.poseTime, w.ph, w.flightBlend, w.probe, w.walking, w.mesh.visible);
+    }
+    this.egrets.finishFrame();
+  }
+  resourceStats() {
+    return { residents: this.list.length, egretLoadState: this.egretLoadState, egrets: this.egrets?.resourceStats() || null };
+  }
+  landingHeight(x, z) {
+    const h = this.T?.heightAt(x, z), level = this.waterLevel || 0;
+    return Number.isFinite(h) && h >= level - 0.26 && h <= level + 0.08 ? h + 0.015 : null;
+  }
+  planFlight(w, alreadyFlying = false) {
+    const duration = 5 + this.rand() * 3, level = this.waterLevel || 0;
+    const targetX = w.x + w.vx * duration * 0.65, targetZ = w.z + w.vz * duration * 0.65;
+    let spot = this.T ? findNear(this.T, this.rand, targetX, targetZ, 8, 24, level - 0.26, level + 0.08, 40) : null;
+    // A frightened bird can initially head inland. Search around the departure point too instead of perpetually
+    // extending that escape line into dry forest. The last feeding shelf remains a fallback only while still usable.
+    if (!spot && this.T) spot = findNear(this.T, this.rand, w.x, w.z, 16, 85, level - 0.26, level + 0.08, 80);
+    if (!spot && Number.isFinite(w.shoreX) && Number.isFinite(w.shoreZ) && Math.hypot(w.x - w.shoreX, w.z - w.shoreZ) > 8) {
+      const shore = this.landingHeight(w.shoreX, w.shoreZ);
+      if (shore !== null) spot = { x: w.shoreX, z: w.shoreZ, h: shore - 0.015 };
+    }
+    w.flightStartX = w.x; w.flightStartY = w.y; w.flightStartZ = w.z;
+    w.flightEndX = spot?.x ?? targetX; w.flightEndZ = spot?.z ?? targetZ;
+    w.flightEndY = spot ? spot.h + 0.015 : Math.max(w.y, level + 2);
+    w.flightLandable = Boolean(spot); w.flightWasAirborne = alreadyFlying;
+    w.flightArc = Math.min(4.5, Math.max(1.8, Math.hypot(w.flightEndX - w.x, w.flightEndZ - w.z) * 0.07));
+    w.fly = duration; w.flightDuration = duration; w.probe = 0; w.walking = 0;
+    w.mesh.rotation.y = Math.atan2(w.x - w.flightEndX, w.z - w.flightEndZ);
   }
   flush(w, bx, bz, distance, source = 'ambient') {
     if (!w || w.fly > 0 || w.mesh?.visible === false) return false;
     const d = Math.max(0, Number(distance) || 0), ax = (w.x - bx) / (d || 1), az = (w.z - bz) / (d || 1);
     const side = this.rand() < 0.5 ? -1 : 1;
     w.vx = (ax * 0.8 - az * 0.4 * side) * 7; w.vz = (az * 0.8 + ax * 0.4 * side) * 7; w.vy = 2.2;
-    w.fly = 5 + this.rand() * 3; w.mesh.rotation.y = Math.atan2(-w.vx, -w.vz);
+    if (this.landingHeight(w.x, w.z) !== null) { w.shoreX = w.x; w.shoreZ = w.z; }
+    this.planFlight(w);
     if (this.onFlush) this.onFlush(w, d, source);
     return true;
   }
@@ -247,34 +326,70 @@ export class Waders {
     }
     return count;
   }
-  update(dt, t, bx, bz, bs) {
+  update(dt, t, bx, bz, bs, waterLevel = this.waterLevel) {
+    this.waterLevel = Number.isFinite(waterLevel) ? waterLevel : 0;
+    this.poseTime += Math.max(0, dt);
     for (let wi = 0; wi < this.list.length; wi++) {
       const w = this.list[wi]; w.mesh.visible = wi < this.list.length * this.activity;
-      if (!w.mesh.visible) continue;
+      if (!w.mesh.visible || !(dt > 0)) continue;
       const d = Math.hypot(w.x - bx, w.z - bz);
       if (w.fly <= 0) {
         if (d > 650) { // too far behind: reappear somewhere ahead
-          const spot = findNear(this.T, this.rand, bx, bz, 150, 420, -0.35, 0.05);
-          if (spot) { w.x = spot.x; w.z = spot.z; w.y = Math.max(spot.h, -0.1) + 0.02; w.mesh.position.set(w.x, w.y, w.z); }
+          const spot = findNear(this.T, this.rand, bx, bz, 150, 420, this.waterLevel - 0.26, this.waterLevel + 0.08);
+          if (spot) { w.x = spot.x; w.z = spot.z; w.y = spot.h + 0.015; w.mesh.position.set(w.x, w.y, w.z); }
           continue;
         }
-        if (d < 22 && bs > 3) this.flush(w, bx, bz, d, 'player');
-        w.mesh.rotation.z = Math.sin(t * 0.8 + w.ph) * 0.02;
-        continue;
+        const ground = this.landingHeight(w.x, w.z);
+        if (ground === null) {
+          // A rising tide removes the feeding shelf. Relocation is an ambient response, not a player offense.
+          this.flush(w, w.x - Math.sin(w.mesh.rotation.y), w.z - Math.cos(w.mesh.rotation.y), 1, 'tide');
+        } else if (d < 22 && bs > 3) this.flush(w, bx, bz, d, 'player');
+        else {
+          w.groundTime += dt; w.flightBlend = 0; w.walking = 0;
+          const cycle = fract(w.groundTime / 14);
+          w.probe = smooth(0.68, 0.695, cycle) * (1 - smooth(0.708, 0.77, cycle));
+          if (cycle > 0.12 && cycle < 0.42) {
+            const nx = w.x - Math.sin(w.mesh.rotation.y) * dt * 0.13, nz = w.z - Math.cos(w.mesh.rotation.y) * dt * 0.13;
+            const nextGround = this.landingHeight(nx, nz);
+            if (nextGround !== null && Math.abs(nextGround - ground) < 0.035) { w.x = nx; w.z = nz; w.y = nextGround; w.walking = 1; }
+            else w.mesh.rotation.y += dt * 0.65;
+          } else w.y = ground;
+          w.mesh.rotation.x = 0; w.mesh.rotation.z = Math.sin(this.poseTime * 0.8 + w.ph) * 0.006;
+          w.mesh.position.set(w.x, w.y, w.z);
+          continue;
+        }
       }
-      w.fly -= dt;
-      const prog = 1 - w.fly / 8;
-      w.x += w.vx * dt; w.z += w.vz * dt;
-      w.vy += (Math.sin(t * 9 + w.ph) * 1.5 - 0.4 - (w.fly < 2 ? 1.2 : 0)) * dt * 1.2;
-      w.y += w.vy * dt;
-      const gh = Math.max(this.T.heightAt(w.x, w.z), -0.1) + 0.02;
-      if (w.fly < 2.5 && w.y <= gh + 0.05) { w.y = gh; w.fly = 0; w.vy = 0; }
-      w.y = Math.max(w.y, gh);
+      const px = w.x, py = w.y, pz = w.z;
+      if (w.flightLandable && this.landingHeight(w.flightEndX, w.flightEndZ) === null) {
+        w.flightLandable = false; w.flightEndY = Math.max(w.flightEndY, this.waterLevel + 1.6);
+      }
+      w.fly = Math.max(0, w.fly - dt);
+      const progress = clamp(1 - w.fly / w.flightDuration), travel = smooth(0, 1, progress);
+      w.x = w.flightStartX + (w.flightEndX - w.flightStartX) * travel;
+      w.z = w.flightStartZ + (w.flightEndZ - w.flightStartZ) * travel;
+      w.y = w.flightStartY + (w.flightEndY - w.flightStartY) * travel + Math.pow(Math.sin(progress * Math.PI), 1.2) * w.flightArc;
+      const ground = this.T.heightAt(w.x, w.z);
+      w.y = Math.max(w.y, ground + 0.015);
+      if (!w.flightLandable) w.y = Math.max(w.y, this.waterLevel + 0.5);
+      w.flightBlend = (w.flightWasAirborne ? 1 : smooth(0, 0.11, progress)) * (w.flightLandable ? 1 - smooth(0.95, 1, progress) : 1);
+      w.vx = (w.x - px) / dt; w.vz = (w.z - pz) / dt; w.vy = (w.y - py) / dt;
       w.mesh.position.set(w.x, w.y, w.z);
-      w.mesh.rotation.x = -0.25 + Math.sin(t * 9 + w.ph) * 0.08;
-      w.mesh.rotation.z = Math.sin(t * 9 + w.ph) * 0.35;
-      if (w.fly <= 0) { w.mesh.rotation.x = 0; w.mesh.rotation.z = 0; if (this.T.heightAt(w.x, w.z) > 0.3 || this.T.heightAt(w.x, w.z) < -0.6) { const spot = findNear(this.T, this.rand, w.x, w.z, 5, 60, -0.35, 0.05); if (spot) { w.x = spot.x; w.z = spot.z; w.y = Math.max(spot.h, -0.1) + 0.02; w.mesh.position.set(w.x, w.y, w.z); } } }
+      w.mesh.rotation.x = Math.cos(progress * Math.PI) * w.flightBlend * 0.10;
+      w.mesh.rotation.z = 0;
+      if (w.fly <= 0) {
+        const landing = this.landingHeight(w.x, w.z);
+        if (w.flightLandable && landing !== null) {
+          w.y = landing; w.mesh.position.y = landing; w.flightBlend = 0; w.vy = 0; w.groundTime = this.rand() * 7;
+          w.shoreX = w.x; w.shoreZ = w.z;
+          w.mesh.rotation.x = 0;
+        } else {
+          // Continue the same resident's flight if the shelf flooded before arrival or no safe shelf was found.
+          w.vx = -Math.sin(w.mesh.rotation.y) * 6; w.vz = -Math.cos(w.mesh.rotation.y) * 6;
+          this.planFlight(w, true);
+        }
+      }
     }
+    this.syncEgrets();
   }
 }
 
@@ -290,6 +405,15 @@ function buildWadingBird() {
   const beak = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.24, 6), new THREE.MeshStandardMaterial({ color: 0xd9b24a })); beak.rotation.x = -Math.PI / 2 - 0.15; beak.position.set(0, 1.38, -0.34); g.add(beak);
   const legGeometry = new THREE.CylinderGeometry(0.012, 0.012, 0.72, 4);
   for (const sx of [-1, 1]) { const leg = new THREE.Mesh(legGeometry, dark); leg.position.set(sx * 0.05, 0.36, 0.05); g.add(leg); }
+  const wingShape = [[0, -0.1], [0.22, -0.14], [0.46, -0.08], [0.64, -0.02], [0.69, 0.025], [0.62, 0.055],
+    [0.67, 0.1], [0.59, 0.115], [0.62, 0.16], [0.53, 0.17], [0.55, 0.21], [0.43, 0.23], [0.22, 0.22], [0, 0.1]];
+  const wingGeometry = new THREE.ShapeGeometry(new THREE.Shape(wingShape.map(([x, z]) => new THREE.Vector2(x, -z))));
+  wingGeometry.rotateX(-Math.PI / 2);
+  const wingMaterial = new THREE.MeshStandardMaterial({ color: 0xf3f1ea, roughness: 0.85, side: THREE.DoubleSide });
+  for (const side of [-1, 1]) {
+    const wing = new THREE.Mesh(wingGeometry, wingMaterial); wing.name = side < 0 ? 'egretWingL' : 'egretWingR';
+    wing.position.set(side * 0.07, 0.76, -0.03); wing.visible = false; g.add(wing);
+  }
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
 }

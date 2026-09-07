@@ -45,6 +45,8 @@ The game runs without them. `src/models.js` catches the failed loads and falls b
 
 The GitHub Pages workflow downloads and verifies this archive before it builds the public game.
 
+The authored [brown pelican](assets/wildlife/README.md) and [great egret](assets/wildlife/great-egret.md) ship with the repository, separately from that archive. Their editable Blender scenes, source images and rebuild scripts are included.
+
 ## Controls
 
 | Key | |
@@ -89,6 +91,8 @@ The seven resident crews keep their own schedules, jobs and operator records. Th
 Those crews also watch for manatee backs and footprints. Five times a second, each skipper projects the closest approach over the next seven seconds, waits a human beat, then comes off plane and turns into the safer water. Darkness, fog and hard weather shorten the distance at which a crew notices the animal. The behaviour follows [FWC boating guidance](https://myfwc.com/education/wildlife/manatee/for-boaters/): stay at least 50 ft away, slow down and watch for footprints, backs, snouts and tails.
 
 Resident wakes affect the rest of the swamp too. Prop wash can blow a bait school down before the player reaches it, passing hulls flush waders, nearby manatees dive, and gators leave a bank or slip under. These ambient reactions do not pay player bounties. The pass reuses the seven boats, four manatees, sixteen waders and eighteen gators already in memory, with one retained avoidance record per boat and no new render resource. [Everglades boating rules](https://www.nps.gov/ever/planyourvisit/boatingrulesregs.htm) prohibit harassing wildlife.
+
+The sixteen wading egrets stalk the shallows and make quick bill probes. When disturbed, their wings open, their necks fold and their legs trail behind. They choose a feeding shelf for landing and abandon it if the tide floods it. An escape toward dry forest can turn back along the shoreline. The authored flock shares one instanced model; lower graphics profiles keep lighter stand-ins with moving wings.
 
 Surface patrols cannot see through islands. During a chase they check the waterline five times a second; an emergent bank or mangrove point breaks their view, sends them to the last reported position and changes the wanted display to FWC searching. Another patrol boat with a clear angle, or Air 2 overhead, can keep the hull identified. The check keeps one small state record and uses bounded terrain samples, with no new scene or GPU resources.
 
