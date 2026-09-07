@@ -31,7 +31,7 @@ test('water skips only inactive detail and keeps gradients, storm caps, blue fir
   const shader = water.material.fragmentShader;
   assert.match(shader, /if \(duck > 0\.2\)/);
   assert.match(shader, /if \(dw > 0\.0\)/);
-  assert.match(shader, /fmRaw \* 2\.051 > 0\.08 \|\| th < 0\.55 \|\| seaState > 0\.45 \|\| bioluminescence > 0\.0/);
+  assert.match(shader, /fmRaw \* 2\.051 > 0\.08 \|\| \(th < 0\.55 && shorePotential > 0\.0\) \|\| seaState > 0\.45 \|\| bioluminescence > 0\.0/);
   assert.match(shader, /textureGrad\(tFoam/);
   assert.match(shader, /for \(int i = 0; i < 6; i\+\+\)/);
   assert.match(shader, /s \+= texture\(tShadow/);

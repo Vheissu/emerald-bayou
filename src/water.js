@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as TEX from './textures.js';
 import { createSpotlightUniforms, SPOTLIGHT_FALLOFF_GLSL } from './particlelighting.js';
+import { SHORE_FOAM_GLSL } from './shorefoam.js';
 
 export const MAX_WAKE_STAMPS = 20;
 const MURK_SIZE = 2400, MURK_PX = 240; // 10 m per texel
@@ -124,6 +125,7 @@ export class Water {
       fragmentShader: `
         precision highp float;
         ${SPOTLIGHT_FALLOFF_GLSL}
+        ${SHORE_FOAM_GLSL}
         uniform vec3 particleSpotColor;
         uniform sampler2D tRefr, tDepth, tRefl, tNormal, tFoam, tWake;
         uniform vec2 resolution; uniform float near, far, uTime;
@@ -312,13 +314,25 @@ export class Water {
           }
           // foam
           float fmRaw = clamp(foam, 0.0, 1.0);
+          // Shallow depth alone must not paint a white outline around every bank, trunk and wading leg. These wake
+          // inputs already fade at the simulation boundary; the wind response follows the existing sheltered-water map.
+          float shoreSlope = length(wg);
+          float shoreShelter = max(duck, murk * 0.65);
+          float shorePotential = shoreFoamDrive(seaState, fmRaw, shoreSlope, 1.0, shoreShelter);
           float fn = 0.0, fn2 = 0.0, shore = 0.0, fm = 0.0;
           // The normalized foam texture cannot exceed 1. Below this conservative bound its shaped wake term is zero.
           // Shore foam, storm caps and blue fire still use the complete original texture detail when they can appear.
-          if (fmRaw * ${FOAM_NOISE_SHAPE.maximum} > ${FOAM_NOISE_SHAPE.edge} || th < 0.55 || seaState > 0.45 || bioluminescence > 0.0) {
+          if (fmRaw * ${FOAM_NOISE_SHAPE.maximum} > ${FOAM_NOISE_SHAPE.edge} || (th < 0.55 && shorePotential > 0.0) || seaState > 0.45 || bioluminescence > 0.0) {
             fn = textureGrad(tFoam, w * 0.55 + vec2(t * 0.03, -t * 0.02), waterDx * 0.55, waterDy * 0.55).r;
             fn2 = textureGrad(tFoam, w * 1.7 - vec2(t * 0.05, t * 0.04), waterDx * 1.7, waterDy * 1.7).r;
-            shore = (1.0 - smoothstep(0.0, 0.55, th)) * smoothstep(0.35, 0.75, fn * 0.7 + fn2 * 0.5) * 0.6;
+            if (th < 0.55 && shorePotential > 0.0) {
+              // A travelling crest leaves broken wash, with quiet gaps between arrivals. Boat wash can still foam in
+              // a sheltered calm cut, independently of wind. Reuse both existing foam samples and the wake gradient.
+              float crestPhase = dot(w, weatherWind) * 0.28 - t * (1.1 + min(seaState, 2.5) * 0.35) + fn * 0.9;
+              float crest = smoothstep(0.25, 0.88, sin(crestPhase) * 0.5 + 0.5);
+              float shoreDrive = shoreFoamDrive(seaState, fmRaw, shoreSlope, crest, shoreShelter);
+              shore = (1.0 - smoothstep(0.0, 0.55, th)) * smoothstep(0.35, 0.75, fn * 0.7 + fn2 * 0.5) * 0.6 * shoreDrive;
+            }
             fm = smoothstep(${FOAM_NOISE_SHAPE.edge}, 0.85, fmRaw * (${FOAM_NOISE_SHAPE.base} + ${FOAM_NOISE_SHAPE.coarse} * fn + ${FOAM_NOISE_SHAPE.fine} * fn2)) * (0.75 + 0.25 * fn2) + shore;
             if (seaState > 0.45) {
               float capNoise = textureGrad(tFoam, w * 0.045 - weatherWind * t * 0.035, waterDx * 0.045, waterDy * 0.045).r * 0.7
