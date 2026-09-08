@@ -57,6 +57,7 @@ test('packed wake sources match every real CPU field including nested story and 
     const x = Math.sin(i * 1.71) * 35, z = i % 106, t = i * 0.017;
     const expected = sampleWakeFields(fields, x, z, t);
     assert.ok(Math.abs(packedHeight(surface, x, z, t, false) - expected) < 1e-6);
+    assert.ok(Math.abs(surface.heightAt(x, z, t) - packedHeight(surface, x, z, t)) < 1e-6);
     if (Math.abs(expected) > 0.01) nonzero++;
   }
   assert.ok(nonzero > 100);
@@ -66,6 +67,22 @@ test('packed wake sources match every real CPU field including nested story and 
     const own = wakeSampleAt(p.pos.x, p.pos.y, p.heading, p.speed, 18, 0.22, x, z, t);
     assert.ok(Math.abs(packedHeight(surface, x, z, t) - sampleWakeFields(fields, x, z, t) - own) < 1e-6);
   }
+});
+
+test('boat probes exclude only their own retained source and keep one coherent frame snapshot', () => {
+  const own = agent({ kind: 'air', max: 12 }), other = agent({ kind: 'air', max: 12 });
+  const surface = new VesselWakeSurface(); surface.sources = { traffic: { boats: [own, other] } };
+  surface.update({ x: 0, z: 0 });
+  const expected = wakeSampleAt(0, 0, 0, 10, 12, 0.18, 14.7, 40, 0);
+  const groups = surface.sampleGroups, references = surface.receivers;
+  assert.ok(Math.abs(surface.heightAt(14.7, 40, 0, own) - expected) < 1e-7);
+  assert.ok(Math.abs(surface.heightAt(14.7, 40, 0) - expected * 2) < 1e-7);
+  other.x = 200;
+  assert.ok(Math.abs(surface.heightAt(14.7, 40, 0, own) - expected) < 1e-7, 'moving a director does not mutate the completed snapshot');
+  surface.update({ x: 0, z: 0 });
+  assert.equal(surface.heightAt(14.7, 40, 0, own), 0);
+  assert.equal(surface.sampleGroups, groups); assert.equal(surface.receivers, references);
+  surface.update({ x: 0, z: 0 }, false); assert.equal(surface.heightAt(14.7, 40, 0), 0);
 });
 
 test('inactive, backed, invalid and distant sources cannot leave stale GPU crests', () => {

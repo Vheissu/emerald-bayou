@@ -1,4 +1,4 @@
-import { playerWakeScale, trafficWakeScale } from './wakefield.js';
+import { clampWakeHeight, playerWakeScale, trafficWakeScale, wakeSampleFromPose } from './wakefield.js';
 
 // Enough for every retained powered hull, including all recovery sites, without a texture or another draw pass.
 export const MAX_SURFACE_WAKE_SOURCES = 48;
@@ -9,16 +9,19 @@ export class VesselWakeSurface {
   constructor() {
     this.pose = new Float32Array(MAX_SURFACE_WAKE_SOURCES * 4);
     this.motion = new Float32Array(MAX_SURFACE_WAKE_SOURCES * 4);
+    this.receivers = new Array(MAX_SURFACE_WAKE_SOURCES).fill(null);
+    this.sampleGroups = new Float64Array(GROUPS);
     this.uniforms = { vesselWakePose: { value: this.pose }, vesselWakeMotion: { value: this.motion }, vesselWakeCount: { value: 0 } };
     this.sources = null; this.count = 0; this.overflow = 0; this.cameraX = 0; this.cameraZ = 0;
   }
 
-  add(x, z, heading, speed, maxSpeed, scale, group, radialCutoff = true) {
+  add(x, z, heading, speed, maxSpeed, scale, group, radialCutoff = true, source = null) {
     if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(heading) || !Number.isFinite(speed)
       || !Number.isFinite(maxSpeed) || !Number.isFinite(scale) || speed <= 2.2 || scale <= 0) return;
     const dx = x - this.cameraX, dz = z - this.cameraZ;
     if (dx * dx + dz * dz > SURFACE_WAKE_RANGE ** 2) return;
     if (this.count >= MAX_SURFACE_WAKE_SOURCES) { this.overflow++; return; }
+    this.receivers[this.count] = source;
     const i = this.count++ * 4;
     this.pose[i] = x; this.pose[i + 1] = z; this.pose[i + 2] = Math.sin(heading); this.pose[i + 3] = Math.cos(heading);
     this.motion[i] = Math.max(0, Math.min(1, (speed - 2.2) / Math.max(1, maxSpeed - 2.2)));
@@ -30,7 +33,7 @@ export class VesselWakeSurface {
     for (const a of agents) {
       if (!a?.active || a.backing) continue;
       const max = Number.isFinite(a.wakeMaxSpeed) ? a.wakeMaxSpeed : Number.isFinite(a.maxSpeed) ? a.maxSpeed : Number.isFinite(a.max) ? a.max : defaultMaxSpeed;
-      this.add(a.x, a.z, a.heading, a.speed, max, Number.isFinite(a.wakeScale) ? a.wakeScale : defaultScale, group);
+      this.add(a.x, a.z, a.heading, a.speed, max, Number.isFinite(a.wakeScale) ? a.wakeScale : defaultScale, group, true, a);
     }
   }
 
@@ -40,30 +43,45 @@ export class VesselWakeSurface {
     if (enabled && s) {
       // These groups mirror wakeHeightAt's limits, including the story director's nested sub-fields. Do not flatten
       // them into one capped sum: that would change the crest which the player actually crosses in a pursuit.
-      for (const b of s.traffic?.boats || []) if (b.active && b.kind !== 'canoe') this.add(b.x, b.z, b.heading, b.speed, b.max, trafficWakeScale(b.kind), 0, false);
+      for (const b of s.traffic?.boats || []) if (b.active && b.kind !== 'canoe') this.add(b.x, b.z, b.heading, b.speed, b.max, trafficWakeScale(b.kind), 0, false, b);
       const skiff = s.skiff;
-      if (skiff?.active) this.add(skiff.pos.x, skiff.pos.y, skiff.heading, skiff.speed, skiff.maxSpeed, 0.11, 1);
+      if (skiff?.active) this.add(skiff.pos.x, skiff.pos.y, skiff.heading, skiff.speed, skiff.maxSpeed, 0.11, 1, true, skiff);
       this.agents(s.encounters?.agents, 2, 12.4, 0.11);
       this.agents(s.incidents?.agents, 3, 12.6, 0.11);
       const story = s.story, passage = story?.passage, a = passage?.agent;
-      if (passage?.chaseActive && a?.active && !a.backing) this.add(a.x, a.z, a.heading, a.speed, 13.4, 0.11, 4, false);
+      if (passage?.chaseActive && a?.active && !a.backing) this.add(a.x, a.z, a.heading, a.speed, 13.4, 0.11, 4, false, a);
       this.agents(story?.stormLine?.agents, 5, 12.7, 0.11);
       this.agents(story?.contracts?.agents, 6, 12.4, 0.105);
       if (story?.departT > 0) {
         const p = story.departPoint;
-        this.add(p.x, p.z, p.heading, story.departSpeed, 6.6, 0.09, 7, false);
+        this.add(p.x, p.z, p.heading, story.departSpeed, 6.6, 0.09, 7, false, p);
       }
       const recovery = s.aftermath;
       if (recovery) for (const site of recovery.sites) {
         if (!(site.type === 'blockage' && site.stage === 'marked') && !(site.type === 'survivor' && site.stage === 'reported')) continue;
         const a = recovery.rigs.get(site.id)?.agent;
-        if (a?.active && !a.backing) this.add(a.x, a.z, a.heading, a.speed, 9, 0.095, 8);
+        if (a?.active && !a.backing) this.add(a.x, a.z, a.heading, a.speed, 9, 0.095, 8, true, a);
       }
       // Resident craft already feel this player wake. Draw it as well, but keep it outside the player-received sum.
       const player = s.player;
-      if (player) this.add(player.pos.x, player.pos.y, player.heading, player.speed, 18, playerWakeScale(player), 9, false);
+      if (player) this.add(player.pos.x, player.pos.y, player.heading, player.speed, 18, playerWakeScale(player), 9, false, player);
     }
     this.uniforms.vesselWakeCount.value = this.count;
+  }
+
+  heightAt(x, z, t, receiver = null) {
+    // Every receiver reads the same completed-frame snapshot. Do not walk mutable directors during each probe or
+    // let the order in which they move change another boat's surface. Exclude the receiving hull before group caps.
+    const groups = this.sampleGroups, p = this.pose, m = this.motion; groups.fill(0);
+    for (let n = 0; n < this.count; n++) {
+      if (receiver && this.receivers[n] === receiver) continue;
+      const i = n * 4, dx = x - p[i], dz = z - p[i + 1];
+      if (m[i + 3] && dx * dx + dz * dz > 10609) continue;
+      groups[m[i + 2]] += wakeSampleFromPose(p[i], p[i + 1], p[i + 2], p[i + 3], m[i], m[i + 1], x, z, t);
+    }
+    const story = clampWakeHeight(groups[4] + clampWakeHeight(groups[5], 0.24) + clampWakeHeight(groups[6], 0.24) + groups[7], 0.28);
+    return clampWakeHeight(clampWakeHeight(groups[0], 0.24) + groups[1] + clampWakeHeight(groups[2], 0.24)
+      + clampWakeHeight(groups[3], 0.24) + story + clampWakeHeight(groups[8], 0.2), 0.34) + groups[9];
   }
 }
 

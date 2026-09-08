@@ -20,6 +20,7 @@ import { downburstCraftUrgency, downburstProbeScore, downburstReactionReady } fr
 import { combinedSurfaceWind, vesselLeeway, vesselWindHeel } from './vesselwind.js';
 import { emitWakeStamp } from './wakestamps.js';
 import { sampleVesselWake } from './wakefield.js';
+import { sampleHullSurface } from './hullsurface.js';
 import { makeSurfaceSearchBeam, surfaceSearchlightResourceStats } from './surface-searchlight.js';
 import {
   pickStormEvacuationCamp, stormEvacuationLeadSeconds, stormEvacuationWindow,
@@ -1904,8 +1905,9 @@ export class EncounterDirector {
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading);
     const flow = this.currents ? this.currents.flowAt(A.x, A.z, this._flow) : null, drift = A.enforcement ? A.windDrift : null;
     A.x += (fx * A.speed + (flow ? flow.x : 0) + (drift ? drift.x : 0) + (Number(A.shx) || 0)) * dt; A.z += (fz * A.speed + (flow ? flow.y : 0) + (drift ? drift.z : 0) + (Number(A.shz) || 0)) * dt;
-    const y = this.water.waveHeight(A.x, A.z, t), windHeel = A.enforcement ? A.windHeel : 0;
-    A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -turn * A.speed * 0.018 + windHeel + (Number(A.heelKick) || 0), 'YXZ');
+    sampleHullSurface(A, this.water, A.x, A.z, A.heading, t);
+    const windHeel = A.enforcement ? A.windHeel : 0;
+    A.mesh.position.set(A.x, A.waterHeight - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005 + A.waterPitch, A.heading, -turn * A.speed * 0.018 + A.waterRoll + windHeel + (Number(A.heelKick) || 0), 'YXZ');
     if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
     this.decayAgentImpact(A, dt);
   }
@@ -1950,8 +1952,9 @@ export class EncounterDirector {
     A.targetX = C.x; A.targetZ = C.z; A.decisionT = 0.1; A.speed += (want - A.speed) * (1 - Math.exp(-dt * 3.2)); A.heading += (turn + (Number(A.yawKick) || 0)) * dt;
     const fx = -Math.sin(A.heading), fz = -Math.cos(A.heading), flow = this.currents ? this.currents.flowAt(A.x, A.z, this._flow) : null, drift = A.enforcement ? A.windDrift : null;
     A.x += (fx * A.speed + (flow ? flow.x : 0) + (drift ? drift.x : 0) + (Number(A.shx) || 0)) * dt; A.z += (fz * A.speed + (flow ? flow.y : 0) + (drift ? drift.z : 0) + (Number(A.shz) || 0)) * dt;
-    const y = this.water.waveHeight(A.x, A.z, t), windHeel = A.enforcement ? A.windHeel : 0;
-    A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -turn * A.speed * 0.018 + windHeel + (Number(A.heelKick) || 0), 'YXZ');
+    sampleHullSurface(A, this.water, A.x, A.z, A.heading, t);
+    const windHeel = A.enforcement ? A.windHeel : 0;
+    A.mesh.position.set(A.x, A.waterHeight - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005 + A.waterPitch, A.heading, -turn * A.speed * 0.018 + A.waterRoll + windHeel + (Number(A.heelKick) || 0), 'YXZ');
     if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
     this.decayAgentImpact(A, dt);
   }

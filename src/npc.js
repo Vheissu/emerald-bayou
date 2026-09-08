@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { sampleHullSurface } from './hullsurface.js';
 import { loadDriver } from './airboat.js';
 import { person } from './folk.js';
 import { mulberry32 } from './noise.js';
@@ -125,6 +126,7 @@ export class SkiffAI {
     this.maxSpeed = 11.6; this.path = []; this.i = 0; this.active = false; this.done = false; this.waveFn = waveFn;
     this.navigationLights = true;
     this.roll = 0; this.pitch = 0; this.dist = 0;
+    this.waterHeight = 0; this.waterPitch = 0; this.waterRoll = 0;
     this.shoveX = 0; this.shoveZ = 0; this.yawKick = 0; this.heelKick = 0;
     this.lookAhead = 14; this._flow = new THREE.Vector2(); this._forward = new THREE.Vector2();
   }
@@ -133,7 +135,8 @@ export class SkiffAI {
     this.pos.set(path[0].x, path[0].z); this.heading = Math.atan2(-(path[1].x - path[0].x), -(path[1].z - path[0].z));
     this.vel.set(0, 0); this.speed = 0; this.active = true; this.done = false; this.dist = 0; this.roll = 0; this.pitch = 0;
     this.shoveX = 0; this.shoveZ = 0; this.yawKick = 0; this.heelKick = 0;
-    this.mesh.position.set(this.pos.x, this.waveFn(this.pos.x, this.pos.y, 0) - 0.05, this.pos.y);
+    this.waterPitch = 0; this.waterRoll = 0;
+    this.mesh.position.set(this.pos.x, this.waveFn(this.pos.x, this.pos.y, 0, this) - 0.05, this.pos.y);
     this.mesh.rotation.set(0, this.heading, 0); this.mesh.userData.motor.rotation.y = 0; this.mesh.visible = true;
   }
   stop() { this.active = false; this.mesh.visible = false; this.shoveX = 0; this.shoveZ = 0; this.yawKick = 0; this.heelKick = 0; }
@@ -175,11 +178,12 @@ export class SkiffAI {
     this.vel.set(f.x * this.speed + this.shoveX, f.y * this.speed + this.shoveZ);
     if (this.currents) this.vel.add(this.currents.flowAt(this.pos.x, this.pos.y, this._flow));
     this.pos.addScaledVector(this.vel, dt); this.dist += this.speed * dt;
-    this.roll += ((-turn * this.speed * 0.02 + this.heelKick) - this.roll) * (1 - Math.exp(-dt * 6));
-    this.pitch += ((this.speed * 0.006) - this.pitch) * (1 - Math.exp(-dt * 3));
+    sampleHullSurface(this, this.waveFn, this.pos.x, this.pos.y, this.heading, t);
+    this.roll += ((-turn * this.speed * 0.02 + this.heelKick + this.waterRoll) - this.roll) * (1 - Math.exp(-dt * 6));
+    this.pitch += ((this.speed * 0.006 + this.waterPitch) - this.pitch) * (1 - Math.exp(-dt * 3));
     const shoveDecay = Math.exp(-dt * 1.9); this.shoveX *= shoveDecay; this.shoveZ *= shoveDecay;
     this.yawKick *= Math.exp(-dt * 3.2); this.heelKick *= Math.exp(-dt * 2.8);
-    const y = this.waveFn(this.pos.x, this.pos.y, t);
+    const y = this.waterHeight;
     this.mesh.position.set(this.pos.x, y - 0.05, this.pos.y);
     this.mesh.rotation.set(this.pitch, this.heading, this.roll, 'YXZ');
     this.mesh.userData.motor.rotation.y = -turn * 0.4; this.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + this.speed * 5);

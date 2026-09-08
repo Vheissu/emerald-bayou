@@ -1052,6 +1052,7 @@ export class Traffic {
     return scale > 0 ? wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, scale, x, z, t) : 0;
   }
   surfaceHeightAt(x, z, t, excludeBoat = null) {
+    if (this.fx.boatWaveFn) return this.fx.boatWaveFn(x, z, t, excludeBoat);
     return this.fx.waveFn(x, z, t) + this.playerWakeAt(x, z, t) + this.wakeHeightAt(x, z, t, excludeBoat);
   }
   snapshot() {
@@ -1374,7 +1375,7 @@ export class Life {
   constructor(o) { // { terrain, scene, water, camera, phys, plume, spray, audio, waveFn, game }
     this.stampPool = new WakeStampPool(32);
     this.emitStamp = (x, z, radius, height, foam, foamRadius) => this.stampPool.emit(x, z, radius, height, foam, foamRadius);
-    const fx = { plume: o.plume, spray: o.spray, audio: o.audio, waterScene: o.water?.scene, camera: o.camera, waveFn: o.waveFn, emitStamp: this.emitStamp, game: o.game };
+    const fx = { plume: o.plume, spray: o.spray, audio: o.audio, waterScene: o.water?.scene, camera: o.camera, waveFn: o.waveFn, boatWaveFn: o.boatWaveFn, emitStamp: this.emitStamp, game: o.game };
     this.fish = new Fish(o.terrain, o.scene, fx);
     this.debris = new Debris(o.terrain, o.scene, o.phys);
     this.traffic = new Traffic(o.terrain, o.scene, o.phys, fx);

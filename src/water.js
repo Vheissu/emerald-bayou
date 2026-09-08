@@ -464,6 +464,10 @@ export class Water {
     return this.level + waterWaveHeight(x, z, t, this.seaState, this.windAngle, this.rain);
   }
 
+  boatWaveHeight(x, z, t, receiver = null) {
+    return this.waveHeight(x, z, t) + this.vesselWakes.heightAt(x, z, t, receiver);
+  }
+
   followCamera(camera) {
     // Keep the dense patch on a world-space half-metre lattice. Moving the camera does not scroll the wave phase or
     // replace any vertex buffer, and the previous 50 m recenter jumps cannot cross the near-water patch.

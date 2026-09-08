@@ -6,6 +6,7 @@ import { regionAt } from './regions.js';
 import { emitWakeStamp } from './wakestamps.js';
 import { emitMapMarker } from './mapmarkers.js';
 import { sampleVesselWake } from './wakefield.js';
+import { sampleHullSurface } from './hullsurface.js';
 
 const MPH = 2.23694;
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
@@ -262,8 +263,8 @@ export class WorldIncidents {
     A.x = clamp(A.x, -WORLD_HALF + 80, WORLD_HALF - 80); A.z = clamp(A.z, -WORLD_HALF + 80, WORLD_HALF - 80);
     const clearance = this.water.level - this.terrain.heightAt(A.x, A.z); A.groundT = clearance < 0.28 ? A.groundT + dt : 0;
     if (A.groundT > 0) A.speed *= Math.exp(-dt * 1.8);
-    const y = this.water.waveHeight(A.x, A.z, t);
-    A.mesh.position.set(A.x, y - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005, A.heading, -A.turn * A.speed * 0.018 + (Number(A.heelKick) || 0), 'YXZ');
+    sampleHullSurface(A, this.water, A.x, A.z, A.heading, t);
+    A.mesh.position.set(A.x, A.waterHeight - 0.05, A.z); A.mesh.rotation.set(A.speed * 0.005 + A.waterPitch, A.heading, -A.turn * A.speed * 0.018 + A.waterRoll + (Number(A.heelKick) || 0), 'YXZ');
     if (A.mesh.userData.motor) { A.mesh.userData.motor.rotation.y = -A.turn * 0.35; A.mesh.userData.motor.userData.prop.rotation.z += dt * (6 + A.speed * 5); }
     this.decayAgentImpact(A, dt);
   }

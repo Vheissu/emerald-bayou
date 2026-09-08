@@ -264,7 +264,7 @@ async function init() {
   const minimap = new Minimap(terrain, renderProfile);
   const audio = new EngineAudio();
   const tricks = new Tricks(phys);
-  const skiff = new SkiffAI((x, z, t) => water.waveHeight(x, z, t)); skiff.mesh.visible = false; scene.add(skiff.mesh);
+  const skiff = new SkiffAI((x, z, t, receiver) => water.boatWaveHeight(x, z, t, receiver)); skiff.mesh.visible = false; scene.add(skiff.mesh);
   const world = new World(terrain, scene, (x, z, t) => water.waveHeight(x, z, t)); world.phys = phys; world.wind = wind;
   veg.blocked = (x, z) => world.blockedAt(x, z);
   const game = new Game({ phys, T: terrain, scene, audio, tricks, manatees, gators, skiff, boat: boat.group, dockTie, startX, startZ, world });
@@ -277,7 +277,8 @@ async function init() {
   const terrainRetarget = terrainFocus.retargeted ? terrain.prime(terrainFocus.x, terrainFocus.z) : null;
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
-  const life = new Life({ terrain, scene, water, camera, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t), game }); game.life = life;
+  const life = new Life({ terrain, scene, water, camera, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t),
+    boatWaveFn: (x, z, t, receiver) => water.boatWaveHeight(x, z, t, receiver), game }); game.life = life;
   markStartup('livingWorldReadyMs');
   life.traffic.setWildlife({ manatees, gators, waders });
   const physicalWakeFields = [life.traffic];
