@@ -18,7 +18,7 @@ import {
 } from './navigationrules.js';
 import { waterspoutAvoidanceStrength, waterspoutProbeScore, waterspoutReactionReady } from './waterspout.js';
 import { downburstCraftUrgency, downburstProbeScore, downburstReactionReady } from './downburst.js';
-import { sampleTrafficWake, wakeSampleAt } from './wakefield.js';
+import { playerWakeScale, sampleTrafficWake, wakeSampleAt } from './wakefield.js';
 import { combinedSurfaceWind, vesselLeeway, vesselWindHeel } from './vesselwind.js';
 import { makeSurfaceSearchBeam } from './surface-searchlight.js';
 import {
@@ -1048,7 +1048,8 @@ export class Traffic {
   wakeHeightAt(x, z, t, excludeBoat = null) { return sampleTrafficWake(this.boats, x, z, t, excludeBoat); }
   playerWakeAt(x, z, t) {
     const P = this.phys;
-    return wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, 0.22, x, z, t);
+    const scale = playerWakeScale(P);
+    return scale > 0 ? wakeSampleAt(P.pos.x, P.pos.y, P.heading, P.speed, 18, scale, x, z, t) : 0;
   }
   surfaceHeightAt(x, z, t, excludeBoat = null) {
     return this.fx.waveFn(x, z, t) + this.playerWakeAt(x, z, t) + this.wakeHeightAt(x, z, t, excludeBoat);

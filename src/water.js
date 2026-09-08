@@ -4,6 +4,7 @@ import { createSpotlightUniforms, SPOTLIGHT_FALLOFF_GLSL } from './particlelight
 import { SHORE_FOAM_GLSL } from './shorefoam.js';
 import { createWaterGrid } from './watergrid.js';
 import { waterWaveHeight, WATER_WAVES_GLSL } from './waterwaves.js';
+import { VesselWakeSurface, VESSEL_WAKE_GLSL } from './vesselwakesurface.js';
 
 export const MAX_WAKE_STAMPS = 20;
 const MURK_SIZE = 2400, MURK_PX = 240; // 10 m per texel
@@ -28,6 +29,7 @@ export class Water {
     this.hail = 0;
     this.windSpeed = 0;
     this.dormant = false;
+    this.vesselWakes = new VesselWakeSurface();
 
     // ---- reflection ----
     this.reflRT = new THREE.WebGLRenderTarget(Math.max(1, Math.floor(this.size.x * this.reflectionScale)), Math.max(1, Math.floor(this.size.y * this.reflectionScale)), {
@@ -90,6 +92,7 @@ export class Water {
 
     // ---- water surface ----
     this.uniforms = {
+      ...this.vesselWakes.uniforms,
       ...createSpotlightUniforms(),
       tRefr: { value: null }, tDepth: { value: null }, tRefl: { value: this.reflRT.texture },
       tNormal: { value: TEX.waterNormal() }, tFoam: { value: TEX.foam() }, tWake: { value: this.wakeA.texture },
@@ -122,11 +125,13 @@ export class Water {
         uniform vec2 weatherWind;
         attribute float aWaveSpacing;
         ${WATER_WAVES_GLSL}
+        ${VESSEL_WAKE_GLSL}
         varying vec3 vWorld; varying vec4 vRefl;
         varying vec2 vWaveSlope;
         void main() {
           vec4 wp = modelMatrix * vec4(position, 1.0);
           vec3 wave = waterWaveSample(wp.xz, uTime, seaState, weatherWind, rainAmount, aWaveSpacing) * surfaceDisplacement;
+          wave += vesselWakeSample(wp.xz, uTime, aWaveSpacing) * surfaceDisplacement;
           wp.y += wave.x;
           vWaveSlope = wave.yz;
           vWorld = wp.xyz;
@@ -271,7 +276,12 @@ export class Water {
           vec3 scat = scCol * (1.0 - exp(-scK * pathLen));
           vec3 waterCol = under + scat;
           // reflection
-          vec4 rp = vRefl; rp.xy += N.xz * vec2(0.9, 0.9) * rp.w * (0.5 + 0.5 * distFade);
+          // Strong wash used to offset the reflection by most of the screen, stretching dark hulls into long bands.
+          // Keep ordinary ripple distortion unchanged while bounding this screen-space approximation's footprint.
+          vec4 rp = vRefl;
+          vec2 reflectionOffset = N.xz * 0.9 * (0.5 + 0.5 * distFade);
+          reflectionOffset *= 0.035 / max(0.035, length(reflectionOffset));
+          rp.xy += reflectionOffset * rp.w;
           vec2 rUv = rp.xy / rp.w;
           rUv = clamp(rUv, vec2(0.002), vec2(0.998));
           vec3 refl = texture2D(tRefl, rUv, 1.6 + (1.0 - distFade) * 1.5).rgb;
@@ -442,6 +452,8 @@ export class Water {
       wakeResolution: this.wakeResolution, wakeWidth, wakeHeight, wakeMaxStamps: this.wakeMaxStamps, wakeAttachmentBytes,
       precipitationRipples: this.uniforms.precipitationRipples.value,
       surface: { ...this.mesh.geometry.userData.waterGrid },
+      vesselWakeSources: this.vesselWakes.count, vesselWakeOverflow: this.vesselWakes.overflow,
+      vesselWakeUniformBytes: this.vesselWakes.pose.byteLength + this.vesselWakes.motion.byteLength,
       estimatedAttachmentBytes: reflectionAttachmentBytes + wakeAttachmentBytes,
     };
   }

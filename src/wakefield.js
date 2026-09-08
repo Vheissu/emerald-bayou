@@ -23,6 +23,13 @@ export function trafficWakeScale(kind) {
   return kind === 'air' ? 0.18 : kind === 'cruiser' ? 0.13 : 0.105;
 }
 
+export function playerWakeScale(player) {
+  // The airborne hull cannot keep pushing a travelling wake through the boats beneath it. Match the contact
+  // fraction already used by the player's wash stamps, retaining full contact for older callers without telemetry.
+  const wet = Number.isFinite(player.wet) ? Math.max(0, Math.min(1, player.wet)) : 1;
+  return 0.22 * wet;
+}
+
 // Mission, police, race, story, and recovery craft already live in small retained agent pools. Sampling those
 // records directly makes their rendered wakes physical without building another graph or allocating a hot-path list.
 export function sampleVesselWake(sources, x, z, t, defaultMaxSpeed = 11.6, defaultScale = 0.105, maxHeight = MAX_DIRECTED_WAKE_HEIGHT) {

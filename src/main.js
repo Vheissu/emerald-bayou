@@ -323,6 +323,7 @@ async function init() {
   const outboardMix = { id: '', level: 0, pitch: 1, x: 0, z: 0 };
   const directedVesselSources = [skiff, encounters, incidents, story, aftermath];
   physicalWakeFields.push(...directedVesselSources);
+  water.vesselWakes.sources = { traffic: life.traffic, skiff, encounters, incidents, story, aftermath, player: phys };
   ecology.setDirectedVesselSources(directedVesselSources);
   const directedNavigationLights = new DirectedNavigationLights(scene);
   const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
@@ -986,6 +987,7 @@ async function init() {
     if (worldMap.open && (frameNo++ & 3) === 0) worldMap.render();
     water.update(time);
     water.followCamera(camera.position);
+    water.vesselWakes.update(camera.position, started);
 
     // wake stamps
     const wet = phys.wet;
