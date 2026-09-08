@@ -985,7 +985,7 @@ async function init() {
     water.updateMurk(terrain, camera.position);
     if (worldMap.open && (frameNo++ & 3) === 0) worldMap.render();
     water.update(time);
-    water.mesh.position.set(Math.round(camera.position.x / 50) * 50, water.level, Math.round(camera.position.z / 50) * 50);
+    water.followCamera(camera.position);
 
     // wake stamps
     const wet = phys.wet;
