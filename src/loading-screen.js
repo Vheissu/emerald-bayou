@@ -5,12 +5,8 @@ const root = document.getElementById('loading');
 
 if (root) {
   const layers = [...root.querySelectorAll('.loading-art')];
-  const chapter = document.getElementById('loadchapter');
-  const note = document.getElementById('loadnote');
-  const sceneNumber = document.getElementById('loadscene');
-  const district = document.getElementById('loaddistrict');
   const status = document.getElementById('loadtext');
-  const percentage = document.getElementById('loadpct');
+  const retry = document.getElementById('loadRetry');
   const track = document.getElementById('loadtrack');
   const fill = track.querySelector('i');
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -27,17 +23,8 @@ if (root) {
   let stopped = false;
   let sceneBag = [];
 
-  const applyCopy = (scene, index) => {
-    chapter.textContent = scene.title;
-    note.textContent = scene.note;
-    sceneNumber.textContent = `${String(index + 1).padStart(2, '0')} / ${String(LOADING_SCENES.length).padStart(2, '0')}`;
-    district.textContent = scene.district;
-    root.style.setProperty('--scene-accent', scene.accent);
+  const applyScene = scene => {
     root.dataset.scene = scene.id;
-    const story = root.querySelector('.loading-story');
-    story.classList.remove('is-changing');
-    void story.offsetWidth;
-    story.classList.add('is-changing');
   };
 
   const applyArt = (layer, scene, priority = 'auto') => {
@@ -75,7 +62,7 @@ if (root) {
         incoming.removeAttribute('src');
         return;
       }
-      applyCopy(scene, index);
+      applyScene(scene);
       currentIndex = index;
       incoming.classList.add('is-active');
       outgoing.classList.remove('is-active');
@@ -89,10 +76,10 @@ if (root) {
   }
 
   const progress = (message, value = 0) => {
+    if (root.classList.contains('is-error')) return Number(track.getAttribute('aria-valuenow')) || 0;
     const amount = Math.max(0, Math.min(1, Number(value) || 0));
     const percent = Math.round(amount * 100);
     if (message) status.textContent = message;
-    percentage.textContent = `${percent}%`;
     fill.style.transform = `scaleX(${amount})`;
     track.setAttribute('aria-valuenow', String(percent));
     return percent;
@@ -109,13 +96,14 @@ if (root) {
     stop();
     window.clearTimeout(completionTimer);
     document.removeEventListener('visibilitychange', onVisibilityChange);
+    retry?.removeEventListener('click', retryLoad);
     for (const layer of layers) layer.removeAttribute('src');
     window.__loadingScreen = null;
   };
 
   const complete = () => {
     if (root.classList.contains('is-complete')) return;
-    progress('Water is open', 1);
+    progress('Ready', 1);
     stop();
     root.classList.add('is-complete');
     root.setAttribute('aria-hidden', 'true');
@@ -126,7 +114,11 @@ if (root) {
     stop();
     root.classList.add('is-error');
     status.textContent = message;
+    if (retry) retry.hidden = false;
   };
+
+  function retryLoad() { window.location.reload(); }
+  retry?.addEventListener('click', retryLoad);
 
   function onVisibilityChange() {
     window.clearTimeout(cycleTimer);
@@ -145,7 +137,7 @@ if (root) {
 
   applyArt(layers[0], LOADING_SCENES[initialIndex], 'high');
   layers[0].classList.add('is-active');
-  applyCopy(LOADING_SCENES[initialIndex], initialIndex);
+  applyScene(LOADING_SCENES[initialIndex]);
   refillSceneBag();
   scheduleNext();
   document.addEventListener('visibilitychange', onVisibilityChange);

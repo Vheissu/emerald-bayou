@@ -1,0 +1,86 @@
+/* Existing condensed branding and GTA-inspired monochrome selection.
+   DESIGN_VARIANCE: 5; MOTION_INTENSITY: 2; VISUAL_DENSITY: 1. Live scenery supplies the imagery. */
+:root { --menu-paper:#f4f2ed; --menu-dark:#09120f; }
+.screen-reader-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+body:has(#menu:not(.hidden)) #hud { opacity:0; }
+#start { display:flex; flex-direction:column; align-items:flex-start; justify-content:space-between; gap:24px;
+  font-family:"Avenir Next Condensed","Emerald Condensed","Avenir Next",sans-serif;
+  padding:clamp(24px,6vh,64px) clamp(24px,5vw,76px); box-sizing:border-box;
+  background:linear-gradient(90deg,rgba(3,10,8,.76),rgba(3,10,8,.22) 36%,transparent 72%),linear-gradient(0deg,rgba(3,10,8,.4),transparent 50%); }
+#start .start-panel { padding:0; border:0; width:auto; }
+#start h1 { margin:0; font-size:clamp(48px,5.4vw,78px); font-weight:650; letter-spacing:.035em; line-height:.92; text-transform:uppercase; color:var(--menu-paper); text-shadow:0 2px 16px rgba(0,0,0,.25); }
+#start h1 em { display:block; font-style:normal; color:inherit; }
+#start .title-actions { width:min(260px,100%); padding:0; border:0; }
+#start .title-action { display:flex; align-items:center; justify-content:space-between; gap:16px; width:100%; min-height:48px; box-sizing:border-box; padding:8px 16px; margin:2px 0; border:0; border-radius:0; background:transparent; color:var(--menu-paper); cursor:pointer; text-align:left; transition:background .12s,color .12s; }
+#start .action-name { font-size:24px; line-height:1.15; font-weight:650; letter-spacing:.085em; text-transform:uppercase; white-space:nowrap; }
+#start .title-action:focus { outline:none; background:var(--menu-paper); color:var(--menu-dark); }
+#start .title-action:active { transform:translateX(2px); }
+#start .title-action.danger { color:#ffb3a2; }
+#start .title-action.danger:focus { background:#ffb3a2; color:var(--menu-dark); }
+#start .title-setting { display:none; font-size:12px; letter-spacing:.04em; text-transform:uppercase; }
+#start .title-action:focus .title-setting { display:block; }
+
+#menu { --foam:var(--menu-paper); --gold:#dbd8cd; display:grid; grid-template-columns:1fr; grid-template-rows:52px minmax(0,1fr) 40px;
+  align-items:stretch; justify-items:stretch;
+  padding:clamp(20px,4vh,42px) clamp(20px,5vw,76px) 0; background:linear-gradient(90deg,rgba(3,10,8,.95),rgba(3,10,8,.78) 60%,rgba(3,10,8,.36)); }
+#menu .menu-rail { grid-row:1; display:flex; flex-direction:row; align-items:stretch; padding:0; border:0; background:transparent; }
+#menu .rail-tab { min-height:44px; min-width:94px; padding:10px 22px; border:0; font-size:18px; font-weight:650; letter-spacing:.065em; color:var(--menu-paper); }
+#menu .rail-tab.active { border:0; background:var(--menu-paper); color:var(--menu-dark); }
+#menu .rail-tab:focus-visible { outline:2px solid var(--menu-paper); outline-offset:-3px; }
+#menu .menu-stage { grid-row:2; min-height:0; box-sizing:border-box; padding:32px 0 20px; }
+#menu .menu-view { margin:0; max-width:1000px; }
+#menu .menu-head { display:block; margin:0 0 24px; padding:0; border:0; }
+#menu h1 { margin:0; font-size:clamp(32px,3.5vw,48px); line-height:1; font-weight:650; letter-spacing:.045em; text-transform:uppercase; }
+#menu .menu-grid { grid-template-columns:minmax(0,680px); gap:20px; }
+#menu .list { max-height:calc(100dvh - 245px); }
+#menu .m { background:transparent; }
+#menu .m:is(:hover,:focus-visible,.sel) { border-left-color:var(--menu-paper); background:rgba(244,242,237,.12); }
+#menu .m .t { font-size:20px; }
+#menu .system-list { max-width:560px; }
+#menu .system-grid.with-controls { grid-template-columns:minmax(230px,330px) minmax(280px,1fr); }
+#menu .system-action { align-items:center; padding:12px 16px; min-height:48px; border:0; background:transparent; }
+#menu .system-action strong { font-size:22px; letter-spacing:.075em; }
+#menu .system-action em { grid-row:1; color:inherit; opacity:.75; }
+#menu .system-action:is(:hover,:focus-visible,.sel) { border:0; background:var(--menu-paper); color:var(--menu-dark); }
+#menu .system-action.danger { color:#ffb3a2; }
+#menu .system-action.danger:is(:hover,:focus-visible,.sel) { background:#ffb3a2; color:var(--menu-dark); }
+#menu .system-action small { grid-column:1/-1; margin:0; }
+#menu .menu-keybar { grid-row:3; justify-content:flex-end; padding:0; border:0; background:transparent; font-size:11px; opacity:.8; }
+#menu .menu-keybar > .input-keyboard, #menu .menu-keybar > .input-gamepad { justify-content:flex-end; }
+#menu .menu-card { border:0; padding:16px 0; background:transparent; }
+#menu .menu-card .h { padding:0; border:0; letter-spacing:.12em; }
+#menu .menu-extra { margin-top:20px; font-size:14px; }
+#menu .menu-extra summary { width:max-content; padding:10px 0; cursor:pointer; text-transform:uppercase; letter-spacing:.08em; }
+#menu .menu-extra summary:focus-visible { outline:2px solid var(--menu-paper); outline-offset:4px; }
+#menu .menu-extra-content { padding:8px 0; max-width:580px; }
+#menu .menu-extra-content p { font-family:"Avenir Next",sans-serif; font-size:14px; line-height:1.5; }
+#menu .world-grid, #menu .records-grid { display:flex; flex-direction:column; gap:0; max-width:700px; }
+#menu .menu-log { margin:0; }
+#menu .control-grid { display:grid; grid-template-columns:max-content 1fr; gap:10px 24px; max-width:480px; font-size:15px; }
+#menu .control-grid dt { color:var(--menu-paper); font-weight:650; }
+#menu .control-grid dd { margin:0; opacity:.8; }
+
+@media (max-width:760px) {
+  #start { padding:28px 24px; }
+  #start h1 { font-size:58px; }
+  #menu { padding:18px 18px 0; grid-template-rows:46px minmax(0,1fr) 36px; }
+  #menu .menu-rail { padding:0; justify-content:stretch; }
+  #menu .rail-tab { min-width:0; flex:1; padding:9px 8px; font-size:16px; }
+  #menu .menu-stage { padding:24px 0 16px; }
+  #menu .menu-grid { grid-template-columns:1fr; }
+  #menu .system-grid.with-controls { grid-template-columns:1fr; }
+  #menu .list { max-height:none; padding-right:0; }
+  #menu .m { grid-template-columns:24px minmax(0,1fr) auto; padding:10px 7px; gap:8px; }
+  #menu .m .t { font-size:18px; }
+  #menu .m .best { grid-column:3; text-align:right; font-size:11px; }
+  #menu .menu-keybar { padding:0; }
+}
+@media (max-height:420px) and (min-width:600px) {
+  #start { flex-direction:row; align-items:flex-end; padding:22px 30px; }
+  #start h1 { font-size:52px; }
+  #start .title-actions { width:240px; }
+  #start .title-action { min-height:42px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  #start, #menu, #start .title-action, #menu button { transition:none; }
+}

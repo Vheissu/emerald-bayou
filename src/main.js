@@ -616,20 +616,15 @@ async function init() {
     }, Math.max(0, Number(delayMs) || 0));
     return true;
   };
-  const cashLabel = value => '$' + Math.round(value).toLocaleString('en-US');
   const renderTitle = () => {
-    const progress = game.hasProgress(), region = regionAt(phys.pos.x, phys.pos.y), resetArmed = game.newGameArmed();
-    titlePrimary.querySelector('.action-name').textContent = progress ? 'Continue' : 'Ride out';
-    document.getElementById('titleContinueDetail').textContent = game.state
-      ? `${game.state.m.title} paused · ${region.name}`
-      : `${region.name} · day ${environment.day}, ${environment.clockLabel()} · ${cashLabel(game.save.cash)}`;
-    document.getElementById('titleJobsDetail').textContent = `${game.save.done.length} / ${game.missions.length} jobs finished · ${game.story?.menuLine() || 'Running Dark not started'}`;
-    document.getElementById('titleGraphicsDetail').textContent = qualityPreferenceLabel(qualityPreference, renderProfile.id);
-    document.getElementById('titleWorldDetail').textContent = `Day ${environment.day} · ${environment.weatherLabel()} · ${environment.tideLabel()}`;
+    const progress = game.hasProgress(), resetArmed = game.newGameArmed();
+    titlePrimary.querySelector('.action-name').textContent = progress ? 'Continue' : 'Play';
+    document.getElementById('titleGraphicsDetail').textContent = qualityPreference === 'auto' ? 'Auto' : renderProfile.label;
+    startEl.querySelector('[data-title-action="graphics"]').setAttribute('aria-label', `Graphics: ${qualityPreferenceLabel(qualityPreference, renderProfile.id)}`);
     titleNew.hidden = !progress;
     titleNew.classList.toggle('danger', resetArmed);
-    titleNew.querySelector('.action-name').textContent = resetArmed ? 'Confirm new game' : 'New game';
-    titleNew.querySelector('.action-detail').textContent = resetArmed ? 'Select again now to clear jobs, cash, records and world history' : 'Clear this hull and return to the tower dock';
+    titleNew.querySelector('.action-name').textContent = resetArmed ? 'Delete save?' : 'New game';
+    titleNew.setAttribute('aria-label', resetArmed ? 'Delete save? Select again to clear jobs, cash, records and world history.' : 'New game');
   };
   const cycleRenderQuality = () => {
     qualityPreference = writeQualityPreference(nextQualityPreference(qualityPreference));
@@ -708,6 +703,17 @@ async function init() {
     const current = options.indexOf(document.activeElement), next = current < 0 ? 0 : (current + options.length + direction) % options.length;
     options[next].focus({ preventScroll: true }); return true;
   };
+  startEl.addEventListener('pointerover', event => {
+    const option = event.target.closest('[data-title-action]');
+    if (option && !option.hidden) option.focus({ preventScroll: true });
+  });
+  window.addEventListener('keydown', event => {
+    if (started || startEl.classList.contains('hidden')) return;
+    if (event.code === 'ArrowDown' || event.code === 'ArrowUp') {
+      keys[event.code] = false;
+      moveTitleFocus(event.code === 'ArrowDown' ? 1 : -1); event.preventDefault();
+    }
+  });
   controller = new StandardGamepadInput({
     onUse: () => setInputMode('gamepad'),
     onDisconnect: () => { if (activeInputMode === 'gamepad') setInputMode('keyboard'); },

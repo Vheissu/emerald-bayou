@@ -8,6 +8,7 @@ import { emitMapMarker, MapMarkerPool } from './mapmarkers.js';
 const SAVE_KEY = 'emeraldBayou.save.v2';
 const fmtT = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60), r = s - m * 60; return `${m}:${r < 10 ? '0' : ''}${r.toFixed(1)}`; };
 const fmtCash = (c) => '$' + Math.round(c).toLocaleString('en-US');
+const missionGoal = m => m?.gold ? `Gold ${fmtT(m.gold)}` : m?.scoreMedal ? `Gold ${m.scoreMedal[0].toLocaleString()}` : m?.timeLimit ? `${fmtT(m.timeLimit)} limit` : '';
 const MPH = 2.23694;
 const FT = 3.28084, MI = 1 / 1609.344;
 const HULL_SAMPLES = [-2, 0, 1.6];
@@ -325,6 +326,7 @@ export class Game {
 
   // ---- menu ----
   openMenu(tab = 'jobs') {
+    this.controlsOpen = false;
     this.menuTab = MENU_TABS.includes(tab) ? tab : 'jobs'; this.menuOpen = true; this.paused = true; this.renderMenu();
     this.el.menu.classList.remove('hidden'); this.el.menu.setAttribute('aria-hidden', 'false'); document.getElementById('hud').classList.add('dim');
     requestAnimationFrame(() => this.el.menu.focus({ preventScroll: true }));
@@ -338,8 +340,7 @@ export class Game {
       const b = this.save.best[m.id]; const lock = !this.unlocked(i);
       let best = '';
       if (b) { best = b.score !== undefined ? `${b.score.toLocaleString()} pts` : b.time ? fmtT(b.time) : ''; if (b.medal) best += `<i>${b.medal}</i>`; }
-      const goal = m.gold ? `Gold ${fmtT(m.gold)}` : m.scoreMedal ? `Gold ${m.scoreMedal[0].toLocaleString()}` : m.timeLimit ? `${fmtT(m.timeLimit)} limit` : '';
-      return `<button type="button" class="m ${i === this.sel ? 'sel' : ''} ${lock ? 'locked' : ''} ${b ? 'done' : ''}" data-mission="${i}" ${lock ? 'disabled' : ''}><span class="n">${String(i + 1).padStart(2, '0')}</span><span class="t">${m.title}</span><span class="best">${lock ? 'LOCKED' : best || fmtCash(m.reward)}</span><span class="d">${lock ? 'Finish the previous job first.' : m.desc}${goal && !lock ? `<em>${goal}</em>` : ''}</span></button>`;
+      return `<button type="button" class="m ${i === this.sel ? 'sel' : ''} ${lock ? 'locked' : ''} ${b ? 'done' : ''}" data-mission="${i}" ${lock ? 'disabled' : ''}><span class="n">${String(i + 1).padStart(2, '0')}</span><span class="t">${m.title}</span><span class="best">${lock ? 'LOCKED' : best || fmtCash(m.reward)}</span></button>`;
     }).join('');
     const r = this.save.rec;
     const records = [
@@ -372,40 +373,59 @@ export class Game {
     const deedRows = deeds.length ? deeds.map(deed => `<div class="deed"><b>${esc(deed.faction)} ${deed.delta > 0 ? '+' : ''}${Number(deed.delta).toFixed(1)}</b>${esc(deed.text)}</div>`).join('') : '<div class="deed">Nobody has made up their mind about this hull yet.</div>';
     const quality = esc(this.getQualityLabel?.() || 'Auto');
     const resetArmed = this.newGameArmed();
-    let kicker = '', title = '', copy = '', content = '', keyHelp = '';
+    let title = '', content = '';
     const inputHelp = (keyboard, gamepad) => `<span class="input-keyboard">${keyboard}</span><span class="input-gamepad">${gamepad}</span>`;
     if (this.menuTab === 'jobs') {
-      kicker = 'Jobs board'; title = 'Work the water'; copy = 'Races, freight, rescues and recovery work. Finished jobs stay open for better times and repeat pay.';
-      content = `<div class="menu-grid"><div><div class="list">${rows}</div><div class="stats">Bankroll <b>${fmtCash(this.save.cash)}</b> &nbsp;·&nbsp; style <b>${this.tricks.total.toLocaleString()} pts</b> &nbsp;·&nbsp; complete <b>${this.save.done.length} / ${this.missions.length}</b></div></div><aside><section class="menu-card"><div class="h">Today's bounties</div>${bl}</section><section class="menu-card"><div class="h">Story on the water</div><div class="deed"><b>Main line</b>${esc(storyLine)}</div><div class="deed"><b>Residents</b>${esc(contractLine)}</div></section></aside></div>`;
-      keyHelp = inputHelp('<span><b>↑ ↓</b> choose &nbsp; <b>Enter</b> start</span><span><b>M / Esc</b> back to the water</span>', '<span><b>D-pad ↑ ↓</b> choose &nbsp; <b>A / Cross</b> start</span><span><b>Menu / B</b> back to the water</span>');
+      title = 'Jobs';
+      const goal = missionGoal(this.missions[this.sel]);
+      content = `<div class="menu-grid"><div><div class="list">${rows}</div><details class="menu-extra"><summary>Details</summary><div class="menu-extra-content"><p data-brief>${esc(this.missions[this.sel]?.desc || '')}</p><p data-brief-goal ${goal ? '' : 'hidden'}>${esc(goal)}</p><section class="menu-card"><div class="h">Bounties</div>${bl}</section><div class="deed">${esc(storyLine)}</div><div class="deed">${esc(contractLine)}</div></div></details></div></div>`;
     } else if (this.menuTab === 'world') {
-      kicker = 'Living world'; title = 'Water remembers'; copy = 'Calls, favors and collisions change how camps, runners and FWC receive this boat.';
+      title = 'World';
       content = `<div class="world-grid"><section class="menu-card"><div class="h">Current picture</div><div class="kpis"><div class="kpi"><b>${encounterCount}</b><span>encounters</span></div><div class="kpi"><b>${regionsSeen}/${regionTotal}</b><span>regions</span></div><div class="kpi"><b>${incidentResolved}/${incidentHeard}</b><span>calls resolved</span></div><div class="kpi"><b>${wanted ? '★'.repeat(wanted) : 'Clear'}</b><span>FWC wanted</span></div><div class="kpi"><b>${citations}</b><span>citations</span></div><div class="kpi"><b>${Number(incidents.fwc) || 0}/${Number(incidents.runners) || 0}</b><span>FWC / runners</span></div></div></section><section class="menu-card"><div class="h">Standing</div><div class="standing"><span>Locals</span><b>${esc(standing.locals)}</b><em>${this.reputation ? this.reputation.score('locals').toFixed(1) : '0.0'}</em></div><div class="standing"><span>FWC</span><b>${esc(standing.fwc)}</b><em>${this.reputation ? this.reputation.score('fwc').toFixed(1) : '0.0'}</em></div><div class="standing"><span>Backchannel</span><b>${esc(standing.runners)}</b><em>${this.reputation ? this.reputation.score('runners').toFixed(1) : '0.0'}</em></div></section><section class="menu-card"><div class="h">Open threads</div><div class="deed"><b>Story</b>${esc(storyLine)}</div><div class="deed"><b>Resident work</b>${esc(contractLine)}</div><div class="deed"><b>Conditions</b>${esc(this.getWorldLabel?.() || 'South Florida backcountry')}</div></section><section class="menu-card"><div class="h">What people remember</div>${deedRows}</section><section class="menu-card field-notes"><div class="h">Field notes · ${fieldNoteCount} / ${fieldNotes.length || 3}</div><div class="field-note-grid">${fieldNoteRows}</div></section></div>`;
-      keyHelp = inputHelp('<span><b>Tab / ← →</b> change section</span><span><b>Esc</b> back to the water</span>', '<span><b>D-pad ← →</b> change section</span><span><b>Menu / B</b> back to the water</span>');
     } else if (this.menuTab === 'records') {
-      kicker = 'Boat log'; title = 'Records'; copy = 'Fastest runs, biggest air, field work and catches measured over the gunwale.';
+      title = 'Stats';
       content = `<div class="records-grid"><section class="menu-card"><div class="h">Hull &amp; style</div>${records.slice(0, 6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}</section><section class="menu-card"><div class="h">Backcountry work</div>${records.slice(6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}<div class="r"><span>Jobs finished</span><b>${this.save.done.length} / ${this.missions.length}</b></div><div class="r"><span>Camp runs</span><b>${Number(this.save.runs) || 0}</b></div><div class="r"><span>Cash earned</span><b>${fmtCash(this.save.cash)}</b></div></section><section class="menu-card fishing-log"><div class="h">Catch-and-release log · ${fishLogged} / ${fishingEntries.length || 6} species</div><div class="fish-log-grid">${fishingRows}</div></section></div>`;
-      keyHelp = inputHelp('<span><b>Tab / ← →</b> change section</span><span><b>Esc</b> back to the water</span>', '<span><b>D-pad ← →</b> change section</span><span><b>Menu / B</b> back to the water</span>');
     } else {
-      kicker = 'Paused'; title = 'Tower radio'; copy = 'Resume the water, set the rendering budget, or return to the title.';
+      title = 'Paused';
       const systemActions = [
-        ['resume', 'Resume', 'Return to the boat', 'Esc', false],
-        ['graphics', 'Graphics', 'Auto adapts after sustained frame pressure; fixed modes stay locked', quality, false],
-        ['title', 'Return to title', "Save the hull's current position and leave the water paused", 'Title', false],
+        ['resume', 'Resume', '', '', false],
+        ['graphics', 'Graphics', '', quality, false],
+        ['controls', 'Controls', '', '', false],
+        ['title', 'Title', '', '', false],
       ];
-      if (this.hasProgress()) systemActions.push(['new', resetArmed ? 'Confirm new game' : 'New game', resetArmed ? 'Select again now to clear jobs, cash, records and world history' : 'Start over at the tower dock; graphics choice is kept', resetArmed ? 'Clear save' : 'Reset', resetArmed]);
+      if (this.hasProgress()) systemActions.push(['new', resetArmed ? 'Delete save?' : 'New game', resetArmed ? 'Jobs, cash and progress.' : '', '', resetArmed]);
       this.systemSel = Math.max(0, Math.min(this.systemSel, systemActions.length - 1));
-      const actions = systemActions.map(([action, name, detail, value, danger], i) => `<button type="button" class="system-action ${i === this.systemSel ? 'sel' : ''} ${danger ? 'danger' : ''}" data-action="${action}"><strong>${name}</strong><small>${detail}</small><em>${value}</em></button>`).join('');
-      content = `<div class="menu-grid"><div class="system-list">${actions}</div><aside><section class="menu-card"><div class="h">On the water</div><div class="keys"><span class="input-keyboard">W / S throttle · A / D rudder<br>Drag to look · wheel to change chase distance · V camera<br>E interact · C cast / reel · X cut line or cage debris · G anchor<br>L spotlight · H horn · Tab chart · M jobs<br>In dense fog: H sounds one prolonged blast<br>In the air: S nose up · Shift nose down · A / D spin<br>R reset the hull</span><span class="input-gamepad">RT / LT throttle · left stick rudder · click for camera<br>Right stick look · click to centre<br>A / Cross interact · B / Circle alternate or cut debris<br>X / Square cast or reel · Y / Triangle anchor<br>LB spotlight · RB horn · D-pad up jobs<br>View chart · Menu / Options pause<br>In the air: left stick pitches and spins</span></div></section></aside></div>`;
-      keyHelp = inputHelp('<span><b>↑ ↓ / Enter</b> choose &nbsp; <b>Tab / ← →</b> change section</span><span><b>Esc</b> resume</span>', '<span><b>D-pad / A</b> choose &nbsp; <b>← →</b> change section</span><span><b>Menu / B</b> resume</span>');
+      const actions = systemActions.map(([action, name, detail, value, danger], i) => `<button type="button" class="system-action ${i === this.systemSel ? 'sel' : ''} ${danger ? 'danger' : ''}" data-action="${action}" ${action === 'controls' ? `aria-expanded="${Boolean(this.controlsOpen)}"` : ''}><strong>${name}</strong>${detail ? `<small>${detail}</small>` : ''}${value ? `<em>${value}</em>` : ''}</button>`).join('');
+      const keys = (entries) => `<dl class="control-grid">${entries.map(([key, action]) => `<dt>${key}</dt><dd>${action}</dd>`).join('')}</dl>`;
+      const controls = this.controlsOpen ? `<section class="controls-panel">${inputHelp(
+        keys([['W / S','Throttle'],['A / D','Rudder / air spin'],['Drag','Look'],['Wheel','Chase distance'],['V','Camera'],['E','Interact'],['C','Fish'],['X','Cut line / debris'],['G','Anchor'],['L / H','Light / horn'],['Tab / M','Chart / jobs'],['R','Reset'],['S / Shift','Pitch in air']]),
+        keys([['RT / LT','Throttle'],['Left stick','Rudder / air control'],['Right stick','Look'],['Stick clicks','Camera / centre'],['A / Cross','Interact'],['X / Square','Fish'],['B / Circle','Cut line / debris'],['Y / Triangle','Anchor'],['LB / RB','Light / horn'],['View','Chart'],['D-pad up','Jobs'],['Menu','Pause']])
+      )}</section>` : '';
+      content = `<div class="menu-grid system-grid ${this.controlsOpen ? 'with-controls' : ''}"><div class="system-list">${actions}</div>${controls}</div>`;
     }
-    const tabs = { jobs: ['▤', 'Jobs'], world: ['⌖', 'World'], records: ['△', 'Records'], system: ['⚙', 'System'] };
-    const rail = MENU_TABS.map(tab => `<button type="button" class="rail-tab ${tab === this.menuTab ? 'active' : ''}" data-tab="${tab}" ${tab === this.menuTab ? 'aria-current="page"' : ''}><span>${tabs[tab][0]}</span>${tabs[tab][1]}</button>`).join('');
-    this.el.menu.innerHTML = `<nav class="menu-rail" aria-label="Pause menu"><div class="rail-mark">EB</div>${rail}<div class="rail-status">${fmtCash(this.save.cash)}<br>${esc(this.getWorldShortLabel?.() || 'Open water')}</div></nav><main class="menu-stage"><section class="menu-view"><header class="menu-head"><div><p>${kicker}</p><h1>${title}</h1></div><p class="menu-copy">${copy}</p></header>${content}</section></main><footer class="menu-keybar">${keyHelp}</footer>`;
+    if (this.menuTab === 'world' || this.menuTab === 'records') {
+      // Logs stay available, but their full contents don't compete with the first menu view.
+      const labels = { 'Current picture': 'Overview', Standing: 'Reputation', 'Open threads': 'Story',
+        'What people remember': 'History', 'Hull &amp; style': 'Personal bests', 'Backcountry work': 'Progress' };
+      content = content.replace(/<section class="menu-card([^"]*)"><div class="h">(.*?)<\/div>/g,
+        (_, classes, heading) => `<details class="menu-extra menu-log${classes}"><summary>${labels[heading] || (heading.startsWith('Field notes') ? 'Discoveries' : heading.startsWith('Catch-and-release') ? 'Fishing' : heading)}</summary><div class="menu-extra-content">`)
+        .replace(/<\/section>/g, '</div></details>');
+    }
+    const tabs = { jobs: 'Jobs', world: 'World', records: 'Stats', system: 'Game' };
+    const rail = MENU_TABS.map(tab => `<button type="button" class="rail-tab ${tab === this.menuTab ? 'active' : ''}" data-tab="${tab}" ${tab === this.menuTab ? 'aria-current="page"' : ''}>${tabs[tab]}</button>`).join('');
+    this.el.menu.innerHTML = `<nav class="menu-rail" aria-label="Pause menu">${rail}</nav><main class="menu-stage"><section class="menu-view"><header class="menu-head"><h1>${title}</h1></header>${content}</section></main><footer class="menu-keybar">${inputHelp('<span><b>Esc</b> Back</span>', '<span><b>B</b> Back</span>')}</footer>`;
     this.el.menu.querySelectorAll('[data-tab]').forEach(element => element.addEventListener('click', () => { this.menuTab = element.dataset.tab; this.renderMenu(); this.el.menu.focus({ preventScroll: true }); }));
     this.el.menu.querySelectorAll('[data-mission]').forEach(element => {
       element.addEventListener('click', () => { const i = +element.dataset.mission; if (this.unlocked(i)) { this.sel = i; this.start(i); } });
-      element.addEventListener('mouseenter', () => { const i = +element.dataset.mission; if (this.unlocked(i)) { this.sel = i; this.el.menu.querySelectorAll('.m').forEach(candidate => candidate.classList.toggle('sel', +candidate.dataset.mission === i)); } });
+      const select = () => {
+        const i = +element.dataset.mission;
+        if (!this.unlocked(i)) return;
+        this.sel = i; this.el.menu.querySelectorAll('.m').forEach(candidate => candidate.classList.toggle('sel', +candidate.dataset.mission === i));
+        const brief = this.el.menu.querySelector('[data-brief]'); if (brief) brief.textContent = this.missions[i].desc;
+        const goal = this.el.menu.querySelector('[data-brief-goal]');
+        if (goal) { goal.textContent = missionGoal(this.missions[i]); goal.hidden = !goal.textContent; }
+      };
+      element.addEventListener('mouseenter', select); element.addEventListener('focus', select);
     });
     this.el.menu.querySelectorAll('[data-action]').forEach((element, index) => {
       element.addEventListener('mouseenter', () => { this.systemSel = index; this.el.menu.querySelectorAll('.system-action').forEach((candidate, i) => candidate.classList.toggle('sel', i === index)); });
@@ -413,11 +433,21 @@ export class Game {
         const action = element.dataset.action;
         if (action === 'resume') this.closeMenu();
         else if (action === 'graphics') { this.onCycleQuality?.(); this.renderMenu(); }
+        else if (action === 'controls') { this.controlsOpen = !this.controlsOpen; this.renderMenu(); }
         else if (action === 'title') this.onReturnToTitle?.();
         else if (action === 'new') this.requestNewGame();
       });
     });
     const selEl = this.el.menu.querySelector('.m.sel'); if (selEl) selEl.scrollIntoView({ block: 'nearest' });
+  }
+  moveJobSelection(direction, focused = document.activeElement) {
+    const options = this.missions.map((_, i) => i).filter(i => this.unlocked(i));
+    if (!options.length) return;
+    const details = this.el.menu.querySelector('summary'), onDetails = details && focused === details;
+    const next = options.indexOf(this.sel) + direction;
+    if (details && !onDetails && (next < 0 || next >= options.length)) { details.focus(); return; }
+    this.sel = options[onDetails ? (direction > 0 ? 0 : options.length - 1) : (next + options.length) % options.length];
+    this.renderMenu(); this.el.menu.focus({ preventScroll: true });
   }
   onKey(e) {
     if (!this.playing) return;
@@ -429,18 +459,26 @@ export class Game {
     }
     if (this.menuOpen) {
       if (e.code === 'Escape' || e.code === 'KeyM') { this.closeMenu(); e.preventDefault(); return; }
-      if (e.code === 'Tab' || e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
-        const direction = e.code === 'ArrowLeft' || (e.code === 'Tab' && e.shiftKey) ? -1 : 1;
+      if (e.code === 'Tab') return; // Native focus navigation also reaches optional details and controls.
+      if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+        const direction = e.code === 'ArrowLeft' ? -1 : 1;
         this.menuTab = MENU_TABS[(MENU_TABS.indexOf(this.menuTab) + MENU_TABS.length + direction) % MENU_TABS.length]; this.renderMenu(); e.preventDefault(); return;
       }
-      if (this.menuTab === 'jobs' && (e.code === 'ArrowDown' || e.code === 'KeyS')) { do { this.sel = (this.sel + 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); e.preventDefault(); return; }
-      if (this.menuTab === 'jobs' && (e.code === 'ArrowUp' || e.code === 'KeyW')) { do { this.sel = (this.sel + this.missions.length - 1) % this.missions.length; } while (!this.unlocked(this.sel)); this.renderMenu(); e.preventDefault(); return; }
+      if (this.menuTab === 'jobs' && (e.code === 'ArrowDown' || e.code === 'KeyS')) { this.moveJobSelection(1); e.preventDefault(); return; }
+      if (this.menuTab === 'jobs' && (e.code === 'ArrowUp' || e.code === 'KeyW')) { this.moveJobSelection(-1); e.preventDefault(); return; }
       if (this.menuTab === 'system' && (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ArrowUp' || e.code === 'KeyW')) {
         const count = Math.max(1, this.el.menu.querySelectorAll('[data-action]').length), direction = e.code === 'ArrowDown' || e.code === 'KeyS' ? 1 : -1;
         this.systemSel = (this.systemSel + count + direction) % count; this.renderMenu(); e.preventDefault(); return;
       }
+      if ((this.menuTab === 'world' || this.menuTab === 'records') && (e.code === 'ArrowDown' || e.code === 'ArrowUp')) {
+        const entries = [...this.el.menu.querySelectorAll('summary')], current = entries.indexOf(document.activeElement);
+        const direction = e.code === 'ArrowDown' ? 1 : -1;
+        if (entries.length) entries[current < 0 ? 0 : (current + direction + entries.length) % entries.length].focus();
+        e.preventDefault(); return;
+      }
       if (e.code === 'Enter' || e.code === 'Space') {
         const focused = document.activeElement;
+        if (focused?.tagName === 'SUMMARY') { focused.parentElement.open = !focused.parentElement.open; e.preventDefault(); return; }
         if (focused?.matches?.('#menu button')) focused.click();
         else if (this.menuTab === 'jobs' && this.unlocked(this.sel)) this.start(this.sel);
         else if (this.menuTab === 'system') this.el.menu.querySelector('.system-action.sel')?.click();

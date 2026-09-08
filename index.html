@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Emerald Bayou</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="preload" href="./fonts/le-murmure-regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/src/loading-screen.css">
 <style>
   /* Type: Avenir Next Condensed - the condensed sans of hull registration numbers and marina timing boards.
@@ -143,34 +142,9 @@
   .overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:14px; visibility:visible;
     background:linear-gradient(90deg, rgba(6,18,14,0.9) 0%, rgba(6,18,14,0.55) 60%, rgba(6,18,14,0.3) 100%); color:var(--foam); transition:opacity .35s,visibility 0s; z-index:5; }
   .overlay.hidden { opacity:0; pointer-events:none; visibility:hidden; transition:opacity .35s,visibility 0s .35s; }
-  #start { box-sizing:border-box; display:grid; grid-template-columns:minmax(0,1fr) minmax(310px,390px); align-items:end; gap:clamp(42px,7vw,120px); padding:7vh 6vw 8vh;
-    background:linear-gradient(90deg,rgba(3,10,8,0.95) 0%,rgba(3,10,8,0.76) 35%,rgba(3,10,8,0.11) 72%),linear-gradient(0deg,rgba(3,10,8,0.88),transparent 58%); }
-  #start .start-panel { width:min(760px,100%); padding-left:22px; border-left:3px solid var(--marker); }
-  #start .kicker { margin:0 0 13px; color:var(--gold); font-size:12px; font-weight:600; letter-spacing:0.32em; text-transform:uppercase; }
-  #start h1, #menu h1 { font-weight:600; font-size:64px; letter-spacing:0.16em; margin:0; text-transform:uppercase; line-height:1; }
-  #start h1 { font-size:clamp(58px,7.3vw,108px); letter-spacing:0.08em; line-height:0.88; text-shadow:0 4px 34px rgba(0,0,0,0.5); }
-  #start h1 em, #menu h1 em { font-style:normal; color:var(--gold); }
-  #start p { margin:0; }
-  #start .deck { width:min(600px,100%); margin-top:19px; font-family:"Avenir Next","Futura",sans-serif; font-size:20px; line-height:1.4; letter-spacing:0.015em; opacity:0.92; }
-  #start .meta { margin-top:15px; font-size:11px; letter-spacing:0.19em; opacity:0.62; text-transform:uppercase; }
-  #start .controls { margin-top:28px; padding-top:14px; border-top:1px solid rgba(243,237,224,0.19); font-size:12px; letter-spacing:0.11em; line-height:1.8; opacity:0.76; text-transform:uppercase; }
-  #start .controls b { color:var(--foam); font-weight:600; }
   .input-gamepad { display:none; }
   html[data-input="gamepad"] .input-keyboard { display:none; }
   html[data-input="gamepad"] .input-gamepad { display:inline; }
-  #start .title-actions { align-self:end; min-width:0; padding:17px 0 5px; border-top:1px solid rgba(243,237,224,0.26); border-bottom:1px solid rgba(243,237,224,0.16); }
-  #start .action-label { margin:0 16px 10px; color:var(--gold); font-size:10px; font-weight:650; letter-spacing:0.28em; text-transform:uppercase; }
-  #start .title-action { position:relative; display:block; width:100%; box-sizing:border-box; padding:13px 16px 12px 19px; border:0; border-left:3px solid transparent; background:rgba(5,14,11,0.28); color:var(--foam); text-align:left; cursor:pointer; transition:background .16s,border-color .16s,transform .16s; }
-  #start .title-action + .title-action { margin-top:2px; }
-  #start .title-action:hover, #start .title-action:focus-visible, html[data-input="gamepad"] #start .title-action:focus { outline:none; border-left-color:var(--marker); background:rgba(243,237,224,0.1); transform:translateX(3px); }
-  #start .title-action.primary { border-left-color:var(--marker); background:var(--marker); color:#1b160e; box-shadow:0 12px 34px rgba(0,0,0,0.28); }
-  #start .title-action.primary:hover, #start .title-action.primary:focus-visible, html[data-input="gamepad"] #start .title-action.primary:focus { background:#ff8a3c; }
-  #start .title-action.danger { border-left-color:#d45642; background:rgba(80,25,18,0.48); }
-  #start .title-action .action-name { display:flex; align-items:center; justify-content:space-between; gap:14px; font-size:18px; font-weight:700; letter-spacing:0.18em; text-transform:uppercase; }
-  #start .title-action .action-name::after { content:"›"; font-size:24px; font-weight:400; line-height:.7; opacity:.58; }
-  #start .title-action .action-detail { display:block; margin-top:5px; font-family:"Avenir Next","Futura",sans-serif; font-size:12px; line-height:1.35; letter-spacing:0.025em; opacity:.68; }
-  #start .title-action.primary .action-detail { opacity:.72; }
-  #start .title-foot { display:flex; justify-content:space-between; gap:16px; margin:12px 16px 0; font-size:10px; letter-spacing:.14em; text-transform:uppercase; opacity:.54; }
   /* full pause shell: DOM only, so opening it does not allocate another 3D scene */
   #menu { box-sizing:border-box; display:grid; grid-template-columns:96px minmax(0,1fr); grid-template-rows:minmax(0,1fr) 58px; padding:0; gap:0; overflow:hidden; background:linear-gradient(90deg,rgba(3,10,8,0.96) 0%,rgba(3,10,8,0.88) 48%,rgba(3,10,8,0.56) 100%); }
   #menu:focus { outline:none; }
@@ -262,7 +236,6 @@
   #result .lines b { color:var(--gold); }
   #result .foot { margin-top:18px; font-size:13px; letter-spacing:0.16em; text-transform:uppercase; opacity:0.7; }
   @media (max-width:900px) {
-    #start { grid-template-columns:minmax(0,1fr) minmax(280px,340px); gap:28px; padding:5vh 4vw 6vh; }
     #menu { grid-template-columns:1fr; grid-template-rows:66px minmax(0,1fr) 52px; }
     #menu .menu-rail { grid-row:1; flex-direction:row; align-items:stretch; padding:7px 10px; border-right:0; border-bottom:1px solid rgba(243,237,224,.13); }
     #menu .rail-mark { width:42px; height:42px; margin:5px 14px 0 0; flex:0 0 auto; }
@@ -274,14 +247,6 @@
     #menu .list { max-height:none; }
   }
   @media (max-width:760px) {
-    #start { display:block; overflow-y:auto; padding:42px 24px 36px; }
-    #start .start-panel { width:calc(100vw - 51px); }
-    #start h1 { font-size:clamp(52px,17vw,82px); }
-    #start .deck { font-size:16px; }
-    #start .meta { line-height:1.6; }
-    #start .controls { margin-top:18px; }
-    #start .title-actions { margin-top:28px; }
-    #start .title-foot { flex-direction:column; gap:4px; }
     #menu .rail-mark, #menu .rail-status { display:none; }
     #menu .menu-rail { justify-content:space-between; padding:7px 5px; }
     #menu .rail-tab { min-width:0; flex:1; font-size:9px; letter-spacing:.08em; }
@@ -307,6 +272,7 @@
     #radioState p { font-size:13px; }
   }
 </style>
+<link rel="stylesheet" href="/src/menu-screen.css">
 </head>
 <body>
 <div id="app"></div>
@@ -340,43 +306,28 @@
   <img class="loading-art loading-art-a" alt="" aria-hidden="true" decoding="async">
   <img class="loading-art loading-art-b" alt="" aria-hidden="true" decoding="async">
   <div class="loading-ui">
-    <div class="loading-scene-meta" aria-hidden="true">
-      <span id="loadscene">01 / 06</span>
-      <i></i>
-      <span id="loaddistrict">Sawgrass Landing</span>
-    </div>
     <div class="loading-brand" aria-label="Emerald Bayou">
       <span class="loading-wordmark">Emerald</span>
-      <span class="loading-script" aria-hidden="true">Bayou</span>
-    </div>
-    <div class="loading-story">
-      <strong id="loadchapter">Gator overtime</strong>
-      <span id="loadnote">Everybody clocked out except the gator.</span>
+      <span class="loading-line" aria-hidden="true">Bayou</span>
     </div>
     <div class="loading-progress" role="status" aria-live="polite">
       <div class="loading-status">
-        <span id="loadtext">Flooding the backcountry</span>
-        <span id="loadpct">0%</span>
+        <span id="loadtext" class="screen-reader-only">Loading</span>
       </div>
       <div id="loadtrack" class="bar" role="progressbar" aria-label="Loading Emerald Bayou" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+      <button id="loadRetry" type="button" hidden>Retry</button>
     </div>
   </div>
 </div>
 <div id="start" class="overlay hidden" aria-hidden="true">
   <div class="start-panel">
-    <p class="kicker">South Florida backcountry</p>
     <h1>Emerald <em>Bayou</em></h1>
-    <p class="deck">Run freight. Race the cuts. Stay off FWC’s board when the weather turns.</p>
-    <p class="meta">250 sq mi of open bayou &nbsp;·&nbsp; living wildlife &nbsp;·&nbsp; no road home</p>
-    <p class="controls"><span class="input-keyboard"><b>W / S</b> throttle &nbsp; <b>A / D</b> rudder &nbsp; <b>drag</b> look &nbsp; <b>V</b> camera &nbsp; <b>E</b> interact<br><b>L</b> spotlight &nbsp; <b>H</b> horn &nbsp; <b>C</b> fish &nbsp; <b>X</b> cut &nbsp; <b>G</b> anchor &nbsp; <b>M</b> jobs &nbsp; <b>Tab</b> chart &nbsp; <b>R</b> reset</span><span class="input-gamepad"><b>RT / LT</b> throttle &nbsp; <b>left stick</b> rudder / click camera &nbsp; <b>right stick</b> look / click centre<br><b>A / Cross</b> interact &nbsp; <b>B / Circle</b> alternate / cut &nbsp; <b>X / Square</b> fish &nbsp; <b>Y / Triangle</b> anchor<br><b>LB</b> light &nbsp; <b>RB</b> horn &nbsp; <b>D-pad up</b> jobs &nbsp; <b>View</b> chart &nbsp; <b>Menu / Options</b> pause</span></p>
   </div>
   <nav class="title-actions" aria-label="Main menu">
-    <p class="action-label">Tower dock</p>
-    <button type="button" class="title-action primary" id="titlePrimary" data-title-action="continue"><span class="action-name">Ride out</span><span class="action-detail" id="titleContinueDetail">Open water from the tower dock</span></button>
-    <button type="button" class="title-action" data-title-action="jobs"><span class="action-name">Jobs &amp; story</span><span class="action-detail" id="titleJobsDetail">Sixteen jobs, resident work and Running Dark</span></button>
-    <button type="button" class="title-action" id="titleNew" data-title-action="new" hidden><span class="action-name">New game</span><span class="action-detail">Clear this hull and return to the tower dock</span></button>
-    <button type="button" class="title-action" data-title-action="graphics"><span class="action-name">Graphics</span><span class="action-detail" id="titleGraphicsDetail">Auto</span></button>
-    <div class="title-foot"><span id="titleWorldDetail">Day 1 · fair</span><span><span class="input-keyboard">Enter to select</span><span class="input-gamepad">A / Cross to select</span></span></div>
+    <button type="button" class="title-action primary" id="titlePrimary" data-title-action="continue"><span class="action-name">Play</span></button>
+    <button type="button" class="title-action" data-title-action="jobs"><span class="action-name">Jobs</span></button>
+    <button type="button" class="title-action" id="titleNew" data-title-action="new" hidden><span class="action-name">New game</span></button>
+    <button type="button" class="title-action" data-title-action="graphics"><span class="action-name">Graphics</span><span class="title-setting" id="titleGraphicsDetail">Auto</span></button>
   </nav>
 </div>
 <div id="menu" class="overlay hidden" tabindex="-1" aria-hidden="true"></div>

@@ -8,6 +8,6 @@ if (loaderOnly) {
 } else {
   import('./main.js').catch(error => {
     console.error(error);
-    window.__loadingScreen?.fail?.('The launch motor quit. Reload and try again.');
+    window.__loadingScreen?.fail?.('Could not load the game.');
   });
 }
