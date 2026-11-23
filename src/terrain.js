@@ -185,7 +185,7 @@ export class Terrain {
           grass = mix(grass, grassB, 0.45) * mix(0.14, 0.27, macro) * vec3(0.8, 1.0, 0.68);
           grass = mix(grass, grass * vec3(1.1, 0.95, 0.7), smoothstep(0.55, 0.8, macro2) * 0.6);
           float bankGrain = texture2D(tNoise, tuv * 0.05).g;
-          vec3 mud = texture2D(tMud, tuv * 0.11).rgb * mix(0.5, 0.8, bankGrain);
+          vec3 mud = texture2D(tMud, tuv * ${(tex.mudScale ?? 0.11).toFixed(2)}).rgb * mix(0.66, 1.0, bankGrain);
           vec3 sand = texture2D(tSand, tuv * 0.13).rgb;
           vec3 sandB = texture2D(tSand, tuv * 0.031 + 0.2).rgb;
           sand = mix(sand, sandB, 0.5) * 0.75;
@@ -196,13 +196,24 @@ export class Terrain {
           float wSand = 1.0 - smoothstep(-0.9, -0.05, h);
           float sandbar = (1.0 - smoothstep(0.12, 0.63, abs(bankHeight - 0.38))) * smoothstep(0.47, 0.67, macro);
           wSand = max(wSand, sandbar * clamp(1.0 - slope * 3.0, 0.0, 1.0));
-          vec3 col = mix(grass, mud, wMud);
+          // Thin ground cover on the wooded slopes reveals pockets of decomposing litter.
+          float litter = smoothstep(0.38, 0.72, bankGrain + (macro2 - 0.5) * 0.5);
+          vec3 col = mix(grass, mud, max(wMud, litter * (0.16 + 0.52 * smoothstep(0.015, 0.18, slope))));
           col = mix(col, sand, wSand);
           // On steep dry faces the soil cover breaks and pale limestone shows through.
           float exposed = smoothstep(0.065, 0.28, slope) * smoothstep(0.7, 2.4, h);
           float mineral = smoothstep(0.32, 0.72, bankGrain * 0.72 + macro2 * 0.28);
           exposed *= 0.38 + mineral * 0.5;
           vec3 bankFace = mix(mud * vec3(1.2, 1.08, 0.94), sand * vec3(0.72, 0.70, 0.62), 0.16 + 0.32 * mineral);
+          if (exposed > 0.025) {
+            // Project through the exposed face so soil detail stays visible where a top-down UV stretches.
+            // Narrow, discontinuous darker seams follow the sediment layers laid down by older floods.
+            vec2 wallUv = vec2(dot(tuv, vec2(0.79, 0.61)), h);
+            float grain = texture2D(tNoise, wallUv * vec2(0.18, 0.47)).g;
+            float seam = abs(fract(h * 0.92 + 1.35 * macro2 + 0.42 * bankGrain + 0.12 * grain) - 0.5);
+            float silt = (1.0 - smoothstep(0.025, 0.14, seam)) * smoothstep(0.30, 0.57, bankGrain);
+            bankFace *= (0.72 + 0.56 * grain) * (1.0 - 0.32 * silt);
+          }
           col = mix(col, bankFace, exposed);
           col *= mix(0.45, 1.0, smoothstep(-0.25, 1.2, h));
           float shorelineDamp = 1.0 - smoothstep(uWaterLevel + 0.1, uWaterLevel + 1.1, h);

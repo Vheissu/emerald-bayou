@@ -1,7 +1,69 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { makeAirRescueRig } from '../src/airrescue.js';
 import { EncounterDirector } from '../src/encounters.js';
 import { downburstCraftUrgency } from '../src/downburst.js';
+
+test('reported incidents dispatch to navigable water around the witness fix', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  const report = { x: 10, z: 40, heading: 0, source: 'MARSH ICE', reason: 'a collision', amount: 0.6 };
+  director.phys = { pos: { x: 10, y: 230 } };
+  director.environment = { waterLevel: 0 };
+  director.terrain = { heightAt: x => Math.abs(x - 10) < 34 ? -2 : 1 };
+  director.game = { persist() {} };
+  director.law = { stats: {}, takeDispatchReport: () => report };
+  director.startPatrol = (at, options) => { director.active = { at, options }; };
+  assert.equal(director.dispatchPatrol(report), true);
+  const { at, options } = director.active;
+  assert.equal(options.report, report);
+  assert.deepEqual([at.fixX, at.fixZ], [10, 40]);
+  assert.ok(at.z < 40);
+  assert.ok(Math.hypot(at.x - 10, at.z - 230) >= 103);
+});
+
+test('dispatch avoids a shallow bar that does not block line of sight', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 300, y: 0 } };
+  director.environment = { waterLevel: 0 };
+  director.terrain = { heightAt: (x, z) => Math.abs(x) > 8 ? 2 : z >= 43 && z <= 47 ? -0.18 : -2 };
+  const at = director.patrolDispatchSpot({ x: 0, z: 0, heading: 0 });
+  assert.ok(at);
+  assert.ok(at.z < -100, 'the approach originates on the navigable side of the shoal');
+});
+
+test('a responding patrol holds the witness fix until it sees the player and can then issue a citation', () => {
+  const director = Object.create(EncounterDirector.prototype), routes = [], outcomes = [];
+  const patrol = { x: 50, z: 10, active: true, search: {} };
+  const e = { state: 'responding', report: { source: 'MARSH ICE', reason: 'a collision', amount: 0.65 }, fixX: 0, fixZ: 0, lastKnownHeading: 0,
+    reportSearchT: -1, reportSightT: 0, t: 0, contactCd: 0, ramCd: 0, comply: 0 };
+  director.rigs = { patrol: { agent: patrol, blue: { light: {} }, red: { light: {} } }, patrolBackups: [] };
+  director.phys = { pos: { x: 196, y: 41 }, vel: { x: 0, y: 0 }, speed: 0, heading: 0 };
+  director.environment = { values: {} };
+  director.game = { save: {}, mapMarkers: [] };
+  director.law = { attention: 0.65, responding: true, confiscate: () => false,
+    cited: () => { director.law.citation = true; }, cool() {} };
+  director.audio = { horn() {}, checkpoint() {} };
+  director.updatePatrolDownburst = director.updatePatrolSearchlight = director.addPatrolObstacle = director.known = director.point = () => {};
+  director.patrolSurfaceVisual = () => false;
+  director.updateAgent = (_agent, _dt, _t, x, z) => routes.push([x, z]);
+  director.complete = (...outcome) => outcomes.push(outcome);
+
+  director.updatePatrol(e, 1, 1);
+  assert.deepEqual(routes.at(-1), [0, 0]);
+  assert.equal(e.state, 'responding');
+  director.patrolSurfaceVisual = () => true;
+  director.phys.pos.x = 70; director.phys.pos.y = 4;
+  director.updatePatrol(e, 0.6, 1.6);
+  assert.deepEqual(routes.at(-1), [70, 4]);
+  assert.equal(e.state, 'check');
+  assert.equal(director.law.responding, false);
+  director.updatePatrol(e, 5, 6.6);
+  assert.equal(director.law.citation, true);
+  assert.equal(outcomes[0][0], 'Citation written');
+  assert.match(outcomes[0][1], /MARSH ICE/);
+  assert.ok(outcomes[0][2] < 0);
+});
 
 test('encounter engines publish the loudest moving craft without growing the audio pool', () => {
   const director = Object.create(EncounterDirector.prototype), patrol = { active: true, enforcement: true, x: 60, z: 0, speed: 11 };
@@ -325,9 +387,41 @@ test('the channel-closing backup deploys farther ahead and closer to the working
   const director = Object.create(EncounterDirector.prototype);
   director.phys = { pos: { x: 0, y: 0 }, vel: { x: 0, y: -12 }, heading: 0 };
   director.environment = { waterLevel: 0 }; director.terrain = { heightAt: () => -2 }; director.world = { blockedAt: () => false };
-  const intercept = director.patrolBackupSpot(0, { tacticSide: 1 }), closure = director.patrolBackupSpot(1, { tacticSide: 1 });
+  const e = { tacticSide: 1, visual: true };
+  const intercept = director.patrolBackupSpot(0, e), closure = director.patrolBackupSpot(1, e);
   assert.ok(-intercept.z >= 52 && -intercept.z <= 67); assert.ok(Math.abs(intercept.x) >= 118 && Math.abs(intercept.x) <= 130);
   assert.ok(-closure.z >= 132 && -closure.z <= 152); assert.ok(Math.abs(closure.x) >= 78 && Math.abs(closure.x) <= 88);
+});
+
+test('backup units spawn, face and start tracking the last fix while the hull is out of sight', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 800, y: 900 }, vel: { x: -12, y: 2 }, heading: 0 };
+  director.environment = { waterLevel: 0 };
+  director.terrain = { heightAt: () => -2 }; director.water = { waveHeight: () => 0 };
+  director.audio = { horn() {} }; director.game = { toast() {} };
+  director.resetPatrolWeather = () => {};
+  const agent = { mesh: new THREE.Object3D() };
+  director.rigs = { patrolBackups: [{ agent, blueBulb: {}, redBulb: {} }] };
+  const e = { visual: false, tacticSide: 1, lastKnownX: 24, lastKnownZ: 65, lastKnownHeading: Math.PI / 2, backupCount: 0 };
+
+  assert.equal(director.deployPatrolBackup(e, 0, 0), true);
+  assert.ok(agent.x < 24 - 51 && agent.x > 24 - 68);
+  assert.ok(agent.z < 65 - 117 && agent.z > 65 - 131);
+  assert.deepEqual([agent.targetX, agent.targetZ], [24, 65]);
+  assert.equal(agent.heading, Math.atan2(agent.x - 24, agent.z - 65));
+});
+
+test('aviation launches toward the last fix and uses the last observed heading when the surface line loses sight', () => {
+  const director = Object.create(EncounterDirector.prototype);
+  director.phys = { pos: { x: 800, y: 900 }, vel: { x: -12, y: 2 }, heading: Math.PI };
+  director.game = { toast() {} };
+  director.rigs = { airrescue: makeAirRescueRig(() => 0.5, new THREE.Scene()) };
+  const e = { tacticSide: 1, lastKnownX: 24, lastKnownZ: 65, lastKnownHeading: 0 };
+
+  assert.equal(director.deployPatrolAviation(e, 2, false), true);
+  assert.deepEqual([e.hx, e.hz, e.heading], [169, 385, 0]);
+  assert.deepEqual([e.flightTargetX, e.flightTargetZ], [24, -15]);
+  assert.deepEqual([e.beamX, e.beamZ], [24, 65]);
 });
 
 test('a channel closure is deferred when the predicted line is shallow or obstructed', () => {

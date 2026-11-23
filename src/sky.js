@@ -25,6 +25,8 @@ export class Sky {
       windSpeed: { value: 3.5 },
       uTime: { value: 0 },
       cover: { value: 0.47 },
+      tCloudBank: { value: null },
+      hasCloudBank: { value: 0 },
       daylight: { value: 1 },
       storm: { value: 0 },
       flash: { value: 0 },
@@ -47,10 +49,56 @@ export class Sky {
         }`,
       fragmentShader: `
         varying vec3 vDir; uniform vec3 sunDir, moonDir, lightDir, flashDir; uniform vec2 windDir; uniform float windSpeed, uTime, cover, daylight, storm, flash, rain, rainbow, weatherDetail;
+        uniform sampler2D tCloudBank; uniform float hasCloudBank;
         ${SKY_FRAG_NOISE}
         vec3 rainbowSpectrum(float h) {
           vec3 p = abs(fract(h + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0);
           return clamp(p - 1.0, 0.0, 1.0);
+        }
+
+        float fbm4(vec2 p) {
+          float s = 0.0, a = 0.5; mat2 m = mat2(0.8, 0.6, -0.6, 0.8) * 2.02;
+          for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = m * p; a *= 0.5; }
+          return s * 1.05;
+        }
+        float fbm5(vec2 p) {
+          float s = 0.0, a = 0.5; mat2 m = mat2(0.8, 0.6, -0.6, 0.8) * 2.02;
+          for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = m * p; a *= 0.5; }
+          return s * 1.016;
+        }
+        // value noise whose x lattice wraps, so banks circle the horizon without an azimuth seam
+        float pnoise(vec2 p, float period) {
+          vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          float x0 = mod(i.x, period), x1 = mod(i.x + 1.0, period);
+          float a = hash21(vec2(x0, i.y)), b = hash21(vec2(x1, i.y));
+          float c = hash21(vec2(x0, i.y + 1.0)), e = hash21(vec2(x1, i.y + 1.0));
+          return mix(mix(a, b, f.x), mix(c, e, f.x), f.y);
+        }
+        float pfbm(vec2 p, float period, int octaves) {
+          float s = 0.0, a = 0.5, w = 0.0;
+          for (int i = 0; i < 4; i++) {
+            if (i >= octaves) break;
+            s += a * pnoise(p, period); w += a;
+            p = p * 2.0 + vec2(0.0, 17.31); period *= 2.0; a *= 0.5;
+          }
+          return s / w;
+        }
+        // x: coverage, y: height within the tower (0 base .. 1 crown), z: lobe bulge (0 rim .. 1 core)
+        vec4 cumulusBank(float u01, float el, float period, float baseEl, float maxH, float seed, float drift, float t) {
+          float u = u01 * period + drift;
+          float unitEl = 6.2831853 / period;
+          float tower = smoothstep(cover - 0.02, cover + 0.2, pfbm(vec2(u, seed), period, 3));
+          float hTop = maxH * tower * (0.55 + 0.45 * tower);
+          float above = el - baseEl - (pnoise(vec2(u * 2.0, seed + 5.0), period * 2.0) - 0.5) * 0.012;
+          vec2 q = vec2(u, above / unitEl + seed) * 3.0 - vec2(0.0, t * 0.006);
+          float puff = pfbm(q, period * 3.0, 4);
+          float amp = maxH * 0.3 * smoothstep(0.0, 0.3, tower);
+          float sdTop = hTop - above + (puff - 0.5) * 2.0 * amp;
+          float aa = max(fwidth(el) * 1.5, 0.0025);
+          float alpha = smoothstep(0.0, aa + 0.004, sdTop) * smoothstep(-0.006, 0.018, above) * smoothstep(0.004, 0.03, hTop);
+          float hFrac = clamp(above / max(hTop + amp * 0.5, 1e-3), 0.0, 1.0);
+          float bulge = smoothstep(0.0, 0.05 + maxH * 0.18, min(sdTop, above * 0.7 + 0.01)) * (0.48 + 0.52 * puff);
+          return vec4(alpha * 0.98, hFrac, bulge, tower);
         }
         void main() {
           vec3 d = normalize(vDir);
@@ -82,46 +130,117 @@ export class Sky {
           float twilight = exp(-abs(sunDir.y) * 13.0) * (1.0 - storm);
           sky += vec3(0.95, 0.22, 0.055) * twilight * pow(sunSide, 5.0) * exp(-abs(y) * 7.0) * 0.75;
           if (y < 0.0) sky = mix(horizon * 0.9, mix(vec3(0.008, 0.015, 0.026), vec3(0.45, 0.55, 0.6), daylight), clamp(-y * 4.0, 0.0, 1.0));
-          // cumulus: big towering cells (low-frequency mass, warped), cauliflower detail on top, lit from the sun side
+          // Cumulus. Low banks are modelled as columns standing on the horizon: each has a flat, ragged base, a
+          // dome-shaped crown and cauliflower puffs, so the chase camera sees real silhouettes instead of a textured
+          // ceiling. Screen-space derivatives of the puff bulge give per-lobe normals for free, lit by the active
+          // sun or moon. A plane-projected deck fills the zenith and closes over everything as cover drops.
           float yy = max(y, 0.0);
           float hf = smoothstep(0.0, 0.14, yy);
           float cloudOpacity = 0.0;
-          if (hf > 0.001) {
+          if (y > -0.02) {
             vec2 drift = windDir * uTime * (0.0015 + windSpeed * 0.00018);
+            float el = asin(clamp(y, -1.0, 1.0));
+            float u01 = atan(d.z, d.x) * 0.15915494 + 0.5;
+            vec3 right = normalize(vec3(-d.z, 0.0, d.x) + vec3(1e-5, 0.0, 0.0));
+            vec3 upT = normalize(vec3(0.0, 1.0, 0.0) - d * y + vec3(0.0, 1e-5, 0.0));
+            vec3 ddx = dFdx(d), ddy = dFdy(d);
+            vec4 jac = vec4(dot(ddx, right), dot(ddx, upT), dot(ddy, right), dot(ddy, upT));
+            vec3 lightLocal = vec3(dot(lightDir, right), dot(lightDir, upT), -dot(lightDir, d));
+            float lightUp = smoothstep(-0.06, 0.1, lightDir.y);
+            float bankDrift = uTime * (0.0006 + windSpeed * 0.00012);
+            vec3 cLit = mix(vec3(0.085, 0.10, 0.135), vec3(1.22, 1.17, 1.08), daylight);
+            vec3 cShade = mix(vec3(0.018, 0.025, 0.038), vec3(0.47, 0.53, 0.63), daylight);
+            cLit *= mix(vec3(1.0), vec3(1.42, 0.88, 0.52), lowSun * daylight);
+            cShade *= mix(vec3(1.0), vec3(0.98, 0.76, 0.76), lowSun * daylight);
+            cLit = mix(cLit, vec3(0.19, 0.21, 0.22), storm * 0.6);
+            cShade = mix(cShade, vec3(0.04, 0.05, 0.056), storm * 0.75);
+            float sunGlow = pow(max(mu, 0.0), 7.0) * daylight * (1.0 - storm * 0.8);
+            // thin high cirrus sits behind every cumulus layer
+            vec2 p2 = d.xz / (yy + 0.12) * 0.7 + drift * 0.55;
+            float ci = smoothstep(0.6, 0.88, fbm4(p2 * 1.7 + 30.0)) * 0.2 * hf;
+            sky = mix(sky, mix(vec3(0.09, 0.11, 0.16), vec3(0.97, 0.98, 1.0), daylight) * mix(vec3(1.0), vec3(1.3, 0.8, 0.6), lowSun), ci);
+            cloudOpacity = ci * 0.55;
+            // far bank (small, low, hazed) then near bank (big towers). Tier 0 keeps only the near bank.
+            for (int layer = 0; layer < 2; layer++) {
+              if (layer == 0 && weatherDetail < 0.01) continue;
+              float nearL = float(layer);
+              float period = mix(20.0, 9.0, nearL);
+              float baseEl = mix(0.03, 0.078, nearL);
+              float maxH = mix(0.15, 0.42, nearL);
+              float seed = mix(3.7, 11.3, nearL);
+              if (hasCloudBank > 0.5) {
+                // Vary the spacing, scale and orientation of the low banks around the horizon.
+                // Their alpha and interior luminance describe cloud density; the active light
+                // and storm field determine radiance, including in the planar reflection.
+                float cells = mix(12.0, 6.0, nearL);
+                float track = u01 * cells + seed + bankDrift * cells * 0.08;
+                float id = mod(floor(track), cells);
+                vec2 variation = vec2(hash21(vec2(id, seed)), hash21(vec2(seed, id + 0.7)));
+                float localX = (fract(track) - 0.5) * mix(1.05, 1.64, variation.x) + 0.5;
+                if (variation.y < 0.5) localX = 1.0 - localX;
+                float height = maxH * mix(0.50, 1.06, variation.y);
+                float localY = 0.20 + (el - baseEl * mix(0.45, 1.4, variation.x)) * 0.58 / height;
+                vec2 cloudUv = vec2(localX, localY);
+                float density = smoothstep(cover - 0.23, cover + 0.14, variation.y * 0.68 + 0.2);
+                if (density > 0.001 && all(greaterThan(cloudUv, vec2(0.0))) && all(lessThan(cloudUv, vec2(1.0)))) {
+                  vec4 bank = texture2D(tCloudBank, cloudUv);
+                  float alpha = bank.a * density * smoothstep(0.0, 0.045, min(localX, 1.0 - localX));
+                  float interior = smoothstep(0.43, 0.96, bank.r * 0.55 + bank.g * 0.45);
+                  vec3 lit = mix(cShade * (0.69 + 0.18 * nearL), cLit, interior * (0.64 + 0.36 * lightUp));
+                  lit += solarTint * sunGlow * smoothstep(0.65, 0.99, interior) * 0.24;
+                  float haze = mix(0.55, 0.12, nearL) * (1.0 - smoothstep(0.05, 0.32, el));
+                  sky = mix(sky, mix(lit, horizon, haze), alpha);
+                  cloudOpacity = max(cloudOpacity, alpha);
+                }
+                continue;
+              }
+              vec4 cb = cumulusBank(u01, el, period, baseEl, maxH, seed, bankDrift * period / 9.0, uTime);
+              float alpha = cb.x;
+              float bulge = cb.z;
+              float bx = dFdx(bulge), by = dFdy(bulge);
+              float jd = jac.x * jac.w - jac.y * jac.z;
+              vec2 g = abs(jd) > 1e-12 ? vec2(bx * jac.w - by * jac.y, jac.x * by - jac.z * bx) / jd : vec2(0.0);
+              vec3 nrm = normalize(vec3(-g * mix(0.035, 0.06, nearL), 1.0));
+              float diffuse = clamp(dot(nrm, lightLocal) * 0.6 + 0.42, 0.0, 1.0);
+              float crown = smoothstep(0.08, 0.85, cb.y);
+              float litAmt = clamp(diffuse * (0.42 + 0.72 * crown), 0.0, 1.0) * lightUp;
+              vec3 col = mix(cShade, cLit, litAmt);
+              col = mix(cShade * 0.8, col, smoothstep(0.0, 0.2, cb.y));
+              // backlit lobes glow through their thin rims, front-lit ones keep a soft sun-side lift
+              col += mix(vec3(1.0, 0.93, 0.8), vec3(1.0, 0.62, 0.3), lowSun) * sunGlow * (1.0 - bulge) * 0.75;
+              col += cLit * sunGlow * 0.12;
+              float haze = mix(0.42, 0.16, nearL) * (1.0 - smoothstep(0.0, 0.2, el));
+              col = mix(col, horizon * 1.02, haze);
+              sky = mix(sky, col, alpha);
+              cloudOpacity = max(cloudOpacity, alpha);
+            }
+            // zenith deck: the same domain-warped field as before, with a much tighter edge and a light-ward tap
             vec2 p = d.xz / (yy + 0.09) + drift;
-            vec2 warp = vec2(fbm6(p * 0.22 + 7.0), fbm6(p * 0.22 + 19.0)) - 0.5;
-            float big = fbm6(p * 0.27 + warp * 1.6);            // tower mass
-            float det = fbm6(p * 0.95 + warp * 0.8 + 3.0);      // cauliflower edge
+            vec2 warp = vec2(fbm4(p * 0.22 + 7.0), fbm4(p * 0.22 + 19.0)) - 0.5;
+            float big = fbm5(p * 0.27 + warp * 1.6);
+            float det = fbm4(p * 0.95 + warp * 0.8 + 3.0);
             float n = big * 0.68 + det * 0.32;
-            float dens = smoothstep(cover - 0.035, cover + 0.105, n);
-            float thick = smoothstep(cover - 0.015, cover + 0.26, n);
-            cloudOpacity = max(cloudOpacity, dens * hf * 0.985);
-            // self-shadowing: sample toward the active sun or moon and compare
+            float overcast = 1.0 - smoothstep(0.3, 0.46, cover);
+            float deckMask = max(smoothstep(0.17, 0.46, yy), overcast) * hf;
+            float dens = smoothstep(cover - 0.01, cover + 0.07, n) * deckMask;
+            float thick = smoothstep(cover + 0.02, cover + 0.24, n);
             vec2 toLight = normalize(lightDir.xz + 1e-4) * 0.22;
-            float nS = fbm6((p + toLight) * 0.27 + warp * 1.6) * 0.68 + fbm6((p + toLight) * 0.95 + warp * 0.8 + 3.0) * 0.32;
+            float nS = fbm5((p + toLight) * 0.27 + warp * 1.6) * 0.68 + det * 0.32;
             float lit = clamp((n - nS) * 7.0 + 0.5, 0.0, 1.0);
-            // towers: the thicker the cell, the darker its flat base and the brighter its lit crown
-            vec3 shade = mix(vec3(0.015, 0.021, 0.032), vec3(0.40, 0.45, 0.56), daylight);
-            vec3 base = mix(vec3(0.025, 0.034, 0.050), vec3(0.55, 0.58, 0.66), daylight);
-            vec3 bright = mix(vec3(0.08, 0.10, 0.14), vec3(1.12, 1.09, 1.03), daylight);
-            bright *= mix(vec3(1.0), vec3(1.43, 0.93, 0.52), lowSun * daylight);
-            shade *= mix(vec3(1.0), vec3(1.02, 0.77, 0.7), lowSun * daylight);
-            shade = mix(shade, vec3(0.035, 0.045, 0.052), storm * 0.78);
-            base = mix(base, vec3(0.075, 0.085, 0.092), storm * 0.72);
-            bright = mix(bright, vec3(0.20, 0.22, 0.23), storm * 0.58);
-            vec3 cloud = mix(mix(base, shade, thick), bright, lit * (0.55 + 0.45 * thick));
-            cloud = mix(cloud, bright * 1.05, pow(lit, 3.0) * thick * 0.5);
-            // silver lining toward the sun, warm scatter through thin edges
-            float edge = dens * (1.0 - thick);
-            cloud += vec3(1.0, 0.92, 0.8) * pow(max(mu, 0.0), 10.0) * (0.35 * edge + 0.12) * daylight;
-            // lower cloud bases catch the haze near the horizon
-            cloud = mix(cloud, horizon * 1.05, (1.0 - hf) * 0.6);
-            sky = mix(sky, cloud, dens * hf * 0.985);
+            if (dens > 0.002) {
+              vec3 deck = mix(cShade, cLit, clamp(lit * (1.0 - thick * 0.55) * (0.55 + 0.45 * lightUp), 0.0, 1.0));
+              deck = mix(deck, cShade * 0.82, thick * 0.45);
+              deck += mix(vec3(1.0, 0.93, 0.8), vec3(1.0, 0.62, 0.3), lowSun) * sunGlow * (1.0 - thick) * 0.55;
+              deck = mix(deck, horizon * 1.05, (1.0 - hf) * 0.6);
+              sky = mix(sky, deck, dens * 0.985);
+              cloudOpacity = max(cloudOpacity, dens * 0.985);
+            }
             // A severe cell hangs a ragged shelf below the main deck. Reusing the cloud field keeps
             // this free of another noise octave stack and removes the clean horizontal storm ceiling.
+            float shelfDens = smoothstep(cover - 0.035, cover + 0.105, n) * hf;
             float shelfBand = smoothstep(0.015, 0.12, yy) * (1.0 - smoothstep(0.24, 0.48, yy));
             vec3 scud = mix(vec3(0.018, 0.027, 0.032), vec3(0.12, 0.15, 0.16), lit * 0.45 + flashField * 0.8);
-            sky = mix(sky, scud, dens * shelfBand * storm * 0.74);
+            sky = mix(sky, scud, shelfDens * shelfBand * storm * 0.74);
             // Patchy precipitation shafts make an approaching squall readable before drops reach the boat. They
             // reuse this cell's existing mass/detail fields, add no textures or objects, and disappear on fallback.
             if (weatherDetail > 0.001 && rain > 0.001) {
@@ -134,11 +253,6 @@ export class Sky {
               rainColour += vec3(0.34, 0.43, 0.53) * flashField * 0.65;
               sky = mix(sky, rainColour, clamp(rainVeil * (0.30 + storm * 0.34), 0.0, 0.58));
             }
-            // thin high cirrus
-            vec2 p2 = d.xz / (yy + 0.12) * 0.7 + drift * 0.55;
-            float ci = smoothstep(0.62, 0.9, fbm6(p2 * 1.7 + 30.0)) * 0.18;
-            sky = mix(sky, mix(vec3(0.09, 0.11, 0.16), vec3(0.95, 0.97, 1.0), daylight), ci * hf * (1.0 - dens));
-            cloudOpacity = max(cloudOpacity, ci * hf * 0.55);
           }
           // A real bow is a cone around the antisolar point: red lies outside the primary at about 42 degrees,
           // while the faint secondary sits near 51 degrees with its colour order reversed. A broken rain-curtain
@@ -203,9 +317,14 @@ export class Sky {
     this.uniforms.weatherDetail.value = Math.max(0, Math.min(1, Number(profile.skyWeatherDetail) || 0));
     return this.uniforms.weatherDetail.value;
   }
+  setCloudBank(image) {
+    this.uniforms.tCloudBank.value?.dispose();
+    this.uniforms.tCloudBank.value = image ? new THREE.CanvasTexture(image) : null;
+    this.uniforms.hasCloudBank.value = image ? 1 : 0;
+  }
   resourceStats() {
     return {
-      objects: 1, geometries: 1, materials: 1, textures: 0,
+      objects: 1, geometries: 1, materials: 1, textures: this.uniforms.hasCloudBank.value,
       rain: this.uniforms.rain.value, rainbow: this.uniforms.rainbow.value, weatherDetail: this.uniforms.weatherDetail.value,
     };
   }

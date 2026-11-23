@@ -9,6 +9,7 @@ import { person, cooler, bucket, fishingLine } from './folk.js';
 import { spawn } from './models.js';
 import { trimOldest } from './cache.js';
 import { WakeStampPool } from './wakestamps.js';
+import { buildCampWork, poseCampWorker, updateCampWork } from './campwork.js';
 
 // The things scattered through the endless bayou: fish camps on the channel banks (one per ~1.6 km cell, seeded, so
 // they are the same for everyone every time) and lost crab-trap floats drifting in the back pools. Everything is
@@ -129,7 +130,10 @@ export class World {
     if (rr() < 0.6) { const p = person(rr, { pose: 'sitEdge', rod: true }); p.position.set(0.72, 0.81, -12.6); p.rotation.y = Math.PI / 2; dock.add(p); g.userData.people.push(p); const bk = bucket(); bk.position.set(-0.4, 0.81, -12.0); dock.add(bk); }
     if (rr() < 0.5) { const p = person(rr, { pose: 'crouch' }); const a = c.ang + Math.PI + (rr() - 0.5) * 1.2; const px = c.x + Math.cos(a) * 4.5, pz = c.z + Math.sin(a) * 4.5; p.position.set(px, T.heightAt(px, pz), pz); p.rotation.y = a + Math.PI / 2; g.add(p); g.userData.people.push(p); const cl = cooler(rr); cl.position.set(px + 0.8, T.heightAt(px + 0.8, pz), pz); g.add(cl); }
     for (const p of g.userData.people) if (p.userData.rod) { const ln = fishingLine(); ln.visible = false; g.add(ln); p.userData.line = ln; p.userData.lineTarget = new THREE.Vector3(); p.userData.castCd = 3 + rr() * 12; }
+    const work = g.userData.campWork = buildCampWork(dock, c, side, T);
+    g.userData.people.push(work.worker);
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    work.rope.castShadow = false;
     return g;
   }
   // ---- homesteads, ramps, boathouses, blinds ----
@@ -242,7 +246,12 @@ export class World {
     this.stampPool.reset();
     const P = this.phys; const fx = this.fx || {};
     const ctx = this.context; ctx.bx = bx; ctx.bz = bz; ctx.speed = P ? P.speed : 0; ctx.dt = dt; ctx.plume = fx.plume; ctx.spray = fx.spray; ctx.audio = fx.audio; ctx.fish = fx.fish; ctx.playerWakeAt = fx.playerWakeAt; ctx.ob = 0; ctx.obPitch = 1; ctx.obX = 0; ctx.obZ = 0; ctx.truck = 0; ctx.onShot = this.onShot; ctx.humanActivity = this.humanActivity ?? 1;
-    for (const g of this.liveCamps.values()) animateSite(g, t, this.waveFn, this.wind, ctx);
+    for (const g of this.liveCamps.values()) {
+      const work = g.userData.campWork;
+      updateCampWork(work, t, this.waveFn, this.wind, ctx);
+      animateSite(g, t, this.waveFn, this.wind, ctx);
+      poseCampWorker(work);
+    }
     for (const l of this.liveSites.values()) animateSite(l.g, t, this.waveFn, this.wind, ctx);
     this.obLevel = ctx.ob; this.obPitch = ctx.obPitch; this.obX = ctx.obX; this.obZ = ctx.obZ; this.truckLevel = ctx.truck;
   }

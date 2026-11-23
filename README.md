@@ -6,7 +6,7 @@ An airboat game set in the south Florida backcountry. Runs in a browser, built o
 
 [Play Emerald Bayou](https://vheissu.github.io/emerald-bayou/)
 
-Everything you see is generated at runtime except a handful of GLB props. The terrain, the rivers, the sawgrass prairie, the cypress, the fish camps and the people standing on their docks are all seeded from world coordinates, so the map is the same every time you load it and none of it is stored on disk.
+The rivers, tree stands, fish camps and dock crews are seeded from world coordinates. The game streams that layout as you drive. The foliage, bark, bank litter and cloud banks use small image textures, with procedural surfaces available on slow connections.
 
 <table>
 <tr>
@@ -15,7 +15,7 @@ Everything you see is generated at runtime except a handful of GLB props. The te
 </tr>
 <tr>
 <td><img src="docs/screenshots/05-night.jpg" alt="Running the channel after dark with the spotlight on"></td>
-<td><img src="docs/screenshots/07-camp.jpg" alt="The stilt shack and dock at Mullet Bend during a squall"></td>
+<td><img src="docs/screenshots/07-camp.jpg" alt="A dock worker tending the crab-pot hoist at Mullet Bend"></td>
 </tr>
 </table>
 
@@ -96,6 +96,10 @@ The sixteen wading egrets stalk the shallows and make quick bill probes. When di
 
 Surface patrols cannot see through islands. During a chase they check the waterline five times a second; an emergent bank or mangrove point breaks their view, sends them to the last reported position and changes the wanted display to FWC searching. Another patrol boat with a clear angle, or Air 2 overhead, can keep the hull identified. The check keeps one small state record and uses bounded terrain samples, with no new scene or GPU resources.
 
+An occupied boat or dock crew can radio in a collision, property strike or dangerous wake. FWC heads for the reported position and searches for your hull. Idle when the patrol orders a stop. A minor report can end in a warning, and a serious one can cost you cash.
+
+<img src="docs/screenshots/08-patrol.jpg" alt="Warden Soto orders the airboat to idle after a collision report from Marsh Ice" width="100%">
+
 At four wanted stars, Shallow Water 4 reads the player's current course, checks a predicted intercept for depth and obstructions, then runs ahead and turns broadside. The point stays fixed, so an early turn beats the roadblock. Hold course and its hull becomes a real collision obstacle while FWC 27 and Marine 12 keep pressing and ramming. The tactic uses the third pooled patrol boat and adds no scene resources.
 
 At five wanted stars, a sustained pursuit can bring FWC Air 2 if the wind and storm conditions are flyable. It works from positions called by surface units and its own finite view. Lose both under canopy or in fog and the helicopter circles the last fix while its searchlight sweeps; the chase can still be escaped. The response reuses the Coast Guard helicopter rig, searchlight and rotor audio, so it adds no second aircraft pool. This is based on FWC's description of its [Aviation Unit](https://myfwc.com/law-enforcement/special-programs/) patrolling large areas of land and water as an "Eye in the Sky," and its account of coordinating [air, land and sea assets](https://myfwc.com/about/inside-fwc/le/what-we-do/).
@@ -111,6 +115,8 @@ The water is the part that took longest. Real reflection and refraction passes, 
 At idle, `G` drops the bow anchor. Water depth sets the amount of rode, and the hull drifts within that scope before the line comes tight. Firm mud holds best; soft muck, shell and sawgrass give sooner. Current, storm load or too much throttle can make the anchor drag while the bow swings into the load. The rode is one fixed 12-point line, reused for every drop.
 
 A crossing wake lifts the side it reaches first. The boat samples immersion at the bow, stern, centre and both chines. Cargo makes it sit deeper at idle, and it climbs onto plane as it picks up speed. Drive through a reed bed and the stems part at the bow, bend in the prop wash, then stand back up.
+
+At Mullet Bend, a dockhand works a wire crab pot from a hand-cranked hoist. Other camps lift bait baskets beside a live well. Come in fast and the worker pulls the gear clear of your wash. When a storm sends the crew inside, the load stays secured above the water.
 
 Spray leaves the hull along the local water slope and settles at the current tide height. Fish jumps, gator splashes, working-boat wakes and ramp launches rise with surge too. Gusts carry droplets, mist and engine smoke downwind. These effects reuse the existing particle buffers, while the hull shares the five wave samples already used for buoyancy and attitude. Pausing stops the player and chase-skiff spray emitters.
 

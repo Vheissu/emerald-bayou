@@ -80,6 +80,7 @@ export class Pipeline {
         fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, fogMax: { value: 0.6 }, bloomAmt: { value: 0.12 }, bloomQuality: { value: this.bloomEnabled ? 1 : 0 },
         mistAmount: { value: 0 }, mistQuality: { value: quality.surfaceMist ?? 0 }, mistLevel: { value: 0 }, mistHeight: { value: 2.8 }, mistTime: { value: 0 }, mistWind: { value: new THREE.Vector2() },
         heatAmount: { value: 0 }, heatQuality: { value: quality.heatHaze ?? 0 },
+        contactOcclusion: { value: quality.contactOcclusion ?? 0 },
         tSunShadow: shadowUniforms.tShadow ?? { value: null }, sunShadowMatrix: shadowUniforms.shadowMatrix ?? { value: new THREE.Matrix4() },
         sunShadowOn: shadowUniforms.shadowOn ?? { value: 0 }, shaftAmount: { value: 0 },
         cloudShadowAmount: { value: 0 }, cloudShadowQuality: { value: quality.cloudShadows ?? 0 }, cloudShadowOffset: { value: new THREE.Vector2() },
@@ -91,12 +92,33 @@ export class Pipeline {
         uniform sampler2D tColor, tDepth, tBloom, tNoise; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt, bloomQuality; uniform vec3 fogColor, sunDir;
         uniform float mistAmount, mistQuality, mistLevel, mistHeight, mistTime; uniform vec2 mistWind;
         uniform float heatAmount, heatQuality;
+        uniform float contactOcclusion;
         uniform highp sampler2DShadow tSunShadow; uniform mat4 sunShadowMatrix; uniform float sunShadowOn, shaftAmount;
         uniform float cloudShadowAmount, cloudShadowQuality; uniform vec2 cloudShadowOffset;
         uniform float lensWetness, lensQuality, lensTime, lensWind, lensAspect;
         uniform mat4 invProj, camMat; varying vec2 vUv;
         vec3 aces(vec3 x) { const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14; return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0); }
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
+        vec3 viewPoint(vec2 uv, float eyeDepth) {
+          return vec3((uv * 2.0 - 1.0) * vec2(invProj[0][0], invProj[1][1]) * eyeDepth, -eyeDepth);
+        }
+        // A short view-space hemisphere reaches the deck below the engine, dock piles and root flares.
+        // Work in metres: a distant bank behind the fan grille must never darken its silhouette.
+        float occludedSky(vec2 uv, vec3 origin, vec3 normal) {
+          const vec2 disk[8] = vec2[8](vec2(0.20,0.05), vec2(-0.23,0.26), vec2(-0.13,-0.37), vec2(0.46,0.17),
+            vec2(-0.56,-0.09), vec2(0.30,-0.63), vec2(0.02,0.84), vec2(-0.67,0.51));
+          float radius = 0.85, sum = 0.0;
+          vec2 extent = 0.5 * radius / (-origin.z * vec2(invProj[0][0], invProj[1][1]));
+          for (int i = 0; i < 8; i++) {
+            vec2 tap = uv + disk[i] * extent;
+            if (any(lessThan(tap, vec2(0.0))) || any(greaterThan(tap, vec2(1.0)))) continue;
+            vec3 delta = viewPoint(tap, linZ(texture2D(tDepth, tap).r)) - origin;
+            float reach = length(delta);
+            float elevation = (dot(delta, normal) - 0.022) / max(reach, 0.022);
+            sum += max(0.0, elevation) * (1.0 - smoothstep(0.18, radius, reach));
+          }
+          return sum * 0.125;
+        }
         float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
         vec4 lensDropLayer(vec2 uv, float scale, float seed) {
           vec2 p = vec2(uv.x * lensAspect, uv.y) * scale;
@@ -158,6 +180,17 @@ export class Pipeline {
             lensSampleUv = clamp(lensSampleUv + refraction, vec2(0.002), vec2(0.998));
           }
           vec3 c = texture2D(tColor, lensSampleUv).rgb;
+          if (contactOcclusion > 0.0) {
+            vec3 eye = viewPoint(vUv, z);
+            vec3 dx = dFdx(eye), dy = dFdy(eye);
+            float footprint = max(length(dx), length(dy));
+            if (z < 65.0 && footprint < 0.5) {
+              vec3 n = normalize(cross(dx, dy));
+              float shade = occludedSky(vUv, eye, n) * (1.0 - smoothstep(0.16, 0.5, footprint));
+              float protectLight = 1.0 - smoothstep(0.8, 2.0, dot(c, vec3(0.213, 0.715, 0.072)));
+              c *= 1.0 - min(0.28, shade * contactOcclusion * protectLight) * (1.0 - smoothstep(40.0, 65.0, z));
+            }
+          }
           // view ray for aerial perspective tint
           float sunAmt = pow(max(dot(vdir, sunDir), 0.0), 8.0);
           vec3 fc = mix(fogColor, vec3(0.95, 0.9, 0.8), sunAmt * 0.5);
@@ -297,6 +330,7 @@ export class Pipeline {
       this.grade.material.uniforms.bloomQuality.value = this.bloomEnabled ? 1 : 0;
       this.grade.material.uniforms.mistQuality.value = quality.surfaceMist ?? 0;
       this.grade.material.uniforms.heatQuality.value = quality.heatHaze ?? 0;
+      this.grade.material.uniforms.contactOcclusion.value = quality.contactOcclusion ?? 0;
       this.grade.material.uniforms.cloudShadowQuality.value = quality.cloudShadows ?? 0;
       this.grade.material.uniforms.lensQuality.value = quality.lensWater ?? 0;
     }

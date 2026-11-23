@@ -128,12 +128,14 @@ export class Water {
         ${VESSEL_WAKE_GLSL}
         varying vec3 vWorld; varying vec4 vRefl;
         varying vec2 vWaveSlope;
+        varying vec2 vFocal;
         void main() {
           vec4 wp = modelMatrix * vec4(position, 1.0);
           vec3 wave = waterWaveSample(wp.xz, uTime, seaState, weatherWind, rainAmount, aWaveSpacing) * surfaceDisplacement;
           wave += vesselWakeSample(wp.xz, uTime, aWaveSpacing) * surfaceDisplacement;
           wp.y += wave.x;
           vWaveSlope = wave.yz;
+          vFocal = vec2(projectionMatrix[0][0], projectionMatrix[1][1]);
           vWorld = wp.xyz;
           vRefl = reflMatrix * wp;
           gl_Position = projectionMatrix * viewMatrix * wp;
@@ -153,6 +155,7 @@ export class Water {
         uniform sampler2D tMurk; uniform vec2 murkOrigin; uniform float murkSize;
         varying vec3 vWorld; varying vec4 vRefl;
         varying vec2 vWaveSlope;
+        varying vec2 vFocal;
         float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * near * far / (far + near - z * (far - near)); }
         float ign(vec2 p) { return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y)); }
         vec2 hash22(vec2 p) {
@@ -257,9 +260,17 @@ export class Water {
           float fragZ = linZ(gl_FragCoord.z);
           float sceneZ = linZ(texture2D(tDepth, suv).r);
           float thick = max(sceneZ - fragZ, 0.0);
-          // refraction
-          vec2 distort = N.xz * 0.9 * clamp(thick * 0.6, 0.0, 1.0) / max(dist * 0.06, 1.0);
-          vec2 ruv = suv + distort;
+          // Bend the eye ray at the water surface and project its estimated intersection with the bed.
+          // In the shallows this moves the visible bottom toward its apparent depth as the camera turns.
+          vec3 incident = mat3(viewMatrix) * (-V);
+          vec3 transmitted = refract(-V, N, 0.7519);
+          float verticalDepth = thick * max(V.y, 0.0) / max(-incident.z, 0.1);
+          float travel = min(verticalDepth, 3.5) / max(-transmitted.y, 0.18);
+          vec3 bedInView = incident * dist + mat3(viewMatrix) * transmitted * travel;
+          vec2 bedUv = 0.5 + 0.5 * vFocal * bedInView.xy / max(-bedInView.z, near);
+          vec2 distort = bedUv - suv;
+          distort *= 0.045 / max(0.045, length(distort));
+          vec2 ruv = clamp(suv + distort, vec2(0.001), vec2(0.999));
           float sceneZ2 = linZ(texture2D(tDepth, ruv).r);
           if (sceneZ2 < fragZ) { ruv = suv; sceneZ2 = sceneZ; }
           vec3 refr = texture2D(tRefr, ruv).rgb;

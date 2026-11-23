@@ -5,8 +5,36 @@ import { sharedResource } from './cache.js';
 function canvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 function hsl(h, s, l, a = 1) { return `hsla(${h.toFixed(1)},${s.toFixed(1)}%,${l.toFixed(1)}%,${a})`; }
 
-const SHARED_SURFACE_SPECS = Object.freeze({ bark: Object.freeze([256, 512]), plank: Object.freeze([512, 512]) });
 const sharedSurfaceTextures = new Map(), sharedSurfaceHits = new Map();
+
+const environmentArt = {
+  cypress: new URL('../assets/environment/cypress-spray.webp', import.meta.url),
+  oak: new URL('../assets/environment/live-oak-bough.webp', import.meta.url),
+  bark: new URL('../assets/environment/cypress-bark.webp', import.meta.url),
+  litter: new URL('../assets/environment/bank-litter.webp', import.meta.url),
+  moss: new URL('../assets/environment/spanish-moss.webp', import.meta.url),
+  reeds: new URL('../assets/environment/cattail-stand.webp', import.meta.url),
+  cloud: new URL('../assets/environment/cumulus-bank.webp', import.meta.url),
+};
+
+// Decode alongside the terrain workers. Each failed image falls back independently to its
+// procedural surface. Canvas copies handle WebGL's UV origin and survive context restoration.
+export async function loadEnvironmentArt() {
+  const images = {};
+  await Promise.all(Object.entries(environmentArt).map(async ([key, url]) => {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      if (!response.ok) return;
+      const bitmap = await createImageBitmap(await response.blob());
+      try {
+        const surface = canvas(bitmap.width, bitmap.height);
+        surface.getContext('2d').drawImage(bitmap, 0, 0);
+        images[key] = surface;
+      } finally { bitmap.close(); }
+    } catch { /* The generated surfaces also work offline and on constrained browsers. */ }
+  }));
+  return images;
+}
 
 function sharedSurfaceTexture(key, create) {
   let texture = sharedSurfaceTextures.get(key);
@@ -25,9 +53,8 @@ export function scaleTextureUvs(geometry, repeatU = 1, repeatV = 1) {
 
 export function sharedSurfaceTextureStats() {
   let basePixels = 0, avoidedPixels = 0, hits = 0;
-  for (const key of sharedSurfaceTextures.keys()) {
-    const spec = SHARED_SURFACE_SPECS[key]; if (!spec) continue;
-    const pixels = spec[0] * spec[1], count = sharedSurfaceHits.get(key) || 0;
+  for (const [key, texture] of sharedSurfaceTextures) {
+    const pixels = texture.image.width * texture.image.height, count = sharedSurfaceHits.get(key) || 0;
     basePixels += pixels; avoidedPixels += pixels * count; hits += count;
   }
   const bytes = pixels => pixels * 4, mipBytes = pixels => Math.round(bytes(pixels) * 4 / 3);
@@ -89,7 +116,7 @@ function coverageMips(base, alphaTest) {
   return levels;
 }
 
-function foliageTex(c, alphaTest = 0.5) {
+export function foliageTex(c, alphaTest = 0.5) {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.mipmaps = coverageMips(c, alphaTest);
@@ -315,7 +342,8 @@ export function grassGround() {
   return srgbTex(c, true);
 }
 
-export function mudGround() {
+export function mudGround(image) {
+  if (image) return srgbTex(image, true);
   const c = colorNoiseTexture(512, 33, (a, b, d) => {
     const silt = a * 0.55 + b * 0.3 + d * 0.15;
     const ridge = Math.max(0, 1 - Math.abs(b - 0.5 + (a - 0.5) * 0.42) * 13);
@@ -386,7 +414,7 @@ function makeBarkTexture() {
   ctx.putImageData(img, 0, 0);
   return srgbTex(c, true);
 }
-export function bark() { return sharedSurfaceTexture('bark', makeBarkTexture); }
+export function bark(image) { return sharedSurfaceTexture('bark', image ? () => srgbTex(image, true) : makeBarkTexture); }
 
 function makePlankTexture() {
   const W = 512, H = 512; const c = canvas(W, H); const ctx = c.getContext('2d'); const r = mulberry32(71);

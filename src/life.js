@@ -432,7 +432,7 @@ export class Traffic {
       record.wakeComplaints = Math.max(0, Math.min(9999, Number(record.wakeComplaints) || 0)); record.wakeReports = Math.max(0, Math.min(9999, Number(record.wakeReports) || 0));
       record.wakeShiftKey = typeof record.wakeShiftKey === 'string' ? record.wakeShiftKey : ''; record.wakeShiftComplaints = Math.max(0, Math.min(MAX_SHIFT_WAKE_COMPLAINTS, Number(record.wakeShiftComplaints) || 0)); record.lastWakeSeverity = Math.max(0, Math.min(2, Number(record.lastWakeSeverity) || 0));
       const shelter = { active: false, arrived: false, kind: '', key: '', name: '', x: 0, z: 0, heading: 0, distance: 0 };
-      const collision = { active: false, stage: '', t: 0, elapsed: 0, hold: 0, farT: 0, signalT: 0, impact: 0, distance: Infinity, prevState: 'transit', prevRetiring: false, prevLeg: 0, prevWorkT: 0, prevWorkRig: false, marker: { x: 0, z: 0, label: '', color: '#f06c38', trafficCollision: profile.id } };
+      const collision = { active: false, stage: '', t: 0, elapsed: 0, hold: 0, farT: 0, signalT: 0, impact: 0, distance: Infinity, prevState: 'transit', prevRetiring: false, prevLeg: 0, prevWorkT: 0, prevWorkRig: false, lastSighting: { x: 0, z: 0, heading: 0 }, marker: { x: 0, z: 0, label: '', color: '#f06c38', trafficCollision: profile.id } };
       const navigation = createNavigationEncounter();
       Object.assign(b, { profile, record, shelter, collision, navigation, navTargetBoat: null, navSignalTarget: '', shelterSlot: i, assisting: false, active: false, retiring: false, state: 'off', spawnT: 3 + i * 2.7, leg: 0, routeBias: 0, workT: 0, greetT: 0, wakeT: 0, x: 1e9, z: 1e9, heading: 0, speed: 0, turn: 0, roll: 0, pitch: 0, waterRoll: 0, waterPitch: 0, weatherSpeedScale: 1, hornT: 0, fogHornT: 6 + i * 16, fogSignalIndex: i, signalYield: 0, signalT: 0, signalSide: -1, signalReplyT: 0, signalReplyLong: false, navEvalT: i * 0.014, navSignalT: 0, navSignalState: 0, yellT: 0, ground: 0, shx: 0, shz: 0, pursuitYield: 0, pursuitNoticeT: 0, pursuitReactionDelay: 0.42 + this.rand() * 0.58, pursuitYieldSide: i & 1 ? 1 : -1, pursuitReacted: false, spoutAvoidance: 0, spoutDistance: Infinity, spoutNoticeT: 0, spoutReactionDelay: 0.65 + this.rand() * 1.1, spoutReacted: false, downburstResponse: 0, downburstDistance: Infinity, downburstNoticeT: 0, downburstReactionDelay: 0.45 + this.rand() * 0.9, downburstReacted: false });
       b.wildlifeAvoidance = 0; b.wildlifeDistance = Infinity; b.wildlifeClosest = Infinity;
@@ -670,6 +670,7 @@ export class Traffic {
     if (!this.collisionWorldFree(b) || this.activeCollision() || b.collision.active) return false;
     const C = b.collision, P = b.profile;
     C.active = true; C.stage = 'disabled'; C.t = 0; C.elapsed = 0; C.hold = 0; C.farT = 0; C.signalT = 0; C.impact = impact; C.distance = Math.hypot(b.x - this.phys.pos.x, b.z - this.phys.pos.y);
+    C.lastSighting.x = this.phys.pos.x; C.lastSighting.z = this.phys.pos.y; C.lastSighting.heading = this.phys.heading;
     C.prevState = b.state; C.prevRetiring = b.retiring; C.prevLeg = b.leg; C.prevWorkT = b.workT; C.prevWorkRig = Boolean(b.workRig?.visible);
     C.marker.x = b.x; C.marker.z = b.z; C.marker.label = `${P.callsign} disabled · hold alongside`;
     b.state = 'collision-disabled'; b.retiring = false; b.speed = Math.min(b.speed, 1.1); b.turn = 0; b.greetT = 18;
@@ -694,7 +695,7 @@ export class Traffic {
     C.stage = 'reported'; C.t = 0; C.hold = 0; C.marker.label = `${P.callsign} disabled · incident reported`;
     if (this.fx.game.wpTarget === C.marker) this.fx.game.wpTarget = null;
     b.record.leftDisabled++; this.fx.game.persist();
-    this.law?.add(0.95, `left ${P.callsign} disabled after collision`, true);
+    this.law?.reportViolation(0.95, 'leaving a disabled boat', P.callsign, C.lastSighting);
     this.reputation?.change(P.faction, -0.55, 'left-disabled-boat', `${P.callsign} told the district the tower boat struck them and left.`, false);
     this.fx.game.toast('Hit-and-run reported', `${P.callsign} put your hull and direction over the radio`, 4.2);
     this.radio?.transmit({ channel: 'CH 16', speaker: `${P.callsign} · ${P.operator}`, text: 'All stations, tower airboat struck us and left. We are disabled in the channel. Logging their direction now.', priority: 3, key: `working-abandoned:${P.id}:${b.record.leftDisabled}`, cooldown: 99999 });
@@ -703,6 +704,9 @@ export class Traffic {
     const C = b.collision, P = b.profile; if (!C.active) return;
     C.t += dt; C.elapsed += dt; C.distance = d; C.signalT -= dt; C.marker.x = b.x; C.marker.z = b.z;
     if (C.stage === 'disabled') {
+      if (d < 18) {
+        C.lastSighting.x = this.phys.pos.x; C.lastSighting.z = this.phys.pos.y; C.lastSighting.heading = this.phys.heading;
+      }
       const holding = d < 24 && this.phys.speed * 2.23694 < 5.5 && !this.phys.airborne && this.phys.wipeT <= 0;
       C.hold = holding ? Math.min(7, C.hold + dt) : Math.max(0, C.hold - dt * 0.55);
       C.farT = C.elapsed > 4 && d > 120 ? C.farT + dt : Math.max(0, C.farT - dt * 1.5);
@@ -791,7 +795,7 @@ export class Traffic {
       if (consequence.horn) this.fx.audio.horn(Math.max(0.1, 0.34 * (1 - distance / 115)), b.x, b.z);
       this.fx.game.toast('Dangerous wake reported', `${P.callsign} logged your hull and direction`, 3.5);
       this.radio?.transmit({ channel: P.channel, speaker: `${P.callsign} · ${P.operator}`, text, priority: 3, key: `working-wake:${P.id}:${record.wakeReports}`, cooldown: 99999 });
-      this.law?.add(consequence.attention, `dangerous wake reported by ${P.callsign}`, false);
+      this.law?.reportViolation(consequence.attention, 'a dangerous wake', P.callsign);
     }
     this.reputation?.change(P.faction, consequence.reputation, 'working-wake', `${P.callsign} remembers the tower airboat's wake through ${b.kind === 'canoe' ? 'their paddle station' : 'their working gear'}.`, false);
     this.fx.game.persist(); return true;

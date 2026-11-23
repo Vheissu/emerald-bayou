@@ -109,6 +109,12 @@ async function init() {
   let terrainReadinessState = { ready: false, timedOut: false, visibleAtStart: false, settled: false, queued: 0, finalizing: 0, inFlight: 0, visible: 0, building: '' };
   const markStartup = key => { startupTiming[key] = performance.now() - startupStartedAt; };
   const startup = startupPlan(renderProfile.id, { constrainedTransfer: constrainedAssetTransfer(navigator.connection) });
+  // The small WebP surfaces replace costly CPU-generated maps. A fresh desktop browser
+  // can report a conservative downlink estimate even on broadband; reserve the stricter
+  // model-pack policy for GLBs while honouring Data Saver and slow connections here.
+  const connection = navigator.connection;
+  const skipArt = connection?.saveData || ['slow-2g', '2g', '3g'].includes(connection?.effectiveType);
+  const artReady = skipArt ? {} : TEX.loadEnvironmentArt();
   let sceneShaderTarget = null;
   configureModelLoading({
     deferOptional: startup.deferOptionalModels,
@@ -132,7 +138,14 @@ async function init() {
   sun.shadow.mapSize.set(renderProfile.shadowMapSize, renderProfile.shadowMapSize);
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 900;
   sun.shadow.camera.left = -120; sun.shadow.camera.right = 120; sun.shadow.camera.top = 120; sun.shadow.camera.bottom = -120;
-  sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.6; sun.shadow.radius = 2;
+  // Bias the receiver by a fraction of one shadow texel. A fixed 60 cm offset detached
+  // feet and roots from their shadows, especially under the low evening sun.
+  const setShadowBias = size => {
+    const texelMetres = (sun.shadow.camera.right - sun.shadow.camera.left) / size;
+    sun.shadow.normalBias = texelMetres * 1.05;
+    sun.shadow.bias = -texelMetres * 0.55 / (sun.shadow.camera.far - sun.shadow.camera.near);
+  };
+  setShadowBias(renderProfile.shadowMapSize); sun.shadow.radius = 2;
   scene.add(sun); scene.add(sun.target);
   const hemi = new THREE.HemisphereLight(0x9fc3e8, 0x3f4a2a, 0.4);
   scene.add(hemi);
@@ -144,12 +157,15 @@ async function init() {
     finalizeBudgetMs: startup.streamBudget.terrainFinalizeBudgetMs,
     workerLimit: startup.streamBudget.terrainWorkerLimit,
   });
-  const groundTex = { grass: TEX.grassGround(), mud: TEX.mudGround(), sand: TEX.sandGround(), noise: TEX.noiseTex() };
-  scene.add(terrain.buildMesh(groundTex));
   const startZ = 70, startX = terrain.riverCenterX(startZ);
   const terrainPrime = terrain.prime(startX, startZ);
   startupTiming.terrainPrimedMs = performance.now() - startupStartedAt;
   loadingProgress('Growing the near shore', 0.24);
+  const grass = TEX.grassGround(), sand = TEX.sandGround(), noise = TEX.noiseTex();
+  const art = await artReady;
+  if (art.cloud) sky.setCloudBank(art.cloud);
+  const groundTex = { grass, sand, noise, mud: TEX.mudGround(art.litter), mudScale: art.litter ? 0.48 : 0.11 };
+  scene.add(terrain.buildMesh(groundTex));
 
   // The capture scene shares the real sky geometry, material and uniforms. It adds no duplicate GPU resources and
   // can therefore follow broad day/night/weather changes without retaining a bank of environment maps.
@@ -183,7 +199,7 @@ async function init() {
   for (const b of terrain.bars) exclusions.push({ x: b.x, z: b.z, r: b.r });
 
   // ---- vegetation ----
-  const veg = new Vegetation(terrain, exclusions, { detail: startup.streamBudget.foliageDetail });
+  const veg = new Vegetation(terrain, exclusions, { detail: startup.streamBudget.foliageDetail, art });
   // Cinematic keeps the full pre-title warm-up. Balanced installs the same clumps after play begins and retrofits
   // already-built near chunks one per frame; the two old-hardware tiers retain the procedural grass without ever
   // downloading or decoding these optional meshes.
@@ -295,7 +311,7 @@ async function init() {
   environment.currentField = currents; life.currents = currents; life.fx.currents = currents; world.currents = currents; world.fx.currents = currents; skiff.currents = currents;
   const reputation = new Reputation({ game, environment, audio }); game.reputation = reputation;
   const regions = new RegionDirector({ game, phys }); game.regions = regions;
-  const law = new Law({ game, phys, environment, audio }); game.law = law;
+  const law = new Law({ game, phys, environment, audio, terrain, world, traffic: life.traffic }); game.law = law;
   life.traffic.reputation = reputation; life.traffic.law = law;
   const encounters = new EncounterDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, plume, spray, law, reputation });
   game.encounters = encounters;
@@ -308,7 +324,7 @@ async function init() {
   life.traffic.hazards = hazards; encounters.hazards = hazards;
   const ecology = new Ecology({ environment, birds, waders, manatees, gators, life, world, regions, water, plume, spray, game, audio, currents, phys, terrain });
   const radio = new RadioDirector({ game, audio, environment, regions, encounters, law, reputation, condition, phys });
-  environment.radio = radio; encounters.radio = radio;
+  environment.radio = radio; encounters.radio = radio; law.radio = radio;
   hazards.radio = radio;
   ecology.radio = radio;
   condition.radio = radio; life.traffic.radio = radio;
@@ -590,6 +606,7 @@ async function init() {
     renderProfile = profile; pipeline.setQuality(profile); water.setQuality(profile); sky.setQuality(profile); condition.setQuality(profile); minimap.setQuality(profile); nocturnal.setQuality(profile); environment.setQuality(profile); environmentReflections.setProfile(profile);
     if (sun.shadow.mapSize.x !== profile.shadowMapSize) {
       sun.shadow.mapSize.set(profile.shadowMapSize, profile.shadowMapSize);
+      setShadowBias(profile.shadowMapSize);
       if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
       water.uniforms.shadowOn.value = 0;
     }

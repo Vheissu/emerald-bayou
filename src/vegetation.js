@@ -235,7 +235,9 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
       if (crownNormals) fs = fs.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
         normal *= faceDirection;`);
       if (trans > 0) fs = fs.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
-        reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(1.0, 0.93, 0.62) * (${trans.toFixed(3)} * vFolBack);`);
+        #if NUM_DIR_LIGHTS > 0
+          reflectedLight.indirectDiffuse += diffuseColor.rgb * directionalLights[0].color * vec3(0.35, 0.32, 0.21) * (${trans.toFixed(3)} * vFolBack);
+        #endif`);
       shader.fragmentShader = fs;
     }
   };
@@ -250,6 +252,16 @@ function makeDepthMat(map, alphaTest, opts) {
 
 function cardGeo() { return new THREE.PlaneGeometry(1, 1); }
 function frondGeo() { const g = new THREE.PlaneGeometry(1, 1); g.translate(0, 0.5, 0); return g; }
+function foldedPalmFrond() {
+  const g = new THREE.PlaneGeometry(1, 1, 4, 3).translate(0, 0.5, 0);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), h = p.getY(i);
+    p.setXYZ(i, x, h - 0.16 * h * h, -0.28 * h * h - Math.abs(x) * 0.3 * h);
+  }
+  g.computeVertexNormals();
+  return g;
+}
 export function crossedFoliageCardGeometry() {
   const front = frondGeo(), side = frondGeo(); side.rotateY(Math.PI / 2);
   const crossed = mergeGeometries([front, side], false); front.dispose(); side.dispose();
@@ -438,14 +450,15 @@ export class Vegetation {
     this.exclusions = exclusions; // [{x,z,r}] (home area only)
     this.detail = normalizeFoliageDetail(options.detail);
     this.marsh = new MarshReaction();
-    const texCyp = timed('cypressTextureMs', () => TEX.cypressFoliage());
-    const texOak = timed('oakTextureMs', () => TEX.oakFoliage());
+    const art = options.art ?? {};
+    const texCyp = timed('cypressTextureMs', () => art.cypress ? TEX.foliageTex(art.cypress) : TEX.cypressFoliage());
+    const texOak = timed('oakTextureMs', () => art.oak ? TEX.foliageTex(art.oak) : TEX.oakFoliage());
     const texPalm = timed('palmTextureMs', () => TEX.palmFrond());
-    const texMoss = timed('mossTextureMs', () => TEX.mossStrands());
+    const texMoss = timed('mossTextureMs', () => art.moss ? TEX.foliageTex(art.moss, 0.35) : TEX.mossStrands());
     const texGrass = timed('grassTextureMs', () => TEX.grassClump(13, false));
-    const texReed = timed('reedTextureMs', () => TEX.grassClump(17, true));
-    const texBark = timed('barkTextureMs', () => TEX.bark());
-    const card = cardGeo(), frond = frondGeo(), crossedFrond = crossedFoliageCardGeometry();
+    const texReed = timed('reedTextureMs', () => art.reeds ? TEX.foliageTex(art.reeds, 0.45) : TEX.grassClump(17, true));
+    const texBark = timed('barkTextureMs', () => TEX.bark(art.bark));
+    const card = cardGeo(), frond = this.detail >= 0.8 ? foldedPalmFrond() : frondGeo(), crossedFrond = crossedFoliageCardGeometry();
     this.cyp = new Kind(card, texCyp, { crownNormals: true, pin: 'crown', amp: 0.34, hasCrown: true, trans: 0.6 });
     this.oak = new Kind(card, texOak, { crownNormals: true, pin: 'crown', amp: 0.22, hasCrown: true, trans: 0.4 });
     this.palm = new Kind(frond, texPalm, { pin: 'bottom', amp: 0.4 });
@@ -482,9 +495,10 @@ export class Vegetation {
       mat.customProgramCacheKey = () => `trunk-${amp}`;
       return mat;
     };
-    this.trunkMat = registerWetMaterial(patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, metalness: 0, color: 0x8a867c }), 0.34));
+    const barkDetail = art.bark && this.detail >= 0.8 ? { bumpMap: texBark, bumpScale: 0.035 } : {};
+    this.trunkMat = registerWetMaterial(patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, ...barkDetail, roughness: 0.95, metalness: 0, color: art.bark ? 0xcac8bc : 0x8a867c }), 0.34));
     this.branchMat = registerWetMaterial(patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, color: 0x8f8375 }), 0.30));
-    this.kneeMat = registerWetMaterial(new THREE.MeshStandardMaterial({ color: 0x5a4d3f, roughness: 1 }));
+    this.kneeMat = registerWetMaterial(new THREE.MeshStandardMaterial({ map: texBark, color: 0xaea293, roughness: 1 }));
     this.trunkGeo = TEX.scaleTextureUvs(trunkGeo(), 2, 6);
     this.branchGeo = TEX.scaleTextureUvs(new THREE.CylinderGeometry(0.085, 0.58, 1, 6, 3), 2, 6);
     this.branchGeo.translate(0, 0.5, 0);
@@ -625,8 +639,21 @@ export class Vegetation {
       p.set(x, y, z); e.set(pitch, yaw, roll); q.setFromEuler(e); s.set(r, h, r);
       m.compose(p, q, s); B.trunks.add(m);
     };
-    const placeBranch = (x, y, z, len, r, yaw, tilt) => {
+    const placeBranch = (tr, x, y, z, len, r, yaw, tilt) => {
       p.set(x, y, z); e.set(tilt, yaw, 0, 'YXZ'); q.setFromEuler(e); s.set(r, len, r); m.compose(p, q, s); B.branches.add(m);
+      // Hang the Spanish moss from the actual tapered limb. Preserve its frame before
+      // composing the cards so gaps in the crown reveal an attached twig at their tops.
+      const sinTilt = Math.sin(tilt), cosTilt = Math.cos(tilt), sinYaw = Math.sin(yaw), cosYaw = Math.cos(yaw);
+      const count = Math.max(1, Math.round((1 + tr() * 2) * this.detail));
+      for (let i = 0; i < count; i++) {
+        const u = 0.28 + 0.62 * (i + tr()) / count;
+        const bend = -0.65 * u * u * r, reach = u * len * sinTilt + bend * cosTilt;
+        p.set(x + reach * sinYaw, y + u * len * cosTilt - bend * sinTilt + r * 0.08, z + reach * cosYaw);
+        e.set(0, yaw + (tr() - 0.5) * 1.5, 0); q.setFromEuler(e);
+        const length = 1.15 + tr() * Math.min(3.7, len * 0.63);
+        s.set((0.28 + tr() * 0.19) * length, length, 1); m.compose(p, q, s);
+        col.setRGB(0.69, 0.71, 0.61); B.moss.add(m, col);
+      }
     };
     const tint = this._tint;
     const varyTint = (tr, base, hueSpread = 0.03, lumSpread = 0.3) => {
@@ -666,17 +693,6 @@ export class Vegetation {
         batch.add(m, col, crown);
       }
     };
-    const mossOn = (tr, x, y, z, r, n, lenMul = 1) => {
-      if (tier > 1) return;
-      const count = foliageInstanceCount(n, this.detail, 2);
-      for (let i = 0; i < count; i++) {
-        const a = tr() * Math.PI * 2, rr = tr() * r;
-        p.set(x + Math.cos(a) * rr, y + (tr() - 0.5) * r * 0.6, z + Math.sin(a) * rr);
-        e.set(0, tr() * Math.PI, 0); q.setFromEuler(e);
-        const len = (1.4 + tr() * 2.4) * lenMul; s.set(0.55 + tr() * 0.64, len, 1);
-        m.compose(p, q, s); col.setHSL(0.22 + tr() * 0.05, 0.12, 0.55 + tr() * 0.2); B.moss.add(m, col);
-      }
-    };
     const palmCrown = (tr, batch, x, y, z, n, len, tiltMin, tiltMax, tnt) => {
       const count = foliageInstanceCount(n, this.detail, 3);
       const coverage = Math.min(1.28, Math.sqrt(n / Math.max(1, count)));
@@ -695,7 +711,7 @@ export class Vegetation {
       const tnt = varyTint(tr, this.cypTint, 0.035, 0.35);
       const conical = opts.conical !== undefined ? opts.conical : tr() < 0.45; // young bald cypress are pyramidal; old ones flat-topped and spreading
       const cy = h + H * (conical ? 0.58 : 0.64), crx = (conical ? 2.0 : 2.8) + H * (conical ? 0.09 : 0.14) + tr() * 1.6, cry = H * (conical ? 0.34 : 0.25);
-      if (tier <= 1) for (let b = 0, count = foliageInstanceCount(5, this.detail, 2); b < count; b++) placeBranch(x, h + H * (0.4 + tr() * 0.35), z, crx * (0.7 + tr() * 0.6), r * 0.5, tr() * Math.PI * 2, 0.9 + tr() * 0.9);
+      if (tier <= 1) for (let b = 0, count = foliageInstanceCount(5, this.detail, 2); b < count; b++) placeBranch(tr, x, h + H * (0.34 + tr() * 0.32), z, crx * (0.7 + tr() * 0.6), r * 0.55, tr() * Math.PI * 2, 0.76 + tr() * 0.75);
       if (conical && tier >= 3) {
         // The distant impostor covers all three tiers of the tapered crown.
         crownCards(tr, B.cyp, x, cy, z, crx * 0.85, cry, 1, 1, tnt);
@@ -707,7 +723,6 @@ export class Vegetation {
         crownCards(tr, B.cyp, x, cy, z, crx, cry, 34 + Math.floor(tr() * 10), 1.7 + H * 0.05, tnt);
         if (tier < 3) crownCards(tr, B.cyp, x, cy - cry * 0.9, z, crx * 0.75, cry * 0.35, 9 + Math.floor(tr() * 5), 1.6 + H * 0.04, tnt);
       }
-      mossOn(tr, x, cy - cry * 0.36, z, crx * 0.78, 8 + Math.floor(tr() * 8));
       if (tier === 0 && h < 0.5 && h > -1.2) for (let k = 0, count = foliageInstanceCount(4 + tr() * 6, this.detail, 2); k < count; k++) {
         const a = tr() * Math.PI * 2, rr = 1.5 + tr() * 4;
         const kx = x + Math.cos(a) * rr, kz = z + Math.sin(a) * rr; const kh = grid(kx, kz);
@@ -720,9 +735,8 @@ export class Vegetation {
       const H = 8 + tr() * 7, r = 0.45 + tr() * 0.35;
       placeTrunk(tr, x, h - 0.3, z, H * 0.55, r, 0.15);
       const cy = h + H * 0.62, crx = 4 + tr() * 3.5, cry = H * 0.28;
-      if (tier <= 1) for (let b = 0, count = foliageInstanceCount(5, this.detail, 2); b < count; b++) placeBranch(x, h + H * (0.35 + tr() * 0.2), z, crx * (0.8 + tr() * 0.5), r * 0.6, tr() * Math.PI * 2, 1.0 + tr() * 0.7);
+      if (tier <= 1) for (let b = 0, count = foliageInstanceCount(5, this.detail, 2); b < count; b++) placeBranch(tr, x, h + H * (0.31 + tr() * 0.2), z, crx * (0.8 + tr() * 0.5), r * 0.68, tr() * Math.PI * 2, 0.85 + tr() * 0.65);
       crownCards(tr, B.oak, x, cy, z, crx, cry, 30 + Math.floor(tr() * 8), 2.3 + tr() * 0.9, varyTint(tr, this.oakTint, 0.03, 0.3));
-      mossOn(tr, x, cy - cry * 0.38, z, crx * 0.78, 9 + Math.floor(tr() * 8), 1.1);
     };
     const palm = (tr, x, z, h) => {
       const H = 5 + tr() * 7;
@@ -845,13 +859,20 @@ export class Vegetation {
     }
     yield;
     // --- understory shrubs along the banks ---
-    for (let t = 0, count = foliageInstanceCount(30, this.detail, 8); t < count; t++) {
+    let shrubX = 0, shrubZ = 0, adjoiningShrubs = 0;
+    for (let t = 0, count = foliageInstanceCount(42, this.detail, 8); t < count; t++) {
       if (t > 0 && (t & 7) === 0) yield;
-      const x = x0 + rand() * CELL, z = z0 + rand() * CELL;
+      const clustered = adjoiningShrubs > 0;
+      const x = clustered ? shrubX + (rand() - 0.5) * 10 : x0 + rand() * CELL;
+      const z = clustered ? shrubZ + (rand() - 0.5) * 10 : z0 + rand() * CELL;
+      if (clustered) adjoiningShrubs--;
+      if (x < x0 || x >= x0 + CELL || z < z0 || z >= z0 + CELL) continue;
       const h = grid(x, z);
-      if (h < 0.1 || h > 3.5 || excl(x, z)) continue;
-      if (rand() > 1.1 - h * 0.25) continue;
-      if (rand() < Math.min(0.97, open * 1.3)) continue;
+      if (h < 0.1 || h > 8.5 || excl(x, z)) continue;
+      if (!clustered) {
+        if (rand() > Math.max(0.40, 1.08 - h * 0.12) || rand() < Math.min(0.97, open * 1.3)) continue;
+        shrubX = x; shrubZ = z; adjoiningShrubs = 1 + Math.floor(rand() * 3);
+      }
       const rr = 1.2 + rand() * 1.8;
       crownCards(rand, B.oak, x, h + rr * 0.7, z, rr, rr * 0.55, 7 + Math.floor(rand() * 5), rr * 1.3, varyTint(rand, this.oakTint, 0.04, 0.4));
       yield;

@@ -327,7 +327,7 @@ export class RadioDirector {
 
     const cargo = this.law.hasContraband(), cargoFresh = cargo && !this.lastCargo;
     const band = this.law.attention > 0.04 ? Math.ceil(this.law.attention) : 0;
-    if (band > this.lastLawBand && band >= 2 && !this.law.pursuit && !cargoFresh) {
+    if (band > this.lastLawBand && band >= 2 && !this.law.pursuit && !cargoFresh && !this.law.responding && !this.law.stats?.dispatchReport) {
       this.transmit({ channel: 'FWC TAC', speaker: 'WARDEN SOTO · FWC 27', text: `All units, log the tower airboat. Last report: ${this.law.lastReason || 'unconfirmed activity in the backcountry'}.`, priority: band >= 4 ? 4 : 3, key: `law:${band}:${this.law.lastReason}`, cooldown: 35 });
     }
     this.lastLawBand = band;

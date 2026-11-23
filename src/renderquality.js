@@ -27,7 +27,7 @@ export const QUALITY_PROFILES = Object.freeze([
     reflectionMipmaps: false, wakeResolution: 384, wakeMaxStamps: 18, minimapTileLimit: 224, surfaceMist: 0.65, heatHaze: 0.58, cloudShadows: 0.58, precipitationRipples: 0.62, lensWater: 0.62, fireflyPoints: 153, spotlightVolume: 0.75, skyWeatherDetail: 0.75, hullDamageDetail: 0.78, bloom: true, finalPass: false,
   }),
   Object.freeze({
-    id: 'cinematic', label: 'Cinematic', maxDrawPixels: MAX_DRAW_PIXELS, maxDevicePixelRatio: MAX_DEVICE_PIXEL_RATIO, sunShafts: true,
+    id: 'cinematic', label: 'Cinematic', maxDrawPixels: MAX_DRAW_PIXELS, maxDevicePixelRatio: MAX_DEVICE_PIXEL_RATIO, sunShafts: true, contactOcclusion: 0.8,
     msaaSamples: 4, shadowMapSize: 4096, environmentMapSize: 128, environmentMapRefreshSeconds: 0, reflectionScale: 0.5, reflectionInterval: 1,
     reflectionMipmaps: true, wakeResolution: 512, wakeMaxStamps: 20, minimapTileLimit: 256, surfaceMist: 1, heatHaze: 1, cloudShadows: 1, precipitationRipples: 1, lensWater: 1, fireflyPoints: 243, spotlightVolume: 1, skyWeatherDetail: 1, hullDamageDetail: 1, bloom: true, finalPass: true,
   }),

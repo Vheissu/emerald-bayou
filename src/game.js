@@ -520,13 +520,13 @@ export class Game {
       if (this.reputation) this.reputation.change('fwc', -Math.min(0.9, 0.38 + into * 0.045), 'patrol-ram', 'FWC logged the tower airboat striking twenty-seven.', false);
       return Boolean(this.encounters?.forcePatrolPursuit?.(b, into));
     }
-    if (this.law && into > 3.5) this.law.violation(0.35 + Math.min(0.7, into * 0.06), `${P?.callsign || 'boat'} collision reported`);
+    if (this.law && into > 3.5) this.law.reportViolation(0.35 + Math.min(0.7, into * 0.06), 'a collision', P?.callsign || 'Passing boat');
     if (P && this.reputation && into > 3.5) this.reputation.change(P.faction, -Math.min(0.45, 0.12 + into * 0.025), 'working-boat-collision', `${P.callsign} logged the collision against the tower airboat.`, false);
     return false;
   }
   anglerSay(a, line, angry = false) {
     this.toast(`“${line}”`, angry ? 'You rocked his boat. Idle past anglers.' : 'The angler in the johnboat', 2.4);
-    if (angry && this.law) this.law.violation(0.12, 'reckless wake complaint');
+    if (angry && this.law) this.law.reportViolation(0.12, 'a reckless wake', 'Local angler');
   }
   considerNoWake(out, x, z, key, label, kind, cx, cz, radius, limit = 8, animal = null, priority = 0) {
     const d = Math.hypot(x - cx, z - cz);
@@ -577,13 +577,14 @@ export class Game {
       this.audio.warn(); this.toast('Manatee diving', 'Throttle back and hold the last place you saw the boil.', 2.8); return;
     }
     this.noWakeCooldown = 45;
+    const witness = this.law?.findWitness();
     const call = z.kind === 'ramp' ? '“No wake at the ramp!”' : z.kind === 'camp' ? '“Idle speed past the dock!”' : '“Cut that wake!”';
-    this.toast(call, `${z.label} · complaint called in`, 2.8);
+    this.toast(witness ? call : 'Idle speed', witness ? `${witness} saw the wake` : z.label, 2.8);
     if (this.law) {
       this.law.stats.wakeWarnings = (this.law.stats.wakeWarnings || 0) + 1;
-      this.law.violation(0.28, `wake complaint · ${z.label.toLowerCase()}`);
+      if (witness) this.law.reportViolation(0.28, 'a wake violation', witness);
     }
-    if (this.reputation) this.reputation.change('locals', -0.15, 'no-wake', `You threw a wake through ${z.label.toLowerCase()}.`, false);
+    if (witness && this.reputation) this.reputation.change('locals', -0.15, 'no-wake', `You threw a wake through ${z.label.toLowerCase()}.`, false);
     else this.persist();
   }
   manateeNearMiss(m) {
@@ -650,7 +651,7 @@ export class Game {
         this.hitCd = 4; this.tricks.bust('DOCK');
         if (p.hit > 5) {
           this.toast(tag === 'truck' ? 'That was somebody\'s truck' : 'Hit the dock', 'Somebody is going to hear about that', 2);
-          if (this.law) this.law.violation(0.35 + Math.min(0.45, p.hit * 0.035), `${tag} strike reported`);
+          if (this.law) this.law.reportViolation(0.35 + Math.min(0.45, p.hit * 0.035), `a ${tag} strike`);
         }
       }
     }
