@@ -33,3 +33,17 @@ test('a decoded cloud bank is shared by the sky passes and released when returni
   assert.equal(sky.resourceStats().textures, 0);
   sky.mesh.geometry.dispose(); sky.mesh.material.dispose();
 });
+
+test('sky curtain follows the same advecting centre as the rain falling in the world', async () => {
+  const { createWeatherBand } = await import('../src/weatherfronts.js');
+  const sky = new Sky(new THREE.Vector3(0, 1, 0));
+  const band = createWeatherBand('lightRain', 120, -38, Math.PI / 2);
+  band.age = 9;
+  sky.setRainField(band, 1, 0.33);
+  assert.ok(Math.abs(sky.uniforms.bandCenter.value.x - 120) < 1e-8);
+  assert.equal(sky.uniforms.bandCenter.value.y, -38 + 9 * band.shape.speed);
+  assert.equal(sky.uniforms.bandRain.value, 0.33);
+  sky.setRainField(null, 1, 0);
+  assert.equal(sky.uniforms.bandRain.value, 0);
+  sky.mesh.geometry.dispose(); sky.mesh.material.dispose();
+});

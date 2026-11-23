@@ -294,6 +294,28 @@ test('hero-tree materials receive wind before the loader can warm and expose the
   geometry.dispose(); material.dispose();
 });
 
+test('camp oaks share a two-draw bark and cutout canopy, including their shadow materials', () => {
+  const vegetation = deferredVegetation([]);
+  const leaves = new THREE.Texture(), bark = new THREE.Texture();
+  vegetation.extraMats = [];
+  vegetation.campOakTextures = { leaves, bark: { map: bark } };
+  const tree = vegetation.buildCampOak(), nextTree = vegetation.buildCampOak();
+  assert.equal(tree.children.length, 2);
+  const [trunk, crown] = tree.children;
+  assert.equal(trunk.material.map, bark);
+  assert.equal(crown.material.map, leaves);
+  assert.ok(crown.material.alphaTest > 0 && crown.geometry.instanceCount <= 128);
+  assert.equal(crown.customDepthMaterial.map, leaves);
+  assert.equal(crown.customDepthMaterial.alphaTest, crown.material.alphaTest);
+  for (let i = 0; i < tree.children.length; i++) {
+    const part = tree.children[i], next = nextTree.children[i];
+    assert.equal(part.geometry, next.geometry);
+    assert.equal(part.material, next.material);
+    assert.equal(part.customDepthMaterial, next.customDepthMaterial);
+    assert.ok(part.castShadow && part.receiveShadow);
+  }
+});
+
 test('range culling is conservative at corners and half-float position boundaries', () => {
   const range = { minX: 100, maxX: 200, minZ: -50, maxZ: 50, end: 210, padding: 0.25 };
   assert.equal(foliageRangeVisible(range, { x: 150, z: 0 }), true);

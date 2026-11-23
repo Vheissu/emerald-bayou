@@ -14,6 +14,25 @@ export const WATER_SHADOW_DISK = Object.freeze(Array.from({ length: 6 }, (_, i) 
   return Object.freeze([Math.cos(angle) * radius, Math.sin(angle) * radius]);
 }));
 export const FOAM_NOISE_SHAPE = Object.freeze({ base: 0.35, coarse: 1.1, fine: 0.6, edge: 0.08, maximum: 2.051 });
+// Wind (m/s) and sea state set how glassy the surface reads. Calm fades out by a light breeze; roughness builds through
+// squalls. Rain rings start at a drizzle, sparse, and only fill in toward heavy rain.
+export const WATER_SURFACE_RESPONSE = Object.freeze({
+  calmWind: Object.freeze([0.8, 5.0]), calmSea: Object.freeze([0.06, 0.32]),
+  roughWind: Object.freeze([4.0, 24.0]), roughSea: Object.freeze([0.35, 1.8]),
+  ringRain: Object.freeze([0.015, 0.22]), denseRain: Object.freeze([0.3, 0.9]),
+});
+// Rain ring lattice. Cell size and rate are fixed so ramping rain only changes coverage and shape, never the pattern.
+export const WATER_RAIN_RINGS = Object.freeze({ cell: 1.15, rate: 0.95, centreJitter: 0.26, drizzleRadius: 0.3, denseRadius: 0.21, maxWidth: 0.05 });
+const smooth01 = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const finiteOr0 = v => (Number.isFinite(v) ? v : 0);
+export function waterSurfaceResponse({ wind = 0, seaState = 0, rain = 0 } = {}, out = {}) {
+  const R = WATER_SURFACE_RESPONSE, w = Math.max(0, finiteOr0(wind)), sea = Math.max(0, finiteOr0(seaState)), r = Math.max(0, Math.min(1, finiteOr0(rain)));
+  out.calm = (1 - smooth01(R.calmWind[0], R.calmWind[1], w)) * (1 - smooth01(R.calmSea[0], R.calmSea[1], sea));
+  out.roughness = Math.max(smooth01(R.roughWind[0], R.roughWind[1], w), smooth01(R.roughSea[0], R.roughSea[1], sea));
+  out.rings = smooth01(R.ringRain[0], R.ringRain[1], r);
+  out.density = smooth01(R.denseRain[0], R.denseRain[1], r);
+  return out;
+}
 
 export class Water {
   constructor(renderer, sunDir, quality = {}) {
@@ -106,7 +125,7 @@ export class Water {
       wakeOrigin: { value: this.wakeOrigin }, wakeSize: { value: WAKE_SIZE }, wakeTexel: { value: 1 / this.wakeResolution },
       rippleStrength: { value: 0.16 }, wakeStrength: { value: 6.0 }, dbg: { value: 0 },
       seaState: { value: 0 }, weatherWind: { value: new THREE.Vector2(1, 0) },
-      surfaceDisplacement: { value: 1 },
+      surfaceDisplacement: { value: 1 }, surfaceCalm: { value: 1 }, surfaceRoughness: { value: 0 },
       rainAmount: { value: 0 }, hailAmount: { value: 0 }, precipitationRipples: { value: Math.max(0, Math.min(1, quality.precipitationRipples ?? 1)) },
       bioluminescence: { value: 0 }, bioColor: { value: new THREE.Color().setRGB(0.015, 0.38, 0.92) },
       tShadow: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, shadowTexel: { value: 1 / 4096 }, shadowOn: { value: 0 },
@@ -150,6 +169,7 @@ export class Water {
         uniform vec3 sunDir, sunColor, foamLight, absorb, scatterColor; uniform float scatterK;
         uniform vec2 wakeOrigin; uniform float wakeSize, wakeTexel, rippleStrength, wakeStrength; uniform int dbg;
         uniform float seaState; uniform vec2 weatherWind; uniform float rainAmount, hailAmount, precipitationRipples;
+        uniform float surfaceCalm, surfaceRoughness;
         uniform float bioluminescence; uniform vec3 bioColor;
         uniform sampler2DShadow tShadow; uniform mat4 shadowMatrix; uniform float shadowTexel, shadowOn, sunIntensity;
         uniform sampler2D tMurk; uniform vec2 murkOrigin; uniform float murkSize;
@@ -165,20 +185,30 @@ export class Water {
         }
         // One short-lived expanding ring per deterministic cell. Keeping each centre and radius inside its cell avoids
         // clipped seams without sampling neighbouring cells, textures or another surface simulation.
-        vec3 precipitationRing(vec2 world, float now, float cellSize, float rate, float seed, float coverage, float maxRadius) {
+        vec3 precipitationRing(vec2 world, float now, float cellSize, float rate, float seed, float coverage, float maxRadius, float echo, float pixel) {
+          // pixel: screen footprint in world metres. Bands widen to at least about a pixel so distant rings resolve
+          // instead of aliasing away, and fade once a whole ring would only cover a few pixels.
+          float footprint = pixel / cellSize;
+          float resolved = 1.0 - smoothstep(0.045, 0.11, footprint);
           vec2 cell = floor(world / cellSize);
           vec2 local = fract(world / cellSize) - 0.5;
-          vec2 rnd = hash22(cell + vec2(seed, seed * 1.91));
-          vec2 delta = local - (rnd - 0.5) * 0.26;
+          vec2 cellRnd = hash22(cell + vec2(seed, seed * 1.91));
+          float cycle = now * rate + cellRnd.x * 0.67 + cellRnd.y;
+          float age = fract(cycle);
+          // Each new drop lands somewhere else in the cell; the swap happens while the previous ring has faded out.
+          vec2 rnd = hash22(cell * 1.37 + vec2(mod(floor(cycle), 251.0) * 7.13 + seed, seed * 1.91));
+          vec2 delta = local - (rnd - 0.5) * ${WATER_RAIN_RINGS.centreJitter};
           float radialDistance = length(delta);
-          float age = fract(now * rate + rnd.x * 0.67 + rnd.y);
           float ringRadius = mix(0.018, maxRadius, age);
-          float width = mix(0.028, 0.016, age);
+          float width = clamp(footprint * 1.3, mix(0.028, 0.016, age), ${WATER_RAIN_RINGS.maxWidth});
           float ringDelta = radialDistance - ringRadius;
           float band = 1.0 - smoothstep(0.0, width, abs(ringDelta));
+          // A real drop sends out a weaker second crest behind the first; same cell, no extra lookups.
+          float innerDelta = radialDistance - ringRadius * 0.58;
+          float inner = (1.0 - smoothstep(0.0, width, abs(innerDelta))) * echo * smoothstep(0.08, 0.3, age);
           float lifetime = smoothstep(0.0, 0.04, age) * (1.0 - smoothstep(0.78, 1.0, age));
-          float cellMask = smoothstep(1.0 - coverage - 0.06, 1.0 - coverage + 0.06, rnd.y);
-          float slope = band * clamp(ringDelta / max(width, 0.001), -1.0, 1.0) * lifetime * cellMask;
+          float cellMask = smoothstep(1.0 - coverage - 0.06, 1.0 - coverage + 0.06, rnd.y) * resolved;
+          float slope = (band * clamp(ringDelta / max(width, 0.001), -1.0, 1.0) + inner * clamp(innerDelta / max(width, 0.001), -1.0, 1.0)) * lifetime * cellMask;
           return vec3(delta / max(radialDistance, 0.002) * slope, band * lifetime * cellMask);
         }
         // sun shadow on the water surface (trees, tower, the boat itself)
@@ -209,7 +239,9 @@ export class Water {
           vec3 n2 = texture2D(tNormal, w * 0.07 + vec2(-0.016, 0.009) * t).xyz * 2.0 - 1.0;
           vec3 n3 = texture2D(tNormal, w * 0.31 + vec2(0.028, -0.034) * t).xyz * 2.0 - 1.0;
           vec3 n4 = texture2D(tNormal, w * 0.9 + vec2(-0.05, 0.06) * t).xyz * 2.0 - 1.0;
-          vec2 nt = n1.xy * 0.6 + n2.xy * 0.35 + n3.xy * 0.18 + n4.xy * 0.07;
+          // Dead calm keeps only the slow long undulation; the short capillary layers die first as the wind drops.
+          float calm = surfaceCalm, roughness = surfaceRoughness;
+          vec2 nt = n1.xy * 0.6 + n2.xy * (0.35 - calm * 0.19) + n3.xy * (0.18 - calm * 0.145) + n4.xy * (0.07 - calm * 0.06);
           // water character: the channels run clear and green; the still water back in the trees is tannin-black,
           // glassy, and skinned with duckweed where the canopy shades it
           vec2 muv = (w - murkOrigin) / murkSize + 0.5;
@@ -218,25 +250,36 @@ export class Water {
           float murk = mk.r * mEdge, duck = mk.g * mEdge, lake = mk.b * mEdge;
           // distance falloff of fine ripples so far water stays mirror-smooth
           float distFade = 1.0 / (1.0 + dist * 0.012);
-          nt *= rippleStrength * distFade * (1.0 - murk * 0.6 + lake * 0.5);
+          // Wind drags the chop into streaks along its direction; the reflection breaks across the wind, not into noise.
+          nt += weatherWind * dot(nt, weatherWind) * roughness * 0.55;
+          float rainRingFade = precipitationRipples * smoothstep(${WATER_SURFACE_RESPONSE.ringRain[0]}, ${WATER_SURFACE_RESPONSE.ringRain[1]}, rainAmount);
+          float rainDensity = smoothstep(${WATER_SURFACE_RESPONSE.denseRain[0]}, ${WATER_SURFACE_RESPONSE.denseRain[1]}, rainAmount);
+          // Rain damps the short wind ripples between impacts, which is why individual rings read in a light shower.
+          nt *= rippleStrength * distFade * (1.0 - murk * 0.6 + lake * 0.5) * mix(1.0, 0.42, calm) * (1.0 + roughness * 0.85) * (1.0 - rainRingFade * 0.3 * (1.0 - roughness));
           // Real precipitation changes the nearby surface, not just the air above it. The uniform quality gate is zero
           // on old-hardware tiers; a distance gate also keeps the procedural work off the far-water fragments.
           float impactFade = 1.0 - smoothstep(48.0, 118.0, dist);
-          float precipitationCrown = 0.0;
-          float rainSurface = precipitationRipples * smoothstep(0.08, 0.72, rainAmount);
+          float waterPixel = max(length(waterDx), length(waterDy));
+          float precipitationCrown = 0.0, ringSheen = 0.0;
+          float rainSurface = rainRingFade;
           float hailSurface = precipitationRipples * smoothstep(0.22, 0.82, hailAmount);
           if (precipitationRipples > 0.001 && impactFade > 0.001) {
             if (rainSurface > 0.001) {
-              vec3 rainRing = precipitationRing(w, t, 0.72, 1.55, 7.3, 0.15 + rainAmount * 0.38, 0.16);
-              nt += rainRing.xy * rainSurface * impactFade * 0.052;
-              precipitationCrown += rainRing.z * rainSurface * 0.008;
-              if (precipitationRipples > 0.8) {
-                vec3 fineRing = precipitationRing(w, t, 0.46, 2.15, 17.9, 0.10 + rainAmount * 0.25, 0.13);
-                nt += fineRing.xy * rainSurface * impactFade * 0.026;
+              // Drizzle: few, large, well separated rings with a trailing crest. Downpour: dense, smaller, overlapping.
+              vec3 rainRing = precipitationRing(w, t, ${WATER_RAIN_RINGS.cell}, ${WATER_RAIN_RINGS.rate}, 7.3, mix(0.16, 0.55, rainDensity),
+                mix(${WATER_RAIN_RINGS.drizzleRadius}, ${WATER_RAIN_RINGS.denseRadius}, rainDensity), mix(0.55, 0.2, rainDensity), waterPixel);
+              float ringGain = rainSurface * impactFade * (1.0 - roughness * 0.35);
+              nt += rainRing.xy * ringGain * mix(0.42, 0.17, rainDensity);
+              // The raised crest faces the sky, so each ring reads as a thin bright line on the dark water.
+              ringSheen = rainRing.z * ringGain * mix(0.16, 0.07, rainDensity);
+              precipitationCrown += rainRing.z * rainSurface * 0.008 * rainDensity;
+              if (precipitationRipples > 0.8 && rainDensity > 0.001) {
+                vec3 fineRing = precipitationRing(w, t, 0.46, 2.15, 17.9, 0.10 + rainAmount * 0.25, 0.13, 0.0, waterPixel);
+                nt += fineRing.xy * rainSurface * rainDensity * impactFade * 0.03;
               }
             }
             if (hailSurface > 0.001) {
-              vec3 hailRing = precipitationRing(w, t, 0.82, 0.92, 31.7, 0.16 + hailAmount * 0.12, 0.16);
+              vec3 hailRing = precipitationRing(w, t, 0.82, 0.92, 31.7, 0.16 + hailAmount * 0.12, 0.16, 0.0, waterPixel);
               nt += hailRing.xy * hailSurface * impactFade * 0.11;
               precipitationCrown += hailRing.z * hailSurface * 0.12;
             }
@@ -294,12 +337,14 @@ export class Water {
           vec4 rp = vRefl;
           vec2 right = normalize(vec2(viewMatrix[0][0], viewMatrix[2][0]) + vec2(0.00001, 0.0));
           vec2 reflectionSlope = vec2(dot(N.xz, right), dot(N.xz, vec2(-right.y, right.x)));
-          vec2 reflectionOffset = reflectionSlope * vec2(0.14, 0.29) * (0.5 + 0.5 * distFade);
+          vec2 reflectionOffset = reflectionSlope * vec2(0.14, 0.29) * (0.5 + 0.5 * distFade) * (1.0 - roughness * 0.32);
           reflectionOffset *= 0.035 / max(0.035, length(reflectionOffset));
           rp.xy += reflectionOffset * rp.w;
           vec2 rUv = rp.xy / rp.w;
           rUv = clamp(rUv, vec2(0.002), vec2(0.998));
-          vec3 refl = texture2D(tRefl, rUv, 0.35 + (1.0 - distFade) + clamp(foam, 0.0, 1.0)).rgb;
+          // Calm water is a sharp mirror; hard weather blurs the image a little so broken bands keep their shapes.
+          float reflBlur = mix(0.35 + (1.0 - distFade), 0.45 * (1.0 - distFade), calm) + roughness * 1.1;
+          vec3 refl = texture2D(tRefl, rUv, reflBlur + clamp(foam, 0.0, 1.0)).rgb;
           float shadow = sunShadow(vWorld);
           // Scattering and floating vegetation reflect incoming light; they do not keep a daytime green glow at night.
           // Share the existing boat lamp's cone/range data with spray. The uniform branch skips its math when off.
@@ -331,12 +376,13 @@ export class Water {
           // fresnel
           float NdV = max(dot(N, V), 0.0);
           float F = 0.025 + 0.975 * pow(max(1.0 - NdV, 0.0), 5.0);
-          F = clamp(F, 0.0, 1.0);
+          F = clamp(F * (1.0 - roughness * 0.12) + ringSheen, 0.0, 1.0);
           // sun: GGX lobe whose roughness grows with distance (unresolved ripples) -> broad glint band toward the sun,
           // plus a tight sparkle term from the fine ripple normals up close
           vec3 H = normalize(sunDir + V);
           float NdH = max(dot(N, H), 0.0); float NdL = max(dot(N, sunDir), 0.0); float VdH = max(dot(V, H), 0.0);
-          float rough = mix(0.045, 0.19, 1.0 - distFade);
+          // Glassy water gives a tight sun disc; wind spreads it into a wide, dimmer glitter path.
+          float rough = mix(0.045, 0.19, 1.0 - distFade) * mix(1.0, 0.55, calm) + roughness * 0.12;
           float a2 = rough * rough;
           float dd = NdH * NdH * (a2 - 1.0) + 1.0;
           float D = a2 / (3.14159 * dd * dd);
@@ -345,7 +391,7 @@ export class Water {
           vec3 spec = sunColor * sunIntensity * D * Fs * G / max(4.0 * NdV * NdL, 0.08) * NdL;
           spec = min(spec, vec3(8.0));
           vec3 Nf = normalize(vec3(nt.x * 2.2 + (n3.x + n4.x) * 0.25 * rippleStrength * distFade - vWaveSlope.x, 1.0, nt.y * 2.2 + (n3.y + n4.y) * 0.25 * rippleStrength * distFade - vWaveSlope.y));
-          float sparkle = pow(max(dot(Nf, H), 0.0), 1400.0) * 5.0 * distFade;
+          float sparkle = pow(max(dot(Nf, H), 0.0), 1400.0) * 5.0 * distFade * (1.0 - calm * 0.65) * (1.0 + roughness * 0.5);
           spec += sunColor * sunIntensity * sparkle;
           spec *= shadow * (1.0 - dw);
           vec3 col = mix(waterCol, refl, F) + spec;
@@ -388,7 +434,7 @@ export class Water {
             if (seaState > 0.45) {
               float capNoise = textureGrad(tFoam, w * 0.045 - weatherWind * t * 0.035, waterDx * 0.045, waterDy * 0.045).r * 0.7
                 + textureGrad(tFoam, w * 0.13 + weatherWind * t * 0.06, waterDx * 0.13, waterDy * 0.13).r * 0.3;
-              float windCaps = smoothstep(0.74, 0.96, capNoise + length(nt) * 0.65) * smoothstep(0.45, 1.15, seaState) * clamp((seaState - 0.38) * 0.42, 0.0, 0.72);
+              float windCaps = smoothstep(0.74, 0.96, capNoise + length(nt) * 0.65 / (1.0 + roughness * 0.85)) * smoothstep(0.45, 1.15, seaState) * clamp((seaState - 0.38) * 0.42, 0.0, 0.72);
               fm += windCaps * (0.35 + 0.65 * fn2);
             }
           }
@@ -507,6 +553,9 @@ export class Water {
     this.level = level; this.seaState = seaState; this.windAngle = windAngle; this.rain = rain; this.hail = hail; this.windSpeed = wind;
     this.uniforms.seaState.value = seaState; this.uniforms.weatherWind.value.set(Math.cos(windAngle), Math.sin(windAngle));
     this.uniforms.rainAmount.value = rain; this.uniforms.hailAmount.value = hail;
+    const response = waterSurfaceResponse({ wind, seaState, rain }, this._surfaceResponse || (this._surfaceResponse = {}));
+    if (this.uniforms.surfaceCalm) this.uniforms.surfaceCalm.value = response.calm;
+    if (this.uniforms.surfaceRoughness) this.uniforms.surfaceRoughness.value = response.roughness;
   }
 
   // stamp list: [{x,z,radius,height,foam,foamRadius,sediment,sedimentRadius}]

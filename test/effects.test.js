@@ -71,3 +71,19 @@ test('spray and plume compact expired particles and draw only live slots', async
   assert.equal(plume.count, 0);
   assert.equal(plume.geo.instanceCount, 0);
 });
+
+test('rain and hail stay in world space as the chase camera moves', () => {
+  const system = new Precipitation(new THREE.Scene(), { rain: 1, hail: 1 });
+  const wind = { x: 1, z: 0 };
+  system.rain.pos.set([0, 20, 0, 0, 20, 0]);
+  system.hail.pos.set([0, 20, 0]);
+  system.update(0, { x: 0, z: 0 }, wind, 1, 1, 0, 0);
+  system.update(0, { x: 18, z: -9 }, wind, 1, 1, 0, 0);
+  for (const p of [system.rain.pos, system.hail.pos]) {
+    assert.equal(p[0] + 18, 0); assert.equal(p[2] - 9, 0);
+  }
+  assert.equal(system.rain.pos[3], system.rain.pos[0]);
+  system.update(0.02, { x: 18, z: -9 }, wind, 1, 1, 0, 18);
+  assert.ok(system.rain.pos[3] < system.rain.pos[0]);
+  assert.ok(system.rain.pos[1] < 20 && system.rain.pos[4] > system.rain.pos[1]);
+});

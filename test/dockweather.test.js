@@ -1,0 +1,50 @@
+import { Group } from 'three';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildDockWeather, updateDockWeather } from '../src/dockweather.js';
+
+test('the retained dock cloth hangs in a lull and stretches downwind in a gale', () => {
+  const dock = new Group();
+  dock.position.set(15, 0, -30);
+  dock.rotation.y = 0.53;
+  const station = buildDockWeather(dock, 14);
+  const neighbour = buildDockWeather(new Group(), 16);
+  const { index } = station.sleeve.geometry;
+  const fabric = station.sleeve.geometry.attributes.position;
+  const tail = () => ({ x: fabric.getX(fabric.count - 1), y: fabric.getY(fabric.count - 1), z: fabric.getZ(fabric.count - 1) });
+  const northEast = { x: 0.8, z: 0.6 };
+  let wind = 0;
+  const environment = { windDir: northEast, gust: 1, game: { paused: false }, sampleWindAt(x, z) {
+    assert.ok(Math.abs(x - (dock.position.x - 14 * Math.sin(dock.rotation.y))) < 1e-6);
+    assert.ok(Math.abs(z - (dock.position.z - 14 * Math.cos(dock.rotation.y))) < 1e-6);
+    return wind;
+  } };
+  const update = (speed, dt = 1 / 60) => {
+    wind = speed;
+    updateDockWeather(station, dt, 15, -30, environment);
+  };
+  update(0, 0);
+  const slack = tail();
+  assert.ok(slack.y < -1.3 && slack.z < 0.9);
+  for (let i = 0; i < 45; i++) update(4);
+  const breeze = tail();
+  assert.ok(slack.y < breeze.y && breeze.y < -0.4 && breeze.z > slack.z);
+  for (let i = 0; i < 90; i++) update(17);
+  const gale = tail();
+  assert.ok(gale.y > -0.25 && gale.z > 1.8);
+  assert.ok(Math.abs(station.head.rotation.y + dock.rotation.y - Math.atan2(northEast.x, northEast.z)) < 0.002);
+  for (let i = 0; i < 12; i++) update(17);
+  assert.ok(Math.abs(tail().x - gale.x) > 0.01);
+  assert.equal(station.sleeve.geometry.attributes.position, fabric);
+  assert.equal(station.sleeve.geometry.index, index);
+  assert.notEqual(station.sleeve.geometry, neighbour.sleeve.geometry);
+  assert.equal(station.sleeve.material, neighbour.sleeve.material);
+  assert.equal(station.group.children[0].geometry, neighbour.group.children[0].geometry);
+  const version = fabric.version;
+  environment.game.paused = true;
+  update(0, 1);
+  assert.equal(fabric.version, version, 'paused weather leaves the cloth pose alone');
+  environment.game.paused = false;
+  updateDockWeather(station, 1 / 60, 2000, 2000, environment);
+  assert.equal(fabric.version, version, 'distant camps leave their cloth buffers alone');
+});

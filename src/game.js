@@ -13,6 +13,7 @@ const MPH = 2.23694;
 const FT = 3.28084, MI = 1 / 1609.344;
 const HULL_SAMPLES = [-2, 0, 1.6];
 const MENU_TABS = ['jobs', 'world', 'records', 'system'];
+const FREE_RIDE_WEATHER = ['calm', 'lightRain', 'thunderstorm'];
 const esc = value => String(value ?? '').replace(/[&<>"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
 // Florida measures in feet and miles: under about a fifth of a mile in feet, then miles
 export const fmtDist = (m) => m < 300 ? `${Math.round(m * FT / 10) * 10} ft` : m < 16090 ? `${(m * MI).toFixed(m < 3219 ? 2 : 1)} mi` : `${Math.round(m * MI)} mi`;
@@ -382,6 +383,11 @@ export class Game {
     } else if (this.menuTab === 'world') {
       title = 'World';
       content = `<div class="world-grid"><section class="menu-card"><div class="h">Current picture</div><div class="kpis"><div class="kpi"><b>${encounterCount}</b><span>encounters</span></div><div class="kpi"><b>${regionsSeen}/${regionTotal}</b><span>regions</span></div><div class="kpi"><b>${incidentResolved}/${incidentHeard}</b><span>calls resolved</span></div><div class="kpi"><b>${wanted ? '★'.repeat(wanted) : 'Clear'}</b><span>FWC wanted</span></div><div class="kpi"><b>${citations}</b><span>citations</span></div><div class="kpi"><b>${Number(incidents.fwc) || 0}/${Number(incidents.runners) || 0}</b><span>FWC / runners</span></div></div></section><section class="menu-card"><div class="h">Standing</div><div class="standing"><span>Locals</span><b>${esc(standing.locals)}</b><em>${this.reputation ? this.reputation.score('locals').toFixed(1) : '0.0'}</em></div><div class="standing"><span>FWC</span><b>${esc(standing.fwc)}</b><em>${this.reputation ? this.reputation.score('fwc').toFixed(1) : '0.0'}</em></div><div class="standing"><span>Backchannel</span><b>${esc(standing.runners)}</b><em>${this.reputation ? this.reputation.score('runners').toFixed(1) : '0.0'}</em></div></section><section class="menu-card"><div class="h">Open threads</div><div class="deed"><b>Story</b>${esc(storyLine)}</div><div class="deed"><b>Resident work</b>${esc(contractLine)}</div><div class="deed"><b>Conditions</b>${esc(this.getWorldLabel?.() || 'South Florida backcountry')}</div></section><section class="menu-card"><div class="h">What people remember</div>${deedRows}</section><section class="menu-card field-notes"><div class="h">Field notes · ${fieldNoteCount} / ${fieldNotes.length || 3}</div><div class="field-note-grid">${fieldNoteRows}</div></section></div>`;
+      const forecast = this.environment?.weatherForecast();
+      if (forecast) {
+        content = content.replace('<div class="world-grid">', '<div class="world-grid">' +
+          `<section class="menu-card"><div class="h">Weather</div><div class="deed"><b>Now</b>${esc(this.environment.weatherLabel())}</div><div class="deed"><b>Forecast</b>${esc(forecast.nextLabel)}${forecast.arrivalLabel ? ' around ' + esc(forecast.arrivalLabel) : ''}</div></section>`);
+      }
     } else if (this.menuTab === 'records') {
       title = 'Stats';
       content = `<div class="records-grid"><section class="menu-card"><div class="h">Hull &amp; style</div>${records.slice(0, 6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}</section><section class="menu-card"><div class="h">Backcountry work</div>${records.slice(6).map(([k,v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join('')}<div class="r"><span>Jobs finished</span><b>${this.save.done.length} / ${this.missions.length}</b></div><div class="r"><span>Camp runs</span><b>${Number(this.save.runs) || 0}</b></div><div class="r"><span>Cash earned</span><b>${fmtCash(this.save.cash)}</b></div></section><section class="menu-card fishing-log"><div class="h">Catch-and-release log · ${fishLogged} / ${fishingEntries.length || 6} species</div><div class="fish-log-grid">${fishingRows}</div></section></div>`;
@@ -390,6 +396,8 @@ export class Game {
       const systemActions = [
         ['resume', 'Resume', '', '', false],
         ['graphics', 'Graphics', '', quality, false],
+        ...(this.environment && !this.state && !this.story?.stormLine?.busy()
+          ? [['weather', 'Weather', '', esc(this.environment.weatherForecast().currentLabel), false]] : []),
         ['controls', 'Controls', '', '', false],
         ['title', 'Title', '', '', false],
       ];
@@ -433,6 +441,12 @@ export class Game {
         const action = element.dataset.action;
         if (action === 'resume') this.closeMenu();
         else if (action === 'graphics') { this.onCycleQuality?.(); this.renderMenu(); }
+        else if (action === 'weather') {
+          const next = (FREE_RIDE_WEATHER.indexOf(this.environment.key) + 1) % FREE_RIDE_WEATHER.length;
+          this.environment.setWeather(FREE_RIDE_WEATHER[next], false, false);
+          this.renderMenu();
+          this.el.menu.querySelector('[data-action="weather"]')?.focus({ preventScroll: true });
+        }
         else if (action === 'controls') { this.controlsOpen = !this.controlsOpen; this.renderMenu(); }
         else if (action === 'title') this.onReturnToTitle?.();
         else if (action === 'new') this.requestNewGame();

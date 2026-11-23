@@ -64,7 +64,7 @@ export class SkyEnvironmentMap {
     // Lightning, rain shafts and rainbows are short-lived/view-dependent. Baking any of them into a map would leave
     // a false flash, dark curtain or coloured arc on glossy surfaces until the next refresh.
     const transient = [];
-    for (const key of ['flash', 'rain', 'rainbow']) {
+    for (const key of ['flash', 'rain', 'bandRain', 'rainbow']) {
       const uniform = this.skyUniforms?.[key];
       if (uniform) { transient.push([uniform, uniform.value]); uniform.value = 0; }
     }

@@ -74,6 +74,25 @@ The authored [brown pelican](assets/wildlife/README.md) and [great egret](assets
 
 The D-pad works throughout the title and pause menus. D-pad up opens the jobs board while you are on the water. Supported controllers also rumble with hull strikes and hard landings.
 
+## Weather
+
+A new ride starts on calm water. The first light shower comes in on the wind. You can cross the rain, come out into a dry cut and look back at the curtain over the river. Thunderstorms bring rougher water and narrower visibility. In the late afternoon a passing shower is more likely to build into a storm.
+
+WX-3 broadcasts the next forecast and its expected arrival on the game clock. It’s also under **World → Weather** in the pause menu. In free ride, **Game → Weather** cycles between calm, light rain and a thunderstorm. The change takes about 24 seconds of play, then the weather continues on its own.
+
+<table>
+<tr><th>Calm</th><th>Light rain</th><th>Thunderstorm</th></tr>
+<tr>
+<td><img src="docs/screenshots/09-calm.jpg" alt="Still water and a slack windsock beside the fire tower dock"></td>
+<td><img src="docs/screenshots/10-light-rain.jpg" alt="A passing shower ripples the water at the fire tower"></td>
+<td><img src="docs/screenshots/11-thunderstorm.jpg" alt="The windsock stretches out over choppy water in a thunderstorm"></td>
+</tr>
+</table>
+
+Watch the striped windsock at a dock for the local wind. The staff beside it marks the water level in feet. At fish camps, a gutter feeds rain off the tin roof into a barrel on the porch. It keeps dripping for a while after the sky clears.
+
+<img src="docs/screenshots/12-rain-barrel.jpg" alt="Water draining off the porch roof into a barrel during a storm at Mullet Bend" width="100%">
+
 ## What's in it
 
 <img src="docs/screenshots/06-jobs.jpg" alt="The jobs board" width="100%">

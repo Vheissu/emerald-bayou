@@ -69,3 +69,23 @@ test('working wharves reuse seeded mesh resources and animate an actual wet load
     assert.ok(work.worker.userData.arms[1].hand.getWorldPosition(hand).distanceTo(handle) < 0.035);
   }
 });
+
+test('porch barrels catch local rain, keep dripping after it clears and pause with the game', async () => {
+  const { buildRoofDrain, updateRoofDrain } = await import('../src/roofdrain.js');
+  const a = buildRoofDrain(new THREE.Group()), b = buildRoofDrain(new THREE.Group());
+  assert.equal(a.group.children[0].geometry, b.group.children[0].geometry);
+  assert.notEqual(a.trickle.geometry, b.trickle.geometry);
+  for (let i = 0; i < 600; i++) {
+    updateRoofDrain(a, 1 / 60, 0.9, 16);
+    updateRoofDrain(b, 1 / 60, 0, 1000);
+  }
+  assert.ok(a.fill > b.fill + 0.07 && a.trickle.visible && !b.trickle.visible);
+  const level = a.fill, flow = a.flow, phase = a.phase;
+  updateRoofDrain(a, 0, 0, 16);
+  assert.equal(a.fill, level); assert.equal(a.phase, phase); assert.equal(a.flow, flow);
+  updateRoofDrain(a, 1, 0, 16);
+  assert.ok(a.trickle.visible && a.flow < flow && a.fill > level);
+  updateRoofDrain(a, 0.1, 0, 10000); assert.equal(a.trickle.visible, false);
+  for (let i = 0; i < 60; i++) updateRoofDrain(a, 1, 0, 16);
+  assert.equal(a.trickle.visible, false);
+});

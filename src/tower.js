@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as TEX from './textures.js';
 import { sharedResource } from './cache.js';
 import { registerWetMaterial } from './surfacewetness.js';
+import { buildDockWeather } from './dockweather.js';
 
 function box(w, h, d, x, y, z, ry = 0, rz = 0) {
   const g = new THREE.BoxGeometry(w, h, d);
@@ -143,11 +144,12 @@ function dockResources(length, width) {
   return resources;
 }
 
-export function buildDock(length = 14, width = 2.0) {
+export function buildDock(length = 14, width = 2.0, { weather = false } = {}) {
   const { frameGeo, plankGeo, frameMat, plankMat } = dockResources(length, width);
   const g = new THREE.Group();
   const a = new THREE.Mesh(frameGeo, frameMat); a.castShadow = true; a.receiveShadow = true;
   const b = new THREE.Mesh(plankGeo, plankMat); b.castShadow = true; b.receiveShadow = true;
   g.add(a, b);
+  if (weather) g.userData.dockWeather = buildDockWeather(g, length);
   return g;
 }

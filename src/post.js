@@ -137,8 +137,9 @@ export class Pipeline {
           float outer = 1.0 - smoothstep(radius * 0.72, radius, dist);
           float inner = 1.0 - smoothstep(radius * 0.34, radius * 0.62, dist);
           float rim = max(0.0, outer - inner) * density;
+          float glint = smoothstep(-0.12, 0.92, dot(delta / max(dist, 0.0001), vec2(-0.46, 0.89)));
           float trail = (1.0 - smoothstep(0.004, 0.045, abs(delta.x))) * (1.0 - smoothstep(0.025, 0.42, delta.y)) * step(0.0, delta.y) * density * 0.28;
-          return vec4(delta / max(dist, 0.0001) * rim, max(body, trail), rim);
+          return vec4(delta / max(dist, 0.0001) * rim, max(body, trail), rim * glint);
         }
         void main() {
           float lensStrength = lensWetness * lensQuality, lensMask = 0.0, lensRim = 0.0;
@@ -252,7 +253,8 @@ export class Pipeline {
           c += texture2D(tBloom, vUv).rgb * bloomAmt * bloomQuality;
           if (lensStrength > 0.003) {
             c *= 1.0 - lensMask * lensStrength * 0.055;
-            c += vec3(0.11, 0.135, 0.15) * lensRim * lensStrength;
+            float reflectedLight = clamp(dot(c, vec3(0.213, 0.715, 0.072)), 0.025, 1.2);
+            c += vec3(0.08, 0.095, 0.10) * reflectedLight * lensRim * lensStrength;
           }
           c *= exposure;
           // gentle filmic grade: lift greens, soft contrast

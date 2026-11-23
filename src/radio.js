@@ -4,10 +4,12 @@ const esc = value => String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<
 const RECENT_LIMIT = 256;
 
 const WEATHER_CALLS = {
+  calm: ['MARINE WX-3', 'Winds are light across the bayou. The open channel is settling.'],
+  lightRain: ['MARINE WX-3', 'Scattered light showers moving through the backcountry. Rain between the cuts is patchy.'],
   fair: ['MARINE WX-3', 'Small-craft advisory cancelled. Storm water may still be high in the back cuts.'],
   fog: ['MARINE WX-3', 'Dense fog advisory for the backcountry. Visibility near one-quarter mile. Reduce to safe speed and sound one prolonged blast while making way.'],
   overcast: ['MARINE WX-3', 'Pressure falling across the backcountry. Patchy rain and visibility below two miles.'],
-  squall: ['MARINE WX-3', 'Fast squall crossing west to east. Gusts near thirty knots on open water.'],
+  squall: ['MARINE WX-3', 'Fast squall crossing the bayou. Gusts near thirty knots on open water.'],
   thunderstorm: ['MARINE WX-3', 'Severe thunderstorm warning. Frequent lightning and waterspouts possible in the river mouths.'],
   hail: ['MARINE WX-3', 'Hail core moving through the bayou. All small craft seek covered water now.'],
   tropical: ['MARINE WX-3', 'Tropical-storm bands are inside the backcountry. Channels are rising and markers may be off station.'],
@@ -52,7 +54,6 @@ const REGION_TRAFFIC = {
   cypress: [
     ['CH 68', 'LEON DOSS · OLD MILL', 'One hull at a time through Old Mill. I have a work boat coming south.'],
     ['CH 16', 'CAMP RADIO', 'Fresh deadhead in Cypress Reach, just under the skin by the west bank.'],
-    ['CH 68', 'JUNE BELL · SPLIT PINE', 'Fog is holding under the domes. If you lose the sky, slow down.'],
   ],
   emerald: [
     ['CH 68', 'MARA KEENE · TOWER', 'Fuel dock stays open until lightning gets inside five miles.'],
@@ -71,7 +72,6 @@ const REGION_TRAFFIC = {
   ],
   prairie: [
     ['CH 68', 'PUMP FOUR', 'Pump Four is releasing south. Current will turn in the grass before the river turns.'],
-    ['FWC TAC', 'FWC AIR 2', 'Open-water lightning west of Ten Mile Prairie. Nothing tall out there but you.'],
     ['CH 16', 'LOCAL SKIFF', 'Eastbound over Ten Mile. Running the darker grass where the water holds.'],
   ],
   'dead-river': [
@@ -89,6 +89,7 @@ export class RadioDirector {
     this.clock = 0; this.airT = 0; this.gapT = 0; this.bootT = 2.3; this.ambientT = 15 + Math.random() * 8; this.followupT = 22 + Math.random() * 16;
     this.enabled = false; this.started = false; this.lastAmbient = '';
     this.lastWeather = this.environment.key; this.lastRegion = null;
+    this.forecastIssued = false;
     this.lastEncounter = null; this.lastEncounterKnown = false; this.lastEncounterState = '';
     this.lastLawBand = 0; this.lastPursuit = false; this.lastPursuitUnits = 0; this.lastPursuitAviation = false; this.lastPursuitAviationVisual = false; this.lastCargo = false; this.lastDisabled = false;
   }
@@ -103,6 +104,12 @@ export class RadioDirector {
   ambientPool() {
     const region = this.regions.current;
     const pool = region ? [...(REGION_TRAFFIC[region.id] || [])] : [];
+    if (region?.id === 'cypress' && this.environment.key === 'fog') {
+      pool.push(['CH 68', 'JUNE BELL · SPLIT PINE', 'Fog is holding under the domes. If you lose the sky, slow down.']);
+    }
+    if (region?.id === 'prairie' && this.environment.values.lightning > 0.35) {
+      pool.push(['FWC TAC', 'FWC AIR 2', 'Open-water lightning over Ten Mile Prairie. Nothing tall out there but you.']);
+    }
     const working = this.game.life?.traffic?.radioPool?.() || [];
     for (const call of working) pool.push(call);
     const navigation = this.navigationAids?.radioPool?.() || [];
@@ -220,6 +227,15 @@ export class RadioDirector {
     const call = WEATHER_CALLS[key]; if (!call) return;
     const priority = key === 'hurricane' ? 4 : ['thunderstorm', 'hail', 'tropical'].includes(key) ? 3 : key === 'squall' ? 2 : 1;
     this.transmit({ channel: 'WX-3', speaker: call[0], text: call[1], priority, duration: priority >= 3 ? 7 : undefined, key: `weather:${key}`, cooldown: 90 });
+  }
+
+  forecastCall() {
+    const f = this.environment.weatherForecast?.();
+    if (!f || f.currentKey === f.nextKey) return false;
+    const eta = f.arrivalLabel ? ` around ${f.arrivalLabel}` : '';
+    const text = `Backcountry forecast. ${f.nextLabel} expected${eta}.`;
+    return this.transmit({ channel: 'WX-3', speaker: 'MARINE FORECAST', text, priority: 1,
+      key: `forecast:${f.currentKey}:${f.nextKey}`, cooldown: 45 });
   }
 
   hurricanePhaseCall(phase) {
@@ -368,6 +384,11 @@ export class RadioDirector {
       this.lastCargo = this.law.hasContraband(); this.lastDisabled = this.condition.needsTow();
     }
     this.clock += dt; this.observe();
+    const frontIn = this.environment.remaining;
+    if (frontIn > 42) this.forecastIssued = false;
+    else if (this.started && frontIn > 6 && !this.forecastIssued && !this.current && !this.queue.length && this.gapT <= 0) {
+      this.forecastIssued = this.forecastCall();
+    }
 
     if (this.bootT > 0) {
       this.bootT -= dt;

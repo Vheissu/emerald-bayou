@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { WEATHER_BAND_GLSL } from './weatherfronts.js';
 
 export const SKY_FRAG_NOISE = `
 float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -32,6 +33,11 @@ export class Sky {
       flash: { value: 0 },
       flashDir: { value: this.sunDir.clone() },
       rain: { value: 0 },
+      bandRain: { value: 0 },
+      bandCenter: { value: new THREE.Vector2() },
+      bandWind: { value: new THREE.Vector2(1, 0) },
+      bandSize: { value: new THREE.Vector2(1, 1) },
+      bandPhase: { value: 0 },
       rainbow: { value: 0 },
       weatherDetail: { value: Math.max(0, Math.min(1, Number(profile.skyWeatherDetail) || 0)) },
     };
@@ -50,7 +56,33 @@ export class Sky {
       fragmentShader: `
         varying vec3 vDir; uniform vec3 sunDir, moonDir, lightDir, flashDir; uniform vec2 windDir; uniform float windSpeed, uTime, cover, daylight, storm, flash, rain, rainbow, weatherDetail;
         uniform sampler2D tCloudBank; uniform float hasCloudBank;
+        uniform vec2 bandCenter, bandWind, bandSize;
+        uniform float bandRain, bandPhase;
         ${SKY_FRAG_NOISE}
+        ${WEATHER_BAND_GLSL}
+        // Find the nearest part of the elliptical shower along this sightline. Three samples
+        // through its width preserve both the leading edge and the weaker trailing rain.
+        float curtainDepth(vec3 ray) {
+          vec2 side = vec2(-bandWind.y, bandWind.x);
+          vec2 origin = cameraPosition.xz - bandCenter;
+          vec2 uv = vec2(dot(origin, bandWind), dot(origin, side)) / bandSize;
+          vec2 dir = vec2(dot(ray.xz, bandWind), dot(ray.xz, side)) / bandSize;
+          float norm2 = max(dot(dir, dir), 0.0000001);
+          float across = inversesqrt(norm2);
+          float nearT = max(0.0, -dot(uv, dir) / norm2);
+          float depth = 0.0;
+          for (int i = 0; i < 3; i++) {
+            float t = nearT + (float(i) - 0.75) * across * 0.74;
+            if (t <= 0.0 || t > 6500.0) continue;
+            vec2 p = cameraPosition.xz + t * ray.xz;
+            float height = cameraPosition.y + t * ray.y;
+            float strength = weatherBandStrength(p, bandCenter, bandWind, bandSize, bandPhase);
+            float cloudBase = mix(195.0, 330.0, strength);
+            depth += strength * (1.0 - smoothstep(cloudBase * 0.62, cloudBase, height))
+              * smoothstep(0.0, 85.0, t) * (1.0 - smoothstep(2800.0, 6500.0, t));
+          }
+          return 1.0 - exp(-depth * min(across, 1200.0) * 0.0025);
+        }
         vec3 rainbowSpectrum(float h) {
           vec3 p = abs(fract(h + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0);
           return clamp(p - 1.0, 0.0, 1.0);
@@ -243,7 +275,15 @@ export class Sky {
             sky = mix(sky, scud, shelfDens * shelfBand * storm * 0.74);
             // Patchy precipitation shafts make an approaching squall readable before drops reach the boat. They
             // reuse this cell's existing mass/detail fields, add no textures or objects, and disappear on fallback.
-            if (weatherDetail > 0.001 && rain > 0.001) {
+            if (weatherDetail > 0.001 && bandRain > 0.001 && yy < 0.80) {
+              float depth = curtainDepth(d);
+              float strands = vnoise(vec2(dot(d.xz, vec2(113.0, 71.0)) + yy * 8.0, yy * 16.0 - uTime * 0.09));
+              float veil = depth * sqrt(bandRain) * (0.73 + 0.27 * strands) * weatherDetail
+                * (1.0 - smoothstep(0.60, 0.80, yy));
+              vec3 curtain = mix(vec3(0.028, 0.035, 0.048), vec3(0.27, 0.32, 0.36), daylight);
+              curtain += solarTint * lowSun * sunSide * daylight * 0.14 + flashField * vec3(0.31, 0.38, 0.46);
+              sky = mix(sky, curtain, veil * 0.84);
+            } else if (weatherDetail > 0.001 && rain > 0.001) {
               float rainBand = smoothstep(0.012, 0.055, yy) * (1.0 - smoothstep(0.27, 0.43, yy));
               float rainCell = smoothstep(cover - 0.08, cover + 0.13, big * 0.78 + det * 0.22);
               float azimuth = atan(d.z, d.x);
@@ -321,6 +361,16 @@ export class Sky {
     this.uniforms.tCloudBank.value?.dispose();
     this.uniforms.tCloudBank.value = image ? new THREE.CanvasTexture(image) : null;
     this.uniforms.hasCloudBank.value = image ? 1 : 0;
+  }
+  setRainField(band, mix, targetRain) {
+    const u = this.uniforms;
+    u.bandRain.value = band ? mix * mix * (3 - 2 * mix) * targetRain : 0;
+    if (!band) return;
+    const travel = band.age * band.shape.speed;
+    u.bandCenter.value.set(band.x + band.alongX * travel, band.z + band.alongZ * travel);
+    u.bandWind.value.set(band.alongX, band.alongZ);
+    u.bandSize.value.set(band.shape.width, band.shape.length);
+    u.bandPhase.value = band.phase;
   }
   resourceStats() {
     return {

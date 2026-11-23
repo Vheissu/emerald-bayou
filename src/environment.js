@@ -3,6 +3,7 @@ import { lunarAgeAt, lunarIllumination, lunarNightLight, lunarPhaseAt, lunarPhas
 import { updateAttributePrefix } from './cache.js';
 import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
 import { applyAirboatWind, combinedSurfaceWind } from './vesselwind.js';
+import { applyWeatherBand, bandRain, bandWind, createWeatherBand, nextWeatherKey, restoreWeatherBand, serializeWeatherBand, weatherBandStrength } from './weatherfronts.js';
 import { LIGHTNING_LIFETIME, LIGHTNING_MAX_SEGMENTS, LIGHTNING_TRUNK_SEGMENTS, lightningSkyDirection, lightningStrokeEnvelope, writeLightningStroke } from './lightning.js';
 import {
   insertNearestSettlement, MAX_SETTLEMENT_LIGHTS, MAX_SETTLEMENT_OUTAGES, normalizeSettlementOutages,
@@ -289,6 +290,11 @@ const HURRICANE_ALERTS = {
 // Wind values are metres per second. A hurricane is intentionally uncommon in the natural
 // sequence, but it is a fully simulated state rather than a cosmetic preset.
 const WEATHER = {
+  calm: {
+    label: 'Calm', cloud: 0.58, rain: 0, hail: 0, wind: 1.4, sea: 0.025, fog: 0.00018,
+    exposure: 1.03, surge: 0, lightning: 0, storm: 0, duration: [105, 180],
+    call: 'Light air over the backcountry. The river has settled.',
+  },
   fair: {
     label: 'Fair', cloud: 0.49, rain: 0, hail: 0, wind: 3.5, sea: 0.08, fog: 0.00028,
     exposure: 1.02, surge: 0, lightning: 0, storm: 0, duration: [140, 230],
@@ -300,9 +306,14 @@ const WEATHER = {
     call: 'Dense fog in the back cuts. Slow down, listen, and sound before blind bends.',
   },
   overcast: {
-    label: 'Overcast', cloud: 0.40, rain: 0.04, hail: 0, wind: 6.5, sea: 0.28, fog: 0.00042,
+    label: 'Overcast', cloud: 0.40, rain: 0, hail: 0, wind: 6.5, sea: 0.28, fog: 0.00042,
     exposure: 0.89, surge: 0.02, lightning: 0, storm: 0.28, duration: [100, 190],
     call: "Pressure's falling. The light just went flat.",
+  },
+  lightRain: {
+    label: 'Light rain', cloud: 0.36, rain: 0.34, hail: 0, wind: 6.8, sea: 0.24, fog: 0.00058,
+    exposure: 0.88, surge: 0.025, lightning: 0, storm: 0.32, duration: [95, 150],
+    call: 'Showers are crossing the backcountry. Expect dry gaps between bands.',
   },
   squall: {
     label: 'Squall line', cloud: 0.31, rain: 0.68, hail: 0, wind: 14, sea: 0.78, fog: 0.00072,
@@ -310,7 +321,7 @@ const WEATHER = {
     call: "Squall line. Wind's cutting across the channel.",
   },
   thunderstorm: {
-    label: 'Thunderstorm', cloud: 0.24, rain: 1, hail: 0.08, wind: 18, sea: 1.05, fog: 0.00096,
+    label: 'Thunderstorm', cloud: 0.24, rain: 1, hail: 0.08, wind: 18, sea: 1.05, fog: 0.00183,
     exposure: 0.68, surge: 0.12, lightning: 0.9, storm: 0.9, duration: [75, 140],
     call: 'Severe thunderstorm. Get out of the open water.',
   },
@@ -341,7 +352,7 @@ const WEATHER_LIMITS = Object.fromEntries(WEATHER_FIELDS.map(field => {
 function weatherSnapshot(source, fallback) {
   const out = {};
   for (const key of WEATHER_FIELDS) {
-    const n = Number(source && source[key]);
+    const n = Number(source?.[key] ?? NaN);
     const [lo, hi] = WEATHER_LIMITS[key];
     out[key] = Number.isFinite(n) ? clamp(n, lo, hi) : fallback[key];
   }
@@ -360,7 +371,7 @@ function makeRain(count = 2200) {
   for (let i = 0; i < count; i++) {
     const j = i * 6;
     pos[j] = (Math.random() - 0.5) * 100; pos[j + 1] = Math.random() * 44; pos[j + 2] = (Math.random() - 0.5) * 100;
-    pos[j + 3] = pos[j]; pos[j + 4] = pos[j + 1]; pos[j + 5] = pos[j + 2]; speed[i] = 25 + Math.random() * 25;
+    pos[j + 3] = pos[j]; pos[j + 4] = pos[j + 1]; pos[j + 5] = pos[j + 2]; speed[i] = 7 + Math.random() * 4.5;
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
@@ -388,26 +399,30 @@ export class Precipitation {
     this.rain = makeRain(rain); this.hail = makeHail(hail);
     this.group = new THREE.Group(); this.group.name = 'weather'; this.group.add(this.rain.lines, this.hail.points); scene.add(this.group);
   }
-  update(dt, camera, windDir, rainAmt, hailAmt, waterLevel) {
+  update(dt, camera, windDir, rainAmt, hailAmt, waterLevel, windSpeed = 8) {
+    // Keep airborne drops in the world as the chase camera advances. Wrap only at the
+    // volume boundary so a turn, orbit or long-distance respawn never drags rain along.
+    const dx = this.group.position.x - camera.x, dz = this.group.position.z - camera.z;
+    const rainDX = dx % 100, rainDZ = dz % 100, hailDX = dx % 70, hailDZ = dz % 70;
     this.group.position.set(camera.x, waterLevel, camera.z);
     const R = this.rain, rn = Math.floor(R.count * smooth(0.03, 1, rainAmt));
     R.geo.setDrawRange(0, rn * 2); R.mat.opacity = 0.08 + rainAmt * 0.34; R.lines.visible = rn > 0;
-    const slant = 4 + rainAmt * 8;
+    const slant = windSpeed * 0.74;
     for (let i = 0; i < rn; i++) {
-      const j = i * 6; let x = R.pos[j] + windDir.x * slant * dt, y = R.pos[j + 1] - R.speed[i] * dt, z = R.pos[j + 2] + windDir.z * slant * dt;
+      const j = i * 6; let x = R.pos[j] + rainDX + windDir.x * slant * dt, y = R.pos[j + 1] - R.speed[i] * dt, z = R.pos[j + 2] + rainDZ + windDir.z * slant * dt;
       if (y < 0) { y += 42; x = (Math.random() - 0.5) * 100; z = (Math.random() - 0.5) * 100; }
       if (x > 50) x -= 100; else if (x < -50) x += 100;
       if (z > 50) z -= 100; else if (z < -50) z += 100;
-      const len = 0.8 + rainAmt * 1.9;
+      const streakTime = 0.032 + rainAmt * 0.022;
       R.pos[j] = x; R.pos[j + 1] = y; R.pos[j + 2] = z;
-      R.pos[j + 3] = x - windDir.x * len * 0.55; R.pos[j + 4] = y + len; R.pos[j + 5] = z - windDir.z * len * 0.55;
+      R.pos[j + 3] = x - windDir.x * slant * streakTime; R.pos[j + 4] = y + R.speed[i] * streakTime; R.pos[j + 5] = z - windDir.z * slant * streakTime;
     }
     if (rn) updateAttributePrefix(R.geo.attributes.position, rn * 6);
 
     const H = this.hail, hn = Math.floor(H.count * smooth(0.05, 1, hailAmt));
     H.geo.setDrawRange(0, hn); H.mat.opacity = 0.25 + hailAmt * 0.75; H.points.visible = hn > 0;
     for (let i = 0; i < hn; i++) {
-      const j = i * 3; let x = H.pos[j] + windDir.x * 7 * dt, y = H.pos[j + 1] - H.speed[i] * dt, z = H.pos[j + 2] + windDir.z * 7 * dt;
+      const j = i * 3; let x = H.pos[j] + hailDX + windDir.x * slant * 0.55 * dt, y = H.pos[j + 1] - H.speed[i] * dt, z = H.pos[j + 2] + hailDZ + windDir.z * slant * 0.55 * dt;
       if (y < 0) { y += 35; x = (Math.random() - 0.5) * 70; z = (Math.random() - 0.5) * 70; }
       if (x > 35) x -= 70; else if (x < -35) x += 70;
       if (z > 35) z -= 70; else if (z < -35) z += 70;
@@ -429,18 +444,21 @@ export class Environment {
     const savedMinutes = Number(saved.minutes), savedRemaining = Number(saved.remaining), savedDuration = Number(saved.duration), savedWind = Number(saved.windAngle), savedMix = Number(saved.mix);
     this.minutes = Number.isFinite(savedMinutes) && savedMinutes >= 0 ? Math.min(savedMinutes, 1440 * 36500) : 17 * 60 + 5; // a full day takes thirty real minutes
     this.minutesPerSecond = 0.8;
-    this.key = WEATHER[saved.key] ? saved.key : 'fair';
+    const hasWeather = Object.hasOwn(WEATHER, saved.key);
+    this.key = hasWeather ? saved.key : 'calm';
     this.from = weatherSnapshot(saved.from, WEATHER[this.key]); this.to = { ...WEATHER[this.key] };
     this.mix = Number.isFinite(savedMix) ? clamp(savedMix) : 1; this.transition = 24;
-    this.values = {}; mixedWeather(this.values, this.from, this.to, this.mix);
-    this.restrictedVisibility = smooth(0.00085, 0.0029, this.values.fog);
-    this.remaining = Number.isFinite(savedRemaining) ? clamp(savedRemaining, 0, 600) : 95;
+    this.values = {}; this.localWeather = {};
+    this.remaining = Number.isFinite(savedRemaining) ? clamp(savedRemaining, 0, 600) : 72;
     const [durationLo, durationHi] = WEATHER[this.key].duration, inferredDuration = (durationLo + durationHi) * 0.5;
     this.weatherDuration = Number.isFinite(savedDuration) && savedDuration >= this.remaining ? clamp(savedDuration, 1, 600) : Math.max(this.remaining, inferredDuration);
     this.windAngle = Number.isFinite(savedWind) ? Math.atan2(Math.sin(savedWind), Math.cos(savedWind)) : 0.7;
+    this.weatherBand = restoreWeatherBand(this.key, saved.band) || this.buildWeatherBand(true);
+    this.bandStrength = 0;
     this.localWindAngle = this.windAngle; this.hurricaneBlend = 0; this.surgeRate = 0;
     this.hurricane = { phase: '', progress: 0, eye: 0, eyewall: 0, windScale: 1, rainScale: 1, seaScale: 1, surgeScale: 1, surgeTrend: 0, windShift: 0, pressureHpa: 1004 };
-    this.lastHurricanePhase = ''; this.updateHurricanePassage(false);
+    this.lastHurricanePhase = ''; this.updateLocalWeather();
+    this.nextKey = Object.hasOwn(WEATHER, saved.nextKey) ? saved.nextKey : hasWeather ? this.pickForecast() : 'lightRain';
     this.gust = 1; this.waterLevel = 0; this.astronomicalTideRate = 0; this.tideRate = 0; this.daylight = 0; this.night = 1; this.moonlight = 0; this.syncClockAndTide(); this.persistT = 10;
     this.rainbowMoisture = smooth(0.08, 0.72, this.values.rain); this.rainbow = 0; this.rainbowOverride = null;
     this.surfaceWetness = normalizeSurfaceWetness(saved.surfaceWetness, surfaceWetnessTarget(this.values.rain, this.values.hail, this.values.fog, this.daylight));
@@ -554,11 +572,16 @@ export class Environment {
     this.astronomicalTideRate = (Math.cos(tidePhase) * 0.34 + Math.cos(tidePhase * 0.5 + 0.8) * 0.04) * this.tideRange;
     this.tideRate = clamp(this.astronomicalTideRate + (Number(this.surgeRate) || 0), -0.5, 0.5);
   }
-  clockLabel() {
-    const h = Math.floor(this.hour), m = Math.floor((this.hour - h) * 60), ap = h >= 12 ? 'PM' : 'AM', hh = h % 12 || 12;
+  clockLabel(hour = this.hour) {
+    const minutes = Math.floor(hour * 60 + 1e-8) % 1440;
+    const h = Math.floor(minutes / 60), m = minutes % 60, ap = h >= 12 ? 'PM' : 'AM', hh = h % 12 || 12;
     return `${hh}:${String(m).padStart(2, '0')} ${ap}`;
   }
   weatherLabel() {
+    if (this.key === 'lightRain' && this.values.rain < 0.10) {
+      return this.mix < 0.45 ? 'Showers approaching' : 'Showers nearby';
+    }
+    if ((this.key === 'calm' || this.key === 'fair') && this.mix < 1 && this.values.rain > 0.07) return 'Rain easing';
     if (this.key !== 'hurricane') return WEATHER[this.key].label;
     if (this.hurricane.phase === 'eye') return 'Hurricane eye';
     if (this.hurricane.phase === 'front-eyewall' || this.hurricane.phase === 'back-eyewall') return 'Hurricane eyewall';
@@ -574,6 +597,8 @@ export class Environment {
     this.game.save.environment = {
       minutes: this.minutes,
       key: this.key,
+      nextKey: this.nextKey,
+      band: serializeWeatherBand(this.weatherBand),
       from: weatherSnapshot(this.from, WEATHER[this.key]),
       mix: this.mix,
       remaining: this.remaining,
@@ -662,17 +687,56 @@ export class Environment {
     mixedWeather(this.values, this.from, this.to, this.mix); this.updateHurricanePassage(true); this.syncClockAndTide(); this.persistState(true);
     return this.hurricaneSnapshot();
   }
+  buildWeatherBand(instant) {
+    const { x, y: z } = this.phys?.pos ?? { x: 0, y: 0 };
+    return createWeatherBand(this.key, x, z, this.windAngle, instant ? 0 : 22, Math.random() * Math.PI * 2);
+  }
+  updateLocalWeather(announce = false) {
+    const band = this.weatherBand, { x, y: z } = this.phys.pos;
+    this.bandStrength = band ? weatherBandStrength(band, x, z) : 0;
+    if (band) applyWeatherBand(this.localWeather, this.to, band, this.bandStrength);
+    mixedWeather(this.values, this.from, band ? this.localWeather : this.to, this.mix);
+    this.updateHurricanePassage(announce);
+  }
+  sampleBandCondition(key, x, z, localCondition) {
+    const band = this.weatherBand;
+    if (!band) return this.values[key];
+    const t = this.mix;
+    return lerp(this.from[key], localCondition(this.to[key], band, weatherBandStrength(band, x, z)), t * t * (3 - 2 * t));
+  }
+  sampleRainAt(x, z) { return this.sampleBandCondition('rain', x, z, bandRain); }
+  sampleWindAt(x, z) { return this.sampleBandCondition('wind', x, z, bandWind); }
+  weatherBandSnapshot() {
+    const band = this.weatherBand;
+    return band ? { ...serializeWeatherBand(band), strength: this.bandStrength, rain: this.values.rain } : null;
+  }
+  weatherForecast() {
+    const seconds = Math.max(0, this.remaining);
+    const arrivalMinutes = Math.round((this.minutes + seconds * this.minutesPerSecond) / 5) * 5;
+    return {
+      currentKey: this.key, currentLabel: WEATHER[this.key].label,
+      nextKey: this.nextKey, nextLabel: WEATHER[this.nextKey]?.label, seconds,
+      arrivalLabel: this.minutesPerSecond > 0 ? this.clockLabel(arrivalMinutes / 60) : null,
+    };
+  }
+  pickForecast() {
+    const nextHour = ((this.minutes + this.remaining * this.minutesPerSecond) / 60) % 24;
+    return nextWeatherKey(this.key, nextHour, Math.random());
+  }
   setWeather(key, instant = false, announce = true) {
-    if (!WEATHER[key]) return;
+    if (!Object.hasOwn(WEATHER, key)) return;
     const surgeStep = instant ? WEATHER[key].surge - (this.values.surge || 0) : 0;
     if (this.key === 'hurricane') this.windAngle = Math.atan2(Math.sin(this.localWindAngle), Math.cos(this.localWindAngle));
-    this.from = { ...this.values }; this.to = { ...WEATHER[key] }; this.key = key; this.mix = instant ? 1 : 0;
+    this.from = instant ? { ...WEATHER[key] } : { ...this.values };
+    this.to = WEATHER[key]; this.key = key; this.mix = instant ? 1 : 0;
     const [a, b] = WEATHER[key].duration; this.remaining = a + Math.random() * (b - a); this.weatherDuration = this.remaining;
+    this.weatherBand = this.buildWeatherBand(instant);
+    this.nextKey = this.pickForecast();
     this.lastHurricanePhase = ''; this.hurricaneBlend = 0; this.localWindAngle = this.windAngle;
     // F8 is a visual test hook. Carry a floating hull with an instantaneous debug surge so the
     // one-frame water-level jump is not misread as a five-foot stunt; natural transitions stay gradual.
     if (instant && this.phys && Math.abs(surgeStep) > 0.001 && this.phys.wet > 0.15) { this.phys.y += surgeStep; this.phys.prevFloor = null; this.phys.vy *= 0.35; }
-    if (instant) { mixedWeather(this.values, this.from, this.to, 1); this.updateHurricanePassage(false); this.syncClockAndTide(); }
+    if (instant) { this.updateLocalWeather(); this.syncClockAndTide(); }
     if (instant && WEATHER[key].lightning > 0.4) this.lightningT = Math.min(this.lightningT, 1.2);
     if (announce) this.alert(WEATHER[key].label, WEATHER[key].call, key === 'hurricane' ? 7 : 5);
     this.persistState(true);
@@ -680,20 +744,21 @@ export class Environment {
   cycleWeather(instant = false) { const i = WEATHER_ORDER.indexOf(this.key); this.setWeather(WEATHER_ORDER[(i + 1) % WEATHER_ORDER.length], instant, true); }
 
   chooseWeather() {
-    const r = Math.random(), fogWindow = this.hour >= 0.5 && this.hour < 7.35; let next = 'fair';
-    if (this.key === 'fair') {
-      if (fogWindow && r < 0.2) next = 'fog';
-      else { const q = fogWindow ? (r - 0.2) / 0.8 : r; next = q < 0.67 ? 'overcast' : q < 0.83 ? 'fair' : 'squall'; }
-    } else if (this.key === 'fog') next = r < 0.7 ? 'fair' : 'overcast';
-    else if (this.key === 'overcast') {
-      if (fogWindow && r < 0.14) next = 'fog';
-      else { const q = fogWindow ? (r - 0.14) / 0.86 : r; next = q < 0.34 ? 'fair' : q < 0.62 ? 'squall' : q < 0.88 ? 'thunderstorm' : q < 0.96 ? 'hail' : 'tropical'; }
+    this.setWeather(this.nextKey);
+  }
+  advanceWeather(step) {
+    if (step) {
+      this.minutes += step * this.minutesPerSecond;
+      if (this.weatherBand) this.weatherBand.age += step;
+      this.remaining -= step;
+      const clockHour = (this.minutes / 60) % 24;
+      // Low-wind pre-dawn fog lingers into the morning, then gives way quickly once solar heating takes hold.
+      if (this.key === 'fog' && clockHour >= 8.15 && clockHour < 11.5) this.remaining = Math.min(this.remaining, 18);
+      if (this.remaining <= 0) this.chooseWeather();
+      if (this.mix < 1) this.mix = Math.min(1, this.mix + step / this.transition);
     }
-    else if (this.key === 'squall') next = r < 0.5 ? 'overcast' : r < 0.84 ? 'thunderstorm' : 'fair';
-    else if (this.key === 'thunderstorm' || this.key === 'hail') next = r < 0.62 ? 'overcast' : r < 0.9 ? 'fair' : 'tropical';
-    else if (this.key === 'tropical') next = r < 0.22 ? 'hurricane' : r < 0.78 ? 'squall' : 'overcast';
-    else next = r < 0.72 ? 'tropical' : 'overcast';
-    this.setWeather(next);
+    this.updateLocalWeather(step > 0);
+    this.syncClockAndTide();
   }
 
   alert(title, text, seconds = 5) {
@@ -736,7 +801,8 @@ export class Environment {
       for (const group of this.world.liveCamps.values()) {
         const camp = group.userData.site; if (!camp) continue; camp.powerKey ||= `camp:${camp.key}`;
         const dx = camp.x - bx, dz = camp.z - bz;
-        insertNearestSettlement(candidates, camp.powerKey, camp.x, camp.h + 2.1, camp.z, dx * dx + dz * dz);
+        const lamp = group.userData.porchLamp;
+        insertNearestSettlement(candidates, camp.powerKey, lamp?.x ?? camp.x, lamp?.y ?? camp.h + 2.1, lamp?.z ?? camp.z, dx * dx + dz * dz);
       }
     }
     for (let i = 0; i < this.settlementLights.length; i++) {
@@ -813,18 +879,7 @@ export class Environment {
   update(dt, realTime, camera, paused = false) {
     this.hornCooldown = Math.max(0, this.hornCooldown - dt);
     const step = paused ? 0 : dt;
-    this.minutes += step * this.minutesPerSecond;
-    if (step) {
-      this.remaining -= step;
-      const clockHour = (this.minutes / 60) % 24;
-      // Low-wind pre-dawn fog lingers into the morning, then gives way quickly once solar heating takes hold.
-      if (this.key === 'fog' && clockHour >= 8.15 && clockHour < 11.5) this.remaining = Math.min(this.remaining, 18);
-      if (this.remaining <= 0) this.chooseWeather();
-      if (this.mix < 1) this.mix = Math.min(1, this.mix + step / this.transition);
-    }
-    mixedWeather(this.values, this.from, this.to, this.mix);
-    this.updateHurricanePassage(step > 0);
-    this.syncClockAndTide();
+    this.advanceWeather(step);
 
     const V = this.values;
     this.restrictedVisibility = smooth(0.00085, 0.0029, V.fog);
@@ -852,7 +907,10 @@ export class Environment {
     this.surfaceWetness = surfaceWetnessStep(this.surfaceWetness, V.rain, V.hail, V.fog, daylight, V.wind * this.gust, V.storm, step);
     setGlobalSurfaceWetness(this.surfaceWetness); this.terrain.setSurfaceWetness(this.surfaceWetness, this.waterLevel);
     const horizon = 1 - smooth(0.04, 0.52, Math.max(0, sunY));
-    const stormShade = 1 - V.storm * 0.7;
+    // Under a dense rain core the cloud deck becomes the light source. Away from
+    // it, sun can still reach the hull and pick out the dry side of the channel.
+    const overcastFill = smooth(0.04, 0.92, V.rain) * smooth(0.18, 0.86, V.storm);
+    const stormShade = (1 - V.storm * 0.7) * (1 - overcastFill * 0.82);
     const moonTransmission = lerp(0.3, 1, smooth(0.19, 0.52, V.cloud)) * lerp(1, 0.45, V.storm);
     this.moonlight = lunarNightLight(night, this.moonDir.y, this.moonIllumination, moonTransmission);
     const moonLight = this.moonlight * 0.14;
@@ -883,7 +941,7 @@ export class Environment {
     this.sun.color.copy(useMoon ? this.sunNight : this.sunDay);
     if (!useMoon) this.sun.color.lerp(this.sunWarm, horizon * daylight * (1 - V.storm * 0.6));
     this.sun.color.lerp(this.flashColor, this.flash);
-    this.hemi.intensity = lerp(0.09, 0.46, daylight) * lerp(1, 0.48, V.storm) + this.flash * 0.9;
+    this.hemi.intensity = lerp(0.09, 0.46, daylight) * lerp(1, 0.48, V.storm) + overcastFill * daylight * 0.39 + this.flash * 0.9;
     this.hemi.color.set(daylight > 0.1 ? 0x9fc3e8 : 0x203659); this.hemi.groundColor.set(daylight > 0.1 ? 0x3f4a2a : 0x07100c);
     this.scene.environmentIntensity = lerp(0.025, 0.42, daylight) * lerp(1, 0.42, V.storm);
 
@@ -896,6 +954,7 @@ export class Environment {
     this.sky.uniforms.lightDir.value.copy(this.lightDir); this.sky.uniforms.windDir.value.set(this.windDir.x, this.windDir.z); this.sky.uniforms.windSpeed.value = V.wind;
     this.sky.uniforms.daylight.value = daylight; this.sky.uniforms.storm.value = V.storm; this.sky.uniforms.flash.value = this.flash; this.sky.uniforms.flashDir.value.copy(this.flashDirection);
     this.sky.uniforms.rain.value = V.rain; this.sky.uniforms.cover.value = V.cloud; this.sky.uniforms.rainbow.value = this.rainbow;
+    this.sky.setRainField?.(this.weatherBand, this.mix, this.to.rain);
 
     this.water.setConditions({ level: this.waterLevel, seaState: V.sea, windAngle: this.localWindAngle, rain: V.rain, hail: V.hail, wind: V.wind });
     this.water.uniforms.sunDir.value.copy(this.lightDir);
@@ -940,7 +999,7 @@ export class Environment {
     fog.mistTime.value = realTime;
     fog.mistWind.value.set(this.windDir.x, this.windDir.z).multiplyScalar(V.wind * 0.12);
 
-    this.precip.update(dt, camera, this.windDir, V.rain, V.hail, this.waterLevel);
+    this.precip.update(step, camera, this.windDir, V.rain, V.hail, this.waterLevel, V.wind * this.gust);
     if (this.audio && this.audio.weather) this.audio.weather(V.wind * this.gust, V.rain, night, V.storm);
     this.nav.visible = night > 0.03 || this.restrictedVisibility > 0.25 || this.spotOn;
     if (this.nav.visible) {

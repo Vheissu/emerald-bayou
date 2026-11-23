@@ -43,6 +43,23 @@ test('pause opens with short actions and no controls paragraph', () => {
   assert.match(result.html, /data-action="controls" aria-expanded="false"/);
 });
 
+test('free ride offers a weather passage, while missions retain their weather and forecast', () => {
+  const { game } = menu();
+  game.environment = {
+    weatherLabel: () => 'Showers nearby',
+    weatherForecast: () => ({ currentLabel: 'Light rain', nextLabel: 'Thunderstorm', arrivalLabel: '3:15 PM' }),
+  };
+  game.renderMenu();
+  assert.match(game.el.menu.innerHTML, /data-action="weather"\s*><strong>Weather<\/strong><em>Light rain/);
+  game.story = { menuLine: () => 'Storm Line', stormLine: { busy: () => true } };
+  game.renderMenu(); assert.doesNotMatch(game.el.menu.innerHTML, /data-action="weather"/);
+  game.story = null; game.state = {};
+  game.renderMenu(); assert.doesNotMatch(game.el.menu.innerHTML, /data-action="weather"/);
+  game.menuTab = 'world'; game.renderMenu();
+  assert.match(game.el.menu.innerHTML, /Thunderstorm around 3:15 PM/);
+  assert.match(game.el.menu.innerHTML, /Showers nearby/);
+});
+
 test('both input modes remain available through the explicit Controls action', () => {
   const result = menu('system', true);
   assert.match(result.html, /controls-panel/); assert.match(result.html, /aria-expanded="true"/);

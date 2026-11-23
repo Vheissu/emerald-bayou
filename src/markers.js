@@ -249,7 +249,26 @@ export function shack() {
   }
   g.add(new THREE.Mesh(geometry('shack-roof', [], shackRoof), tin));
   const lamp = new THREE.Mesh(cylinderGeometry(0.04, 0.05, 3.2, 6), wood); lamp.position.set(2.4, 1.6, 2.4); g.add(lamp);
-  const bulb = new THREE.Mesh(sphereGeometry(0.12, 8, 6), material('shack-bulb', { color: 0xffe2a0, emissive: 0xffc060, emissiveIntensity: 1.2 })); bulb.position.set(2.4, 3.25, 2.4); g.add(bulb);
+  const lantern = new THREE.Mesh(geometry('shack-lantern', [], () => {
+    const parts = [
+      new THREE.CylinderGeometry(0.12, 0.14, 0.055, 14).translate(0, 0.02, 0),
+      new THREE.CylinderGeometry(0.065, 0.18, 0.075, 18).translate(0, 0.28, 0),
+      new THREE.TorusGeometry(0.107, 0.009, 5, 16).rotateX(Math.PI / 2).translate(0, 0.13, 0),
+    ];
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3;
+      parts.push(new THREE.CylinderGeometry(0.009, 0.009, 0.23, 5).translate(0.11 * Math.sin(a), 0.145, 0.11 * Math.cos(a)));
+    }
+    const result = mergeGeometries(parts);
+    for (const p of parts) p.dispose();
+    return result;
+  }), material('shack-lantern', { color: 0x485356, roughness: 0.64, metalness: 0.48 }));
+  lantern.position.set(2.4, 3.18, 2.4); g.add(lantern);
+  const globe = new THREE.Mesh(sphereGeometry(0.088, 14, 8), material('shack-lamp-glass', {
+    color: 0xc7c7ac, roughness: 0.24, transparent: true, opacity: 0.36, depthWrite: false,
+  }));
+  globe.position.set(2.4, 3.325, 2.4); globe.scale.y = 1.24; g.add(globe);
+  g.userData.lampPosition = globe.position;
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }

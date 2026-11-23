@@ -170,7 +170,7 @@ vec3 marshReaction(vec3 root, float bladeHeight) {
 
 // Patch a material so instanced cards get wind sway and (optionally) crown-centred normals,
 // crown-depth ambient occlusion and sun translucency (leaves lit from behind glow).
-function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp = 0.12, hasCrown = false, trans = 0.0, fade = null, marsh = null } = {}) {
+function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp = 0.12, hasCrown = false, trans = 0.0, fade = null, marsh = null, treeHeight = 0 } = {}) {
   const isDepth = !!mat.isMeshDepthMaterial;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = { value: 0 };
@@ -208,10 +208,12 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
     vs = vs.replace('#include <project_vertex>', `
       vec3 wBase = compactWorldBase;
       vec4 mvPosition = vec4(iPosition + (transformed - iPosition) * compactKeep, 1.0);
-      float hFac = ${pin === 'bottom' ? 'uv.y' : pin === 'top' ? '(1.0 - uv.y)' : pin === 'y' ? `clamp(position.y / ${pinH.toFixed(3)}, 0.0, 1.0)` : (hasCrown ? 'clamp(mvPosition.y / max(compactCrownCenter.y, 1.0), 0.0, 1.0)' : '1.0')};
+      float hFac = ${treeHeight ? `clamp(mvPosition.y / ${treeHeight.toFixed(3)}, 0.0, 1.0)` : pin === 'bottom' ? 'uv.y' : pin === 'top' ? '(1.0 - uv.y)' : pin === 'y' ? `clamp(position.y / ${pinH.toFixed(3)}, 0.0, 1.0)` : (hasCrown ? 'clamp(mvPosition.y / max(compactCrownCenter.y, 1.0), 0.0, 1.0)' : '1.0')};
       vec3 cardOrigin = (modelMatrix * vec4(iPosition, 1.0)).xyz;
-      float gW = gust(wBase);
-      mvPosition.xyz += windOffset(wBase, hFac, ${amp.toFixed(3)}, gW) + (windFlutter(cardOrigin, ${(amp * 0.07).toFixed(3)}, gW) + windBranch(cardOrigin, hFac, ${(amp * 0.55).toFixed(3)}, gW)) * ${hasCrown ? '1.0' : (pin === 'top' ? '(1.0 - uv.y)' : pin === 'y' ? 'hFac' : 'uv.y')};
+      ${treeHeight ? 'vec3 windRoot = modelMatrix[3].xyz;' : 'vec3 windRoot = wBase;'}
+      float gW = gust(windRoot);
+      vec3 sway = windOffset(windRoot, hFac, ${amp.toFixed(3)}, gW) + (windFlutter(cardOrigin, ${(amp * 0.07).toFixed(3)}, gW) + windBranch(cardOrigin, hFac, ${(amp * 0.55).toFixed(3)}, gW)) * ${hasCrown ? '1.0' : (pin === 'top' ? '(1.0 - uv.y)' : pin === 'y' ? 'hFac' : 'uv.y')};
+      ${treeHeight ? 'mvPosition.xyz += transpose(mat3(modelMatrix)) * sway / dot(modelMatrix[0].xyz, modelMatrix[0].xyz);' : 'mvPosition.xyz += sway;'}
       ${marsh ? 'mvPosition.xyz += marshReaction(wBase, hFac) * compactKeep;' : ''}
       ${hasCrown ? `
         // crown-depth AO: cards deep inside the crown are darker, the outer shell is lit
@@ -221,7 +223,7 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
         { float vd = length((modelViewMatrix * vec4(wBase, 1.0)).xyz); vFolAO = mix(vFolAO, 1.0, smoothstep(90.0, 320.0, vd)); }
         // upper hemisphere sees more sky
         vFolAO *= 0.8 + 0.2 * clamp(dc.y / max(iCrown.w, 0.5) + 0.5, 0.0, 1.0);
-        vec3 nW = normalize(dc);
+        vec3 nW = normalize(${treeHeight ? 'mat3(modelMatrix) * dc' : 'dc'});
         vFolBack = pow(max(-dot(nW, uSunDir), 0.0), 1.5) * (0.55 + 0.45 * rc);` : 'vFolAO = 1.0; vFolBack = 0.0;'}
       mvPosition = modelViewMatrix * mvPosition;
       gl_Position = projectionMatrix * mvPosition;`);
@@ -241,7 +243,7 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
       shader.fragmentShader = fs;
     }
   };
-  mat.customProgramCacheKey = () => `fol-fade-v2-${crownNormals}-${pin}-${pinH}-${amp}-${hasCrown}-${trans}-${isDepth}-${!!marsh}`; // uFade is a uniform, not part of the program
+  mat.customProgramCacheKey = () => `fol-fade-v2-${crownNormals}-${pin}-${pinH}-${amp}-${hasCrown}-${trans}-${isDepth}-${!!marsh}-${treeHeight}`; // uFade is a uniform, not part of the program
 }
 
 function makeDepthMat(map, alphaTest, opts) {
@@ -286,9 +288,9 @@ function trunkGeo() {
 
 // A kind of instanced card (cypress crown card, palm frond, grass clump...): one shared material, one mesh per chunk.
 class Kind {
-  constructor(geo, texture, opts, { color = 0xffffff, alphaTest = 0.5, shadow = true, small = false } = {}) {
+  constructor(geo, texture, opts, { color = 0xffffff, alphaTest = 0.5, shadow = true, small = false, wetness } = {}) {
     this.geo = geo; this.opts = opts; this.shadow = shadow; this.small = small;
-    this.mat = registerWetMaterial(new THREE.MeshStandardMaterial({ map: texture, alphaTest, side: THREE.DoubleSide, roughness: 0.92, metalness: 0, color, alphaToCoverage: true }));
+    this.mat = registerWetMaterial(new THREE.MeshStandardMaterial({ map: texture, alphaTest, side: THREE.DoubleSide, roughness: 0.92, metalness: 0, color, alphaToCoverage: true }), wetness);
     patchFoliage(this.mat, opts);
     this.depth = makeDepthMat(texture, alphaTest, opts);
   }
@@ -442,6 +444,72 @@ function disposeChunkMesh(mesh) {
   if (mesh.dispose) mesh.dispose();
 }
 
+const CAMP_OAK_HEIGHT = 12.5;
+const CAMP_OAK_SWAY = 0.23;
+
+function campOakMeshes(leafKind, bark, detail) {
+  const random = mulberry32(25281), wood = [], leaves = new Batch(leafKind);
+  const up = new THREE.Vector3(0, 1, 0), direction = new THREE.Vector3(), position = new THREE.Vector3();
+  const rotation = new THREE.Quaternion(), euler = new THREE.Euler(), scale = new THREE.Vector3(), matrix = new THREE.Matrix4();
+  const tint = new THREE.Color(), center = new THREE.Vector4(0, 8.9, 0, 6.1);
+  const limb = (from, to, r0, r1, sides = 8) => {
+    const start = new THREE.Vector3(...from), end = new THREE.Vector3(...to);
+    direction.subVectors(end, start);
+    const length = direction.length();
+    const shape = new THREE.CylinderGeometry(r1, r0, length + 0.09, sides, 2);
+    TEX.scaleTextureUvs(shape, 1.45, length * 0.92);
+    rotation.setFromUnitVectors(up, direction.normalize());
+    position.addVectors(start, end).multiplyScalar(0.5);
+    wood.push(shape.applyQuaternion(rotation).translate(position.x, position.y, position.z));
+  };
+  const lobe = (x, y, z, radius, count, size) => {
+    for (let i = 0, n = foliageInstanceCount(count, detail, 5); i < n; i++) {
+      const theta = random() * Math.PI * 2, r = Math.sqrt(random()) * radius;
+      position.set(x + Math.cos(theta) * r, y + (random() - 0.42) * (1.35 - r * 0.24), z + Math.sin(theta) * r);
+      euler.set((random() - 0.45) * 1.5, random() * Math.PI * 2, (random() - 0.5) * 0.89);
+      rotation.setFromEuler(euler);
+      const span = size * (0.75 + random() * 0.49) * Math.min(1.32, Math.sqrt(count / n));
+      scale.set(span, span * (0.66 + random() * 0.28), 1);
+      tint.setRGB(0.61, 0.64, 0.50).multiplyScalar(0.74 + random() * 0.34);
+      leaves.add(matrix.compose(position, rotation, scale), tint, center);
+    }
+  };
+
+  const foot = [0, 0.22, 0], shoulder = [0.08, 3.0, 0.23], crotch = [-0.22, 5.58, 0.15];
+  limb([0, -0.28, 0], foot, 1.06, 0.71, 11);
+  limb(foot, shoulder, 0.71, 0.47, 11);
+  limb(shoulder, crotch, 0.47, 0.36);
+  for (let i = 0; i < 5; i++) {
+    const a = i * 1.2566 + random() * 0.36, radius = 1.20 + random() * 0.72;
+    limb([0, 0.79, 0], [Math.cos(a) * radius, -0.25, Math.sin(a) * radius], 0.24, 0.065, 5);
+  }
+
+  for (const [from, elbow, end, fork, base, breadth] of [
+    [shoulder, [-1.36, 5.04, 0.36], [-4.16, 7.63, 0.90], [-2.70, 7.71, -1.44], 0.36, 1.82],
+    [crotch, [1.62, 6.43, 0.51], [4.07, 8.34, 1.57], [3.38, 8.88, -0.89], 0.33, 1.92],
+    [crotch, [-0.99, 7.21, -0.95], [-1.99, 9.68, -3.41], [0.62, 9.31, -3.01], 0.29, 1.57],
+    [crotch, [0.13, 6.80, 1.24], [-0.45, 8.63, 3.84], [1.72, 8.83, 2.82], 0.29, 1.53],
+    [crotch, [-0.50, 8.14, 0.31], [0.17, 10.85, -0.12], [-1.52, 9.20, 0.72], 0.32, 2.12],
+  ]) {
+    limb(from, elbow, base, base * 0.65);
+    limb(elbow, end, base * 0.65, 0.055);
+    limb(elbow, fork, base * 0.41, 0.038, 6);
+    lobe(end[0], end[1], end[2], breadth, 13, 2.45);
+    lobe(fork[0], fork[1], fork[2], breadth * 0.78, 8, 2.23);
+  }
+  lobe(0, 9.47, 0, 2.4, 17, 2.57);
+
+  const trunkGeometry = mergeGeometries(wood);
+  for (const part of wood) part.dispose();
+  trunkGeometry.computeBoundingSphere();
+  trunkGeometry.boundingSphere.radius += 0.8;
+  const trunk = new THREE.Mesh(trunkGeometry, bark);
+  trunk.name = 'Camp oak bark'; trunk.castShadow = trunk.receiveShadow = true;
+  const crown = leaves.build(new THREE.Sphere(new THREE.Vector3(0, 8.5, 0.15), 8.1));
+  crown.name = 'Camp oak boughs';
+  return [trunk, crown];
+}
+
 export class Vegetation {
   constructor(terrain, exclusions = [], options = {}) {
     const setupStartedAt = performance.now(), setupTimings = {};
@@ -496,6 +564,7 @@ export class Vegetation {
       return mat;
     };
     const barkDetail = art.bark && this.detail >= 0.8 ? { bumpMap: texBark, bumpScale: 0.035 } : {};
+    this.campOakTextures = { bark: { map: texBark, ...barkDetail }, leaves: texOak };
     this.trunkMat = registerWetMaterial(patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, ...barkDetail, roughness: 0.95, metalness: 0, color: art.bark ? 0xcac8bc : 0x8a867c }), 0.34));
     this.branchMat = registerWetMaterial(patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, color: 0x8f8375 }), 0.30));
     this.kneeMat = registerWetMaterial(new THREE.MeshStandardMaterial({ map: texBark, color: 0xaea293, roughness: 1 }));
@@ -960,6 +1029,29 @@ export class Vegetation {
   addSolid(geo, mat, height) {
     return this.addSolids([{ geo, mat, height }]);
   }
+  buildCampOak() {
+    if (!this.campOakMeshes) {
+      const leaves = new Kind(cardGeo(), this.campOakTextures.leaves, {
+        crownNormals: true, pin: 'crown', amp: CAMP_OAK_SWAY, hasCrown: true, trans: 0.40, treeHeight: CAMP_OAK_HEIGHT,
+      }, { wetness: { minRoughness: 0.68, darken: 0.13 } });
+      const bark = new THREE.MeshStandardMaterial({ color: 0xaaa194, roughness: 0.96, ...this.campOakTextures.bark });
+      const barkDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+      this.kinds.push(leaves);
+      this.windMat(bark, 0, CAMP_OAK_HEIGHT, 1, CAMP_OAK_SWAY, true);
+      this.windMat(barkDepth, 0, CAMP_OAK_HEIGHT, 1, CAMP_OAK_SWAY, true);
+      const meshes = campOakMeshes(leaves, bark, this.detail);
+      meshes[0].customDepthMaterial = barkDepth;
+      this.campOakMeshes = meshes;
+    }
+    const group = new THREE.Group();
+    group.name = 'Camp live oak';
+    for (const template of this.campOakMeshes) {
+      const mesh = template.clone();
+      mesh.customDepthMaterial = template.customDepthMaterial;
+      group.add(mesh);
+    }
+    return group;
+  }
   prepareHeroTree(root, specification) {
     const box = root.userData.box ||= new THREE.Box3().setFromObject(root), height = box.max.y - box.min.y;
     if (!(height > 0) || !Number.isFinite(height)) return 0;
@@ -975,7 +1067,7 @@ export class Vegetation {
     return materials.size;
   }
   // wind for a one-off model (a hero tree at a homestead): sway about its own origin, in metres despite the model's scale
-  windMat(mat, yMin, yMax, scale, amp = 0.3) {
+  windMat(mat, yMin, yMax, scale, amp = 0.3, localTree = false) {
     registerWetMaterial(mat);
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = { value: 0 }; shader.uniforms.uWind = { value: new THREE.Vector3(1, 1, 0) }; mat.userData.shader = shader;
@@ -985,11 +1077,12 @@ export class Vegetation {
         float hFac = clamp((position.y - ${yMin.toFixed(3)}) / ${(yMax - yMin).toFixed(3)}, 0.0, 1.0);
         vec3 wp = (modelMatrix * vec4(transformed, 1.0)).xyz;
         float gW = gust(wBase);
-        mvPosition.xyz += (windOffset(wBase, hFac, ${amp.toFixed(3)}, gW) + windBranch(wp, hFac, ${(amp * 0.6).toFixed(3)}, gW)) * ${(1 / scale).toFixed(5)};
+        vec3 sway = windOffset(wBase, hFac, ${amp.toFixed(3)}, gW) + windBranch(wp, hFac, ${(amp * 0.6).toFixed(3)}, gW);
+        ${localTree ? 'mvPosition.xyz += transpose(mat3(modelMatrix)) * sway / dot(modelMatrix[0].xyz, modelMatrix[0].xyz);' : `mvPosition.xyz += sway * ${(1 / scale).toFixed(5)};`}
         mvPosition = modelViewMatrix * mvPosition;
         gl_Position = projectionMatrix * mvPosition;`);
     };
-    mat.customProgramCacheKey = () => `hero-${yMin}-${yMax}-${scale}-${amp}`; mat.needsUpdate = true;
+    mat.customProgramCacheKey = () => `hero-${yMin}-${yMax}-${scale}-${amp}-${localTree}`; mat.needsUpdate = true;
     this.extraMats.push(mat);
   }
   updateRangeVisibility(camera) {

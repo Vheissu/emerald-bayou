@@ -1,15 +1,16 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise.js';
-import { shack, crabFloat, fuelDrum, heroTreeFallback } from './markers.js';
+import { shack, crabFloat, fuelDrum } from './markers.js';
 import { buildDock } from './tower.js';
 import { buildSkiff } from './npc.js';
 import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
 import { SITE_CELL, pickSite, buildSite, animateSite, wideHere } from './sites.js';
 import { person, cooler, bucket, fishingLine } from './folk.js';
-import { spawn } from './models.js';
 import { trimOldest } from './cache.js';
 import { WakeStampPool } from './wakestamps.js';
 import { buildCampWork, poseCampWorker, updateCampWork } from './campwork.js';
+import { updateDockWeather } from './dockweather.js';
+import { buildRoofDrain, updateRoofDrain } from './roofdrain.js';
 
 // The things scattered through the endless bayou: fish camps on the channel banks (one per ~1.6 km cell, seeded, so
 // they are the same for everyone every time) and lost crab-trap floats drifting in the back pools. Everything is
@@ -40,12 +41,13 @@ export function disposeDetachedGeometries(root, ...retainedRoots) {
 }
 
 export class World {
-  constructor(terrain, scene, waveFn) {
-    this.T = terrain; this.scene = scene; this.waveFn = waveFn;
+  constructor(terrain, scene, waveFn, vegetation = null) {
+    this.T = terrain; this.scene = scene; this.waveFn = waveFn; this.vegetation = vegetation;
     this.campCells = new Map(); this.trapCells = new Map(); this.siteCells = new Map();
     this.liveCamps = new Map(); this.liveTraps = new Map(); this.liveSites = new Map();
     this.cellCacheEvictions = { camps: 0, sites: 0, traps: 0 };
     this.checkT = 0; this.collected = new Set(); this.phys = null; this.wind = null;
+    this.homeWeather = null; this.environment = null;
     this.fx = null; // { plume, spray, audio, fish, playerWakeAt } from main
     this.stampPool = new WakeStampPool(24); this.obLevel = 0; this.obPitch = 1; this.obX = 0; this.obZ = 0; this.truckLevel = 0; this.onShot = null;
     this.emitStamp = (x, z, radius, height, foam, foamRadius) => this.stampPool.emit(x, z, radius, height, foam, foamRadius);
@@ -112,8 +114,10 @@ export class World {
     const g = new THREE.Group(); g.name = 'camp';
     const T = this.T;
     const sh = shack(); sh.position.set(c.x, c.h - 0.3, c.z); sh.rotation.y = Math.atan2(c.tie.x - c.x, c.tie.z - c.z); g.add(sh);
+    g.userData.roofDrain = buildRoofDrain(sh);
+    g.userData.porchLamp = sh.localToWorld(sh.userData.lampPosition.clone());
     // dock from the bank out over the water toward the tie-up
-    const dock = buildDock(14, 1.8);
+    const dock = buildDock(14, 1.8, { weather: true });
     const dx = c.tie.x - c.bank.x, dz = c.tie.z - c.bank.z; const l = Math.hypot(dx, dz);
     dock.position.set(c.bank.x, 0, c.bank.z); dock.rotation.y = Math.atan2(dx / l, dz / l) + Math.PI; g.add(dock);
     const rr = mulberry32(c.seed);
@@ -123,10 +127,19 @@ export class World {
     skiff.position.set(sx, -0.05, sz); skiff.rotation.y = Math.atan2(dx / l, dz / l) + (rr() - 0.5) * 0.4; skiff.rotation.order = 'YXZ'; g.add(skiff); g.userData.skiff = skiff; g.userData.skiffWater = { x: sx, z: sz, heading: skiff.rotation.y };
     for (let i = 0; i < 2 + Math.floor(rr() * 3); i++) { const d = fuelDrum(); const a = c.ang + (rr() - 0.5) * 1.6, r = 4 + rr() * 5; const px = c.x + Math.cos(a) * r, pz = c.z + Math.sin(a) * r; d.position.set(px, T.heightAt(px, pz) - 0.05, pz); d.rotation.y = rr() * 6; g.add(d); }
     for (let i = 0; i < 3; i++) { const f = crabFloat(); const a = rr() * 6.28, r = 2 + rr() * 3; const px = c.x + Math.cos(a) * r, pz = c.z + Math.sin(a) * r; f.position.set(px, T.heightAt(px, pz) + 0.1, pz); f.rotation.z = 1.2; f.rotation.y = rr() * 6; g.add(f); }
-    // a hero tree over the shack
-    if (rr() < 0.7) { const a = c.ang + (rr() - 0.5) * 1.0; const px = c.x + Math.cos(a) * (7 + rr() * 3), pz = c.z + Math.sin(a) * (7 + rr() * 3); const tr = spawn('tree_c', heroTreeFallback()); tr.position.set(px, T.heightAt(px, pz) - 0.1, pz); tr.rotation.y = rr() * 6.28; tr.scale.setScalar(0.8 + rr() * 0.4); g.add(tr); }
+    // A spreading live oak shades the shack. Preserve the seed order for crews and other props.
+    if (rr() < 0.7) {
+      const a = c.ang + (rr() - 0.5), reach = 7 + rr() * 3, width = 7 + rr() * 3;
+      const px = c.x + Math.cos(a) * reach, pz = c.z + Math.sin(a) * width;
+      const rotation = rr() * 6.28, size = 0.8 + rr() * 0.4;
+      const tr = this.vegetation?.buildCampOak();
+      if (tr) {
+        tr.position.set(px, T.heightAt(px, pz) - 0.1, pz);
+        tr.rotation.y = rotation; tr.scale.setScalar(size); g.add(tr);
+      }
+    }
     // the camp's people: somebody fishing off the dock, somebody at the shack sorting gear
-    g.userData.people = []; g.userData.site = c;
+    g.userData.people = []; g.userData.site = c; g.userData.dockWeather = dock.userData.dockWeather;
     if (rr() < 0.6) { const p = person(rr, { pose: 'sitEdge', rod: true }); p.position.set(0.72, 0.81, -12.6); p.rotation.y = Math.PI / 2; dock.add(p); g.userData.people.push(p); const bk = bucket(); bk.position.set(-0.4, 0.81, -12.0); dock.add(bk); }
     if (rr() < 0.5) { const p = person(rr, { pose: 'crouch' }); const a = c.ang + Math.PI + (rr() - 0.5) * 1.2; const px = c.x + Math.cos(a) * 4.5, pz = c.z + Math.sin(a) * 4.5; p.position.set(px, T.heightAt(px, pz), pz); p.rotation.y = a + Math.PI / 2; g.add(p); g.userData.people.push(p); const cl = cooler(rr); cl.position.set(px + 0.8, T.heightAt(px + 0.8, pz), pz); g.add(cl); }
     for (const p of g.userData.people) if (p.userData.rod) { const ln = fishingLine(); ln.visible = false; g.add(ln); p.userData.line = ln; p.userData.lineTarget = new THREE.Vector3(); p.userData.castCd = 3 + rr() * 12; }
@@ -246,8 +259,16 @@ export class World {
     this.stampPool.reset();
     const P = this.phys; const fx = this.fx || {};
     const ctx = this.context; ctx.bx = bx; ctx.bz = bz; ctx.speed = P ? P.speed : 0; ctx.dt = dt; ctx.plume = fx.plume; ctx.spray = fx.spray; ctx.audio = fx.audio; ctx.fish = fx.fish; ctx.playerWakeAt = fx.playerWakeAt; ctx.ob = 0; ctx.obPitch = 1; ctx.obX = 0; ctx.obZ = 0; ctx.truck = 0; ctx.onShot = this.onShot; ctx.humanActivity = this.humanActivity ?? 1;
+    updateDockWeather(this.homeWeather, dt, bx, bz, this.environment);
     for (const g of this.liveCamps.values()) {
+      const drain = g.userData.roofDrain;
+      if (drain && this.environment) {
+        const rain = this.environment.sampleRainAt(drain.x, drain.z);
+        const step = this.environment.game?.paused ? 0 : dt;
+        updateRoofDrain(drain, step, rain, (drain.x - bx) ** 2 + (drain.z - bz) ** 2);
+      }
       const work = g.userData.campWork;
+      updateDockWeather(g.userData.dockWeather, dt, bx, bz, this.environment);
       updateCampWork(work, t, this.waveFn, this.wind, ctx);
       animateSite(g, t, this.waveFn, this.wind, ctx);
       poseCampWorker(work);

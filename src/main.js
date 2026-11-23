@@ -188,7 +188,7 @@ async function init() {
   // dock toward the lagoon
   const dir = new THREE.Vector2(terrain.lagoon.x - island.x, terrain.lagoon.y - island.y).normalize();
   let dist = 6; while (dist < 60 && terrain.heightAt(island.x + dir.x * dist, island.y + dir.y * dist) > 0.25) dist += 1;
-  const dock = buildDock(16, 2.0);
+  const dock = buildDock(16, 2.0, { weather: true });
   dock.position.set(island.x + dir.x * (dist - 3), 0, island.y + dir.y * (dist - 3));
   dock.rotation.y = Math.atan2(dir.x, dir.y) + Math.PI; // dock extends along its local -Z
   dock.position.y = 0.0;
@@ -281,7 +281,8 @@ async function init() {
   const audio = new EngineAudio();
   const tricks = new Tricks(phys);
   const skiff = new SkiffAI((x, z, t, receiver) => water.boatWaveHeight(x, z, t, receiver)); skiff.mesh.visible = false; scene.add(skiff.mesh);
-  const world = new World(terrain, scene, (x, z, t) => water.waveHeight(x, z, t)); world.phys = phys; world.wind = wind;
+  const world = new World(terrain, scene, (x, z, t) => water.waveHeight(x, z, t), veg); world.phys = phys; world.wind = wind;
+  world.homeWeather = dock.userData.dockWeather;
   veg.blocked = (x, z) => world.blockedAt(x, z);
   const game = new Game({ phys, T: terrain, scene, audio, tricks, manatees, gators, skiff, boat: boat.group, dockTie, startX, startZ, world });
   game.paused = true; // loading and the title screen are presentation states, not unobserved play time
@@ -306,6 +307,7 @@ async function init() {
   gators.onSplash = (x, z, sc) => { const surface = water.waveHeight(x, z, time); for (let i = 0; i < 14; i++) plume.emit(x + jitter() * 1.2, surface + 0.1, z + jitter() * 1.2, jitter() * 2, 0.8 + Math.random() * 1.8, jitter() * 2, 0.2 + Math.random() * 0.25, 1.0, 0.6 + Math.random() * 0.4, 0.3); for (let i = 0; i < 40; i++) spray.emit(x + jitter() * 1.2, surface + 0.05, z + jitter() * 1.2, jitter() * 3, 1 + Math.random() * 2.5, jitter() * 3, 0.015 + Math.random() * 0.03, 0.4 + Math.random() * 0.4, 0.6); audio.splash(0.5 * sc); };
   waders.onFlush = (w, d, source = 'player') => { if (source === 'player') game.bounties.event('flush', 1); if (Math.random() < 0.5) audio.squawk(0.25 * Math.max(0, 1 - d / 40), w.x, w.z); };
   const environment = new Environment({ scene, fxScene, camera, terrain, world, water, sky, sun, hemi, pipeline, wind, boat: boat.group, audio, game, phys, sunDir: SUN_DIR, effectBudget: startup.effectBudget, profile: renderProfile });
+  world.environment = environment; game.environment = environment;
   life.traffic.environment = environment; environment.traffic = life.traffic;
   const currents = new CurrentField({ fxScene, terrain, water, environment, phys, game });
   environment.currentField = currents; life.currents = currents; life.fx.currents = currents; world.currents = currents; world.fx.currents = currents; skiff.currents = currents;
