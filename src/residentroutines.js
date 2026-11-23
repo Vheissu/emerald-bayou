@@ -39,6 +39,13 @@ export function residentOnShift(role = 'camp', hour = 12, seed = 0.5, day = 1) {
   return inWindow(h, 5.35 + shift, 20.45 + shift * 0.45);
 }
 
+function weatherRoutine(role, storm, rain, wind) {
+  if (storm >= 0.86 || wind >= 29 || (rain >= 0.94 && wind >= 21)) return RESIDENT_ROUTINE.INSIDE;
+  if (role === 'blind' && (storm >= 0.48 || wind >= 18)) return RESIDENT_ROUTINE.INSIDE;
+  if (storm >= 0.56 || wind >= 18 || (rain >= 0.72 && wind >= 12)) return RESIDENT_ROUTINE.BRACE;
+  return RESIDENT_ROUTINE.OUTSIDE;
+}
+
 // This is deliberately a small state machine. It runs at the ecology director's 2 Hz cadence,
 // while the existing pose system performs the visible easing each render frame.
 export function residentRoutineState(input = {}) {
@@ -56,9 +63,8 @@ export function residentRoutineState(input = {}) {
   const stars = attention > 0.04 ? Math.min(5, Math.ceil(attention)) : 0;
 
   if (input.pursuit && stars >= 3 && distance < 175) return RESIDENT_ROUTINE.INSIDE;
-  if (storm >= 0.86 || wind >= 29 || (rain >= 0.94 && wind >= 21)) return RESIDENT_ROUTINE.INSIDE;
-  if (role === 'blind' && (storm >= 0.48 || wind >= 18)) return RESIDENT_ROUTINE.INSIDE;
-  if (storm >= 0.56 || wind >= 18 || (rain >= 0.72 && wind >= 12)) return RESIDENT_ROUTINE.BRACE;
+  const weather = weatherRoutine(role, storm, rain, wind);
+  if (weather !== RESIDENT_ROUTINE.OUTSIDE) return weather;
   if (input.pursuit && stars > 0 && distance < 330) return RESIDENT_ROUTINE.WATCH;
   if (distance < 82 && speed > 4) return RESIDENT_ROUTINE.WATCH;
   return RESIDENT_ROUTINE.OUTSIDE;
@@ -75,19 +81,29 @@ export function applyResidentRoutines(group, input, stats = null) {
     input.seed = Number.isFinite(user.seed) ? user.seed : 0.5;
     const state = residentRoutineState(input);
     const visible = state !== RESIDENT_ROUTINE.INSIDE;
-    if (!visible && user.routineState !== RESIDENT_ROUTINE.INSIDE && user.line) {
-      user.line.visible = false;
-      user.lineOn = 0;
-      user.reelT = 0;
-      user.castCd = 3 + input.seed * 7;
+    if (user.dockReaction) {
+      user.routineDesired = state;
+      const role = input.role || 'camp';
+      user.routineWeather = state === RESIDENT_ROUTINE.BRACE ? 'wind'
+        : state !== RESIDENT_ROUTINE.INSIDE ? ''
+          : !residentOnShift(role, input.hour, input.seed, input.day) ? 'shift'
+            : weatherRoutine(role, input.storm, input.rain, input.wind) === RESIDENT_ROUTINE.INSIDE ? 'storm' : 'patrol';
+    } else {
+      if (!visible && user.routineState !== RESIDENT_ROUTINE.INSIDE && user.line) {
+        user.line.visible = false;
+        user.lineOn = 0;
+        user.reelT = 0;
+        user.castCd = 3 + input.seed * 7;
+      }
+      user.routineState = state;
+      person.visible = visible;
     }
-    user.routineState = state;
-    person.visible = visible;
     if (!stats) continue;
     stats.actors++;
-    if (state === RESIDENT_ROUTINE.INSIDE) stats.inside++;
-    else if (state === RESIDENT_ROUTINE.WATCH) stats.watching++;
-    else if (state === RESIDENT_ROUTINE.BRACE) stats.bracing++;
+    const activity = user.routineState ?? state;
+    if (activity === RESIDENT_ROUTINE.INSIDE) stats.inside++;
+    else if (activity === RESIDENT_ROUTINE.WATCH) stats.watching++;
+    else if (activity === RESIDENT_ROUTINE.BRACE) stats.bracing++;
     else stats.outside++;
   }
 }

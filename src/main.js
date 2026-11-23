@@ -22,7 +22,7 @@ import { World, disposeDetachedGeometries } from './world.js';
 import { WorldMap } from './worldmap.js';
 import { Life } from './life.js';
 import { pickSite, buildSite } from './sites.js';
-import { person, canoe } from './folk.js';
+import { person, canoe, setPersonClothImage, setPersonComplexion } from './folk.js';
 import { configureModelLoading, loadGeo, loadModel, modelLoadingStats, preload, releaseDeferredModels, reportModelFramePressure, spawn, SPEC } from './models.js';
 import { Environment } from './environment.js';
 import { EncounterDirector } from './encounters.js';
@@ -163,6 +163,8 @@ async function init() {
   loadingProgress('Growing the near shore', 0.24);
   const grass = TEX.grassGround(), sand = TEX.sandGround(), noise = TEX.noiseTex();
   const art = await artReady;
+  if (art.canvasCloth) setPersonClothImage(art.canvasCloth);
+  if (art.complexion) setPersonComplexion(art.complexion);
   if (art.cloud) sky.setCloudBank(art.cloud);
   const groundTex = { grass, sand, noise, mud: TEX.mudGround(art.litter), mudScale: art.litter ? 0.48 : 0.11 };
   scene.add(terrain.buildMesh(groundTex));

@@ -15,6 +15,8 @@ const environmentArt = {
   moss: new URL('../assets/environment/spanish-moss.webp', import.meta.url),
   reeds: new URL('../assets/environment/cattail-stand.webp', import.meta.url),
   cloud: new URL('../assets/environment/cumulus-bank.webp', import.meta.url),
+  canvasCloth: new URL('../assets/environment/workwear-canvas.webp', import.meta.url),
+  complexion: new URL('../assets/environment/crew-complexion.webp', import.meta.url),
 };
 
 // Decode alongside the terrain workers. Each failed image falls back independently to its

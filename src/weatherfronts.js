@@ -74,8 +74,12 @@ export function bandWind(wind, band, strength) {
   return wind * (1 - (1 - strength) * (1 - band.shape.rainFloor) * 0.24);
 }
 
+export function bandStorm(storm, band, strength) {
+  return storm * lerp(band.shape.stormFloor, 1, strength);
+}
+
 export function applyWeatherBand(out, target, band, strength) {
-  const edge = 1 - strength, { rainFloor, stormFloor } = band.shape;
+  const edge = 1 - strength, { rainFloor } = band.shape;
   const open = edge * (1 - rainFloor);
   out.rain = bandRain(target.rain, band, strength);
   out.wind = bandWind(target.wind, band, strength);
@@ -85,7 +89,7 @@ export function applyWeatherBand(out, target, band, strength) {
   out.fog = target.fog * (1 - open * 0.47);
   out.exposure = target.exposure + open * 0.08;
   out.lightning = target.lightning * (1 - open * 0.68);
-  out.storm = target.storm * lerp(stormFloor, 1, strength);
+  out.storm = bandStorm(target.storm, band, strength);
   out.surge = target.surge;
 }
 

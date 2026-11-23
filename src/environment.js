@@ -3,7 +3,7 @@ import { lunarAgeAt, lunarIllumination, lunarNightLight, lunarPhaseAt, lunarPhas
 import { updateAttributePrefix } from './cache.js';
 import { navigationLightVisibility, PLAYER_NAV_LIGHT_LAYOUT } from './navigationrules.js';
 import { applyAirboatWind, combinedSurfaceWind } from './vesselwind.js';
-import { applyWeatherBand, bandRain, bandWind, createWeatherBand, nextWeatherKey, restoreWeatherBand, serializeWeatherBand, weatherBandStrength } from './weatherfronts.js';
+import { applyWeatherBand, bandRain, bandStorm, bandWind, createWeatherBand, nextWeatherKey, restoreWeatherBand, serializeWeatherBand, weatherBandStrength } from './weatherfronts.js';
 import { LIGHTNING_LIFETIME, LIGHTNING_MAX_SEGMENTS, LIGHTNING_TRUNK_SEGMENTS, lightningSkyDirection, lightningStrokeEnvelope, writeLightningStroke } from './lightning.js';
 import {
   insertNearestSettlement, MAX_SETTLEMENT_LIGHTS, MAX_SETTLEMENT_OUTAGES, normalizeSettlementOutages,
@@ -705,6 +705,7 @@ export class Environment {
     return lerp(this.from[key], localCondition(this.to[key], band, weatherBandStrength(band, x, z)), t * t * (3 - 2 * t));
   }
   sampleRainAt(x, z) { return this.sampleBandCondition('rain', x, z, bandRain); }
+  sampleStormAt(x, z) { return this.sampleBandCondition('storm', x, z, bandStorm); }
   sampleWindAt(x, z) { return this.sampleBandCondition('wind', x, z, bandWind); }
   weatherBandSnapshot() {
     const band = this.weatherBand;

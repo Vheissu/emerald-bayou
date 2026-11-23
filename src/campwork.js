@@ -165,14 +165,19 @@ export function updateCampWork(work, time, waveAt, wind, context) {
   const water = waveAt(work.x, work.z, time);
   const oldHeight = work.y, gust = wind?.y || 0;
   const { worker, cargo, drum } = work;
+  const reaction = worker.userData.dockReaction;
+  const gripWeight = reaction?.grip ?? 1;
   campWorkStep(work, dt, water, wake, distance, context.speed, worker.userData.routineState, gust,
-    worker.visible && context.humanActivity > 0.14);
+    worker.visible && context.humanActivity > 0.14 && (!reaction || reaction.state === 'idle' || reaction.state === 'notice'));
   const delta = work.y - oldHeight;
   const swing = Math.min(0.15, 0.025 * gust + Math.abs(wake) * 0.55 + Math.abs(delta) * 0.55);
   cargo.position.set(Math.sin(time * 2.1 + work.x) * swing, work.y, 0.76 + Math.cos(time * 1.7 + work.z) * swing);
   cargo.rotation.set(Math.sin(time * 1.7 + work.z) * swing * 1.5, 0, Math.sin(time * 2.1 + work.x) * swing * 1.7);
   drum.rotation.x -= delta * 8;
-  const grip = work.parked ? 0 : smooth(Math.abs(delta) / Math.max(0.001, dt), 0.03, 0.21);
+  worker.userData.hoistAngle = drum.rotation.x;
+  // Keep a hand on the rim between turns and while hauling the load out. Release
+  // once it is secured, or when the operator leaves the working position.
+  const grip = (work.parked ? smooth(Math.abs(delta) / Math.max(0.001, dt), 0.016, 0.13) : 1) * gripWeight;
   worker.userData.hoistGrip = THREE.MathUtils.lerp(worker.userData.hoistGrip || 0, grip, 1 - Math.exp(-dt * 9));
   setRope(work);
 
@@ -187,6 +192,7 @@ export function updateCampWork(work, time, waveAt, wind, context) {
 
 const goal = new THREE.Vector3(), aim = new THREE.Vector3(), elbow = new THREE.Vector3();
 const upperTarget = new THREE.Quaternion(), foreTarget = new THREE.Quaternion(), inverse = new THREE.Quaternion();
+const gripFrame = new THREE.Quaternion(), wristRoll = new THREE.Quaternion(), crankAxis = new THREE.Vector3(1, 0, 0);
 export function poseCampWorker(work) {
   const { worker, drum, actor } = work;
   const grip = worker.userData.hoistGrip;
@@ -194,7 +200,11 @@ export function poseCampWorker(work) {
   const { upper, fore, hand } = worker.userData.arms[1];
   const spine = upper.parent;
   // Solve the two arm lengths in spine space so the worker follows the actual crank handle.
-  spine.worldToLocal(drum.localToWorld(goal.set(0.054, 0.16, 0)));
+  drum.parent.getWorldQuaternion(gripFrame);
+  gripFrame.multiply(wristRoll.setFromAxisAngle(crankAxis, -0.20 + Math.sin(drum.rotation.x) * 0.24));
+  drum.localToWorld(goal.set(0.054, 0.16, 0));
+  goal.add(aim.set(0, 0.023, -0.012).applyQuaternion(gripFrame));
+  spine.worldToLocal(goal);
   goal.sub(upper.position);
   const arm = -fore.position.y, forearm = -hand.position.y;
   const distance = THREE.MathUtils.clamp(goal.length(), Math.abs(arm - forearm) + 0.001, arm + forearm - 0.001);
@@ -208,4 +218,8 @@ export function poseCampWorker(work) {
   foreTarget.setFromUnitVectors(down, goal);
   upper.quaternion.slerp(upperTarget, grip);
   fore.quaternion.slerp(foreTarget, grip);
+  // The handle turns on a horizontal pin. Keep the knuckles along that pin
+  // as the elbow changes direction instead of rolling the palm through the crank.
+  fore.getWorldQuaternion(inverse).invert();
+  hand.quaternion.slerp(inverse.multiply(gripFrame), grip);
 }

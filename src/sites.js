@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise.js';
-import { buildDock } from './tower.js';
+import { buildDock, positionDockShelter } from './tower.js';
 import { buildModelBoatFallback, buildSkiff } from './npc.js';
 import * as TEX from './textures.js';
-import { person, animatePerson, wave, aim, fishingUpdate, cooler, chair, bucket, fishingLine } from './folk.js';
+import { person, animatePerson, wave, aim, fishingUpdate, cooler, chair, bucket, fishingLine, rodTip, setLine } from './folk.js';
 import { heroTreeFallback } from './markers.js';
 import { spawn, SPEC } from './models.js';
 import { cachedResource, sharedResource } from './cache.js';
 import { registerWetMaterial } from './surfacewetness.js';
+import { attachDockResident, attachLandingResident, dockCastAllowed } from './dockresidents.js';
 
 // The people who live out here: stilt houses with a dock and a washing line, public boat ramps with a truck and an
 // empty trailer, tin-roof boathouses over the water, duck blinds in the shallows. One per ~800 m cell, seeded, placed
@@ -211,6 +212,8 @@ function boathouse(rr) {
   const L = 7.5, W = 3.8, H = 3.2;
   for (const sx of [-W / 2, W / 2]) for (const sz of [-L / 2, 0, L / 2]) g.add(cyl(0.12, 0.14, H + 1.5, sx, H / 2 - 0.7, sz, greyWood));
   for (const sx of [-1, 1]) { const r = box(W / 2 + 0.6, 0.06, L + 1.0, sx * (W / 4 + 0.05), H + 0.55, 0, rr() < 0.5 ? tin : rustTin); r.rotation.z = -sx * 0.5; g.add(r); }
+  const awning = box(1.44, 0.05, L + 0.85, W / 2 + 0.8, H - 0.21, 0, tin);
+  awning.rotation.z = -0.19; g.add(awning);
   g.add(box(W + 0.4, 0.12, 0.12, 0, H + 0.1, -L / 2)); g.add(box(W + 0.4, 0.12, 0.12, 0, H + 0.1, L / 2));
   const walk = buildDock(L, 0.9); walk.position.set(W / 2 + 0.55, 0, L / 2); g.add(walk);
   const skiff = buildSkiff({ crew: false }); skiff.position.set(-0.4, -0.05, 0); skiff.rotation.y = (rr() - 0.5) * 0.1; skiff.rotation.order = 'YXZ'; g.add(skiff); g.userData.skiff = skiff;
@@ -305,15 +308,28 @@ export function pickSite(hf, key, cx, cz, rr, homeDist) {
 export function buildSite(s, T) {
   const rr = mulberry32(s.seed);
   const g = new THREE.Group(); g.name = 'site'; g.userData.people = []; g.userData.site = s;
+  g.userData.dockResidents = [];
   if (s.kind === 'house') {
     const h = stiltHouse(rr, T, s); h.position.set(s.x, s.h - 0.25, s.z); h.rotation.y = Math.atan2(-Math.cos(s.ang), -Math.sin(s.ang)); g.add(h); g.userData.house = h; g.userData.people.push(...h.userData.people);
-    const dock = buildDock(14, 1.8); const dx = s.tie.x - s.bank.x, dz = s.tie.z - s.bank.z, l = Math.hypot(dx, dz);
+    for (const resident of h.userData.people) {
+      attachDockResident(resident, [resident.getWorldPosition(new THREE.Vector3()),
+        h.localToWorld(new THREE.Vector3(1.2, 1.77, 3.12)), h.localToWorld(new THREE.Vector3(0.42, 1.77, 2.67))]);
+      g.userData.dockResidents.push(resident);
+    }
+    const dock = buildDock(14, 1.8, { shelter: true }); const dx = s.tie.x - s.bank.x, dz = s.tie.z - s.bank.z, l = Math.hypot(dx, dz);
     dock.position.set(s.bank.x, 0, s.bank.z); dock.rotation.y = Math.atan2(dx / l, dz / l) + Math.PI; g.add(dock);
+    positionDockShelter(dock, T);
     if (rr() < 0.7) { const sk = buildSkiff({ crew: false }); const side = rr() < 0.5 ? -1 : 1; sk.position.set(s.bank.x + dx / l * 9 + (-dz / l) * side * 2.4, -0.05, s.bank.z + dz / l * 9 + (dx / l) * side * 2.4); sk.rotation.y = Math.atan2(dx / l, dz / l) + (rr() - 0.5) * 0.3; sk.rotation.order = 'YXZ'; g.add(sk); g.userData.skiff = sk; g.userData.skiffWater = { x: sk.position.x, z: sk.position.z, heading: sk.rotation.y }; }
     // a big live oak or two behind the house
     if (rr() < 0.75) { const ry = h.rotation.y; const n = 1 + (rr() < 0.4 ? 1 : 0); for (let i = 0; i < n; i++) { const lx = (i ? 1 : -1) * (4 + rr() * 3), lz = -(6 + rr() * 4); const wx = s.x + lx * Math.cos(ry) + lz * Math.sin(ry), wz = s.z - lx * Math.sin(ry) + lz * Math.cos(ry); const tr = spawn('tree_c', heroTreeFallback()); tr.position.set(wx, T.heightAt(wx, wz) - 0.1, wz); tr.rotation.y = rr() * 6.28; tr.scale.setScalar(0.85 + rr() * 0.35); g.add(tr); } }
     // a kid or an old man off the end of the dock with a rod
-    if (rr() < 0.55) { const p = person(rr, { pose: 'sitEdge', rod: true, hat: rr() < 0.7 }); p.position.set(0.72, 0.81, -12.6); p.rotation.y = Math.PI / 2; dock.add(p); g.userData.people.push(p); const bk = bucket(); bk.position.set(-0.4, 0.81, -12.0); dock.add(bk); }
+    if (rr() < 0.55) {
+      const p = person(rr, { pose: 'sitEdge', rod: true, hat: rr() < 0.7 });
+      p.position.set(0.72, 0.81, -12.6); p.rotation.y = Math.PI / 2; dock.add(p);
+      g.userData.people.push(p);
+      attachLandingResident(dock, p, T, 1); g.userData.dockResidents.push(p);
+      const bk = bucket(); bk.position.set(-0.4, 0.81, -12.0); dock.add(bk);
+    }
     s.colliders = [{ ax: s.bank.x, az: s.bank.z, bx: s.bank.x + dx / l * 14, bz: s.bank.z + dz / l * 14, r: 1.1, tag: 'dock' }, { x: s.x, z: s.z, r: 3.6, tag: 'house' }];
   } else if (s.kind === 'ramp') {
     const r = boatRamp(rr, s, T); r.position.set(s.x, s.h, s.z); r.rotation.y = Math.atan2(-Math.cos(s.ang), -Math.sin(s.ang)); g.add(r); g.userData.rampG = r; g.userData.people.push(...r.userData.people);
@@ -321,6 +337,11 @@ export function buildSite(s, T) {
     r.userData.colliders = s.colliders;
   } else if (s.kind === 'boathouse') {
     const b = boathouse(rr); b.position.set(s.x, 0, s.z); b.rotation.y = -s.ang; g.add(b); g.userData.skiff = b.userData.skiff; g.userData.people.push(...b.userData.people);
+    for (const resident of b.userData.people) {
+      attachDockResident(resident, [resident.getWorldPosition(new THREE.Vector3()),
+        b.localToWorld(new THREE.Vector3(resident.position.x, 0.81, -2.48))]);
+      g.userData.dockResidents.push(resident);
+    }
     const sk = b.userData.skiff, cy = Math.cos(b.rotation.y), sy = Math.sin(b.rotation.y);
     g.userData.skiffWater = { x: s.x + sk.position.x * cy + sk.position.z * sy, z: s.z - sk.position.x * sy + sk.position.z * cy, heading: b.rotation.y + sk.rotation.y };
     const fx = -Math.sin(b.rotation.y), fz = -Math.cos(b.rotation.y); // local -z
@@ -339,7 +360,7 @@ export function buildSite(s, T) {
 
 // per-frame life for a built site: boats bob, decoys bob, towels flap, the ramp runs its launch, people watch and wave
 // ctx = { bx, bz, speed, dt, stamps, plume, spray, audio, fish, ob, truck } (ob / truck are written back: the loudest engine near the boat)
-const _tip = new THREE.Vector3(), _dir = new THREE.Vector3();
+const _tip = new THREE.Vector3(), _retreatLine = new THREE.Vector3();
 const _boat = { x: 0, z: 0, speed: 0 };
 const siteWaterAt = (waveFn, wakeAt, x, z, t) => waveFn(x, z, t) + (wakeAt ? wakeAt(x, z, t) : 0);
 export function animateSite(g, t, waveFn, wind, ctx) {
@@ -369,8 +390,20 @@ export function animateSite(g, t, waveFn, wind, ctx) {
   for (const p of g.userData.people) {
     const u = p.userData;
     if (!p.visible) { if (u.line) u.line.visible = false; continue; }
-    animatePerson(p, t, dt, boat, ctx);
-    fishingUpdate(p, t, dt, waveFn, ctx);
+    const advance = u.dockReaction ? ctx.residentDt : dt;
+    if (!advance) continue;
+    const canFish = dockCastAllowed(p);
+    animatePerson(p, t, advance, boat, ctx);
+    if (canFish) fishingUpdate(p, t, advance, waveFn, ctx);
+    else if (u.line?.visible && u.dockReaction.state === 'secure' && rodTip(p, _tip)) {
+      // The hook skims back along the water before lifting to meet the raised rod tip.
+      const gather = THREE.MathUtils.smoothstep(u.dockReaction.age, 0.05, 1.22);
+      _retreatLine.copy(u.lineTarget).lerp(_tip, gather);
+      const surface = waveFn(_retreatLine.x, _retreatLine.z, t);
+      _retreatLine.y = THREE.MathUtils.lerp(surface, _tip.y, THREE.MathUtils.smoothstep(gather, 0.52, 1));
+      setLine(u.line, _tip, _retreatLine);
+    }
+    if (u.dockReaction) continue;
     // a wave for a boat idling past
     u.waveCd = Math.max(0, (u.waveCd || 0) - dt);
     if (u.pose !== 'crouch' && !u.guide && u.waveCd <= 0) { p.getWorldPosition(_tip); const d = Math.hypot(_tip.x - ctx.bx, _tip.z - ctx.bz); if (d < 30 && ctx.speed < 6) { wave(p); u.waveCd = 45; } }

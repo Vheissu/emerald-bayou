@@ -232,15 +232,19 @@ export class Ecology {
     if (!site) return;
     const input = this.residentRoutineInput, phys = this.phys || this.game?.phys;
     input.role = role; input.distance = phys ? Math.hypot(site.x - phys.pos.x, site.z - phys.pos.y) : Infinity;
+    const environment = this.environment, values = environment.values;
+    const anchor = group.userData.dockResidents?.length ? site.tie || site : null;
+    input.storm = (anchor && environment.sampleStormAt?.(anchor.x, anchor.z)) ?? values.storm;
+    input.rain = (anchor && environment.sampleRainAt?.(anchor.x, anchor.z)) ?? values.rain;
+    input.wind = ((anchor && environment.sampleWindAt?.(anchor.x, anchor.z)) ?? values.wind) * environment.gust;
     applyResidentRoutines(group, input, this.residentRoutineStats);
   }
 
   updateVisibility() {
     const input = this.residentRoutineInput, stats = this.residentRoutineStats;
-    const environment = this.environment, values = environment.values, phys = this.phys || this.game?.phys;
+    const environment = this.environment, phys = this.phys || this.game?.phys;
     const law = this.game?.law;
     input.day = environment.day; input.hour = environment.hour;
-    input.storm = values.storm; input.rain = values.rain; input.wind = values.wind * environment.gust;
     input.playerSpeed = phys?.speed || 0; input.attention = law?.attention || 0; input.pursuit = Boolean(law?.pursuit);
     stats.groups = 0; stats.actors = 0; stats.inside = 0; stats.outside = 0; stats.watching = 0; stats.bracing = 0; stats.passes++;
     for (const group of this.world.liveCamps.values()) this.applyResidentGroup(group, group.userData.site, 'camp');

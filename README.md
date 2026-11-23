@@ -135,7 +135,14 @@ At idle, `G` drops the bow anchor. Water depth sets the amount of rode, and the 
 
 A crossing wake lifts the side it reaches first. The boat samples immersion at the bow, stern, centre and both chines. Cargo makes it sit deeper at idle, and it climbs onto plane as it picks up speed. Drive through a reed bed and the stems part at the bow, bend in the prop wash, then stand back up.
 
-At Mullet Bend, a dockhand works a wire crab pot from a hand-cranked hoist. Other camps lift bait baskets beside a live well. Come in fast and the worker pulls the gear clear of your wash. When a storm sends the crew inside, the load stays secured above the water.
+At Mullet Bend, idle in toward the working dock. The dockhand looks up from the crab-pot winch and waves. Stay alongside and they go back to work. Come in fast and the crew braces for your wash. When a storm rolls in, the worker hauls the pot clear and the angler gathers the line. They walk under the tin roof and wait for the weather to ease before coming back out.
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/13-dock-arrival.jpg" alt="The dockhand raises a hand to an arriving airboat at Mullet Bend"></td>
+<td width="50%"><img src="docs/screenshots/14-dock-shelter.jpg" alt="Two dock residents waiting under the windbreak in a thunderstorm"></td>
+</tr></table>
+
+[Watch the dock crew greet a boat and take cover](docs/screenshots/dock-crew.webp)
 
 Spray leaves the hull along the local water slope and settles at the current tide height. Fish jumps, gator splashes, working-boat wakes and ramp launches rise with surge too. Gusts carry droplets, mist and engine smoke downwind. These effects reuse the existing particle buffers, while the hull shares the five wave samples already used for buoyancy and attitude. Pausing stops the player and chase-skiff spray emitters.
 

@@ -109,7 +109,28 @@ export function buildTower() {
 }
 
 const dockCache = new Map();
+const dockShelterCache = new Map();
 let sharedDockMaterials = null;
+
+export const DOCK_SHELTER = Object.freeze({ deck: 0.81, entryZ: -4.4, berthZ: -2.2, berthX: 0.45 });
+
+export function positionDockShelter(dock, terrain) {
+  const shelter = dock.userData.dockShelter;
+  const point = new THREE.Vector3();
+  for (let shift = 0; shift <= 3.5; shift += 0.7) {
+    let clear = true;
+    for (const x of [-0.48, 0.48]) for (const z of [-4.1, -2.65, -1.72]) {
+      dock.localToWorld(point.set(x, DOCK_SHELTER.deck, z - shift));
+      clear &&= terrain.heightAt(point.x, point.z) <= point.y;
+    }
+    if (clear) { shelter.position.z = -shift; return shelter; }
+  }
+  // Some steep banks rise through the landward boards. Leave those walks open
+  // unless the whole windbreak and the approach to it fit above the ground.
+  shelter.removeFromParent();
+  dock.userData.dockShelter = null;
+  return null;
+}
 
 function dockMaterials() {
   if (sharedDockMaterials) return sharedDockMaterials;
@@ -144,12 +165,56 @@ function dockResources(length, width) {
   return resources;
 }
 
-export function buildDock(length = 14, width = 2.0, { weather = false } = {}) {
+function buildDockShelter(width) {
+  let resources = dockShelterCache.get(width);
+  if (!resources) {
+    const parts = [], roof = [];
+    const rail = width / 2 - 0.035, crest = 3.10, slope = -0.13;
+    const front = -4.15, back = -0.70, centre = (front + back) / 2;
+    for (const side of [-1, 1]) {
+      const x = side * rail, top = crest + slope * x;
+      for (const z of [front, back]) {
+        parts.push(box(0.10, top - 0.74, 0.10, x, (top + 0.74) / 2, z));
+      }
+      parts.push(box(0.11, 0.13, back - front + 0.19, x, top - 0.06, centre));
+    }
+    for (let i = 0; i < 8; i++) parts.push(box(width - 0.07, 0.143, 0.045, 0, 0.98 + i * 0.151, back));
+    // A short slatted corner blocks wind at the bank while leaving the landing in view.
+    for (let i = 0; i < 5; i++) parts.push(box(0.045, 0.143, 1.16, -rail, 1.72 + i * 0.151, -1.28));
+    for (const z of [front, centre, back]) parts.push(box(width + 0.21, 0.082, 0.09, 0, crest - 0.035, z, 0, slope));
+    const roofZ = back - front + 0.62, roofWidth = width + 0.56;
+    roof.push(box(roofWidth, 0.032, roofZ, 0, crest + 0.032, centre, 0, slope));
+    const ridges = Math.ceil(roofWidth / 0.096);
+    for (let i = 0; i < ridges; i++) {
+      const x = -roofWidth / 2 + 0.039 + i * (roofWidth - 0.078) / (ridges - 1);
+      roof.push(box(0.024, 0.025, roofZ + 0.015, x, crest + 0.055 + slope * x, centre, 0, slope));
+    }
+    for (const z of [centre - roofZ / 2, centre + roofZ / 2]) {
+      roof.push(box(roofWidth + 0.038, 0.070, 0.030, 0, crest + 0.014, z, 0, slope));
+    }
+    const frames = sharedResource(TEX.scaleTextureUvs(mergeGeometries(parts), 1, 2));
+    const sheet = sharedResource(mergeGeometries(roof));
+    for (const part of [...parts, ...roof]) part.dispose();
+    resources = { frames, sheet, tin: sharedResource(registerWetMaterial(new THREE.MeshStandardMaterial({
+      color: 0x767367, roughness: 0.71, metalness: 0.49,
+    }))) };
+    dockShelterCache.set(width, resources);
+  }
+  const shelter = new THREE.Group(); shelter.name = 'Dock windbreak';
+  const frame = new THREE.Mesh(resources.frames, dockMaterials().plankMat);
+  const roof = new THREE.Mesh(resources.sheet, resources.tin);
+  frame.castShadow = frame.receiveShadow = roof.castShadow = roof.receiveShadow = true;
+  shelter.add(frame, roof);
+  return shelter;
+}
+
+export function buildDock(length = 14, width = 2.0, { weather = false, shelter = false } = {}) {
   const { frameGeo, plankGeo, frameMat, plankMat } = dockResources(length, width);
   const g = new THREE.Group();
   const a = new THREE.Mesh(frameGeo, frameMat); a.castShadow = true; a.receiveShadow = true;
   const b = new THREE.Mesh(plankGeo, plankMat); b.castShadow = true; b.receiveShadow = true;
   g.add(a, b);
   if (weather) g.userData.dockWeather = buildDockWeather(g, length);
+  if (shelter) { g.userData.dockShelter = buildDockShelter(width); g.add(g.userData.dockShelter); }
   return g;
 }

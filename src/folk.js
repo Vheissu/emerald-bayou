@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { RESIDENT_ROUTINE } from './residentroutines.js';
-import { beltlineGeometry, bootGeometry, featuresGeometry, hairGeometry, handGeometry, hatGeometry, headGeometry,
-  jacketGeometry, neckGeometry, pantsGeometry, sleeveGeometry } from './folkgeometry.js';
+import { dockBodyPose, finishDockPose } from './dockpose.js';
+import { registerWetMaterial } from './surfacewetness.js';
+import { beltlineGeometry, bootGeometry, featuresGeometry, forearmGeometry, hairGeometry, handGeometry, hatGeometry, headGeometry,
+  jacketGeometry, neckGeometry, pantsGeometry, rolledSleeveGeometry, sleeveGeometry } from './folkgeometry.js';
 
 // The people of the bayou. A jointed figure (two-segment arms and legs, spine, head) driven by a pose-target system:
 // every frame a target pose is assembled from the figure's base pose (stand / sit / sitEdge / crouch), the thing it is
@@ -11,10 +13,96 @@ import { beltlineGeometry, bootGeometry, featuresGeometry, hairGeometry, handGeo
 
 const M = (c, r = 0.9) => new THREE.MeshStandardMaterial({ color: c, roughness: r });
 const fabric = (color, roughness = .86) => new THREE.MeshStandardMaterial({ color, roughness, vertexColors: true });
-const SKIN = [0xb08262, 0x7d5236, 0xcf9f7e, 0x5e3d2a, 0xbd8a66, 0x9c6b4c].map(c => fabric(c, 0.79));
-const SHIRT = [0xc4bda8, 0x2d4664, 0x62704a, 0x8f8f86, 0xdedbd0, 0x6e3a32, 0x505358, 0x557a96, 0xa89f8e, 0x435a3a, 0x8c6e4a, 0x9c9fa8].map(c => fabric(c));
-const PANTS = [0x3c3831, 0x495364, 0x66593f, 0x474b3a, 0x827a68, 0x3e4c59].map(c => fabric(c));
-const HAT = [0xafa388, 0x4c4b45, 0x8e4937, 0x46523a, 0xdad2bc, 0x3a4b62, 0x6b5a44].map(c => fabric(c));
+const workwearTexture = { value: null };
+const workwearHasImage = { value: 0 };
+export function setPersonClothImage(image) {
+  if (workwearTexture.value?.image === image) return;
+  workwearTexture.value?.dispose();
+  workwearHasImage.value = image ? 1 : 0;
+  workwearTexture.value = image ? new THREE.CanvasTexture(image) : null;
+  if (workwearTexture.value) {
+    workwearTexture.value.wrapS = workwearTexture.value.wrapT = THREE.RepeatWrapping;
+    workwearTexture.value.anisotropy = 4;
+  }
+}
+const canvasMaterial = color => {
+  const material = registerWetMaterial(fabric(color), { darken: 0.13, minRoughness: 0.64 });
+  material.onBeforeCompile = shader => {
+    shader.uniforms.workwearTexture = workwearTexture;
+    shader.uniforms.workwearHasImage = workwearHasImage;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWorkwear; varying vec3 vWorkwearNormal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorkwear = position; vWorkwearNormal = normal;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vWorkwear; varying vec3 vWorkwearNormal;
+        uniform sampler2D workwearTexture; uniform float workwearHasImage;
+      `)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        vec3 canvasPos = vWorkwear * 2.25;
+        if (workwearHasImage > 0.5) {
+          vec3 w = pow(abs(normalize(vWorkwearNormal)), vec3(5.0));
+          w /= max(dot(w, vec3(1.0)), 0.0001);
+          float fibre = texture2D(workwearTexture, canvasPos.zy).r * w.x
+                      + texture2D(workwearTexture, canvasPos.xz + 0.37).r * w.y
+                      + texture2D(workwearTexture, canvasPos.xy + 0.71).r * w.z;
+          diffuseColor.rgb *= 0.63 + fibre * 0.68;
+        } else {
+          vec2 thread = vWorkwear.xy * vec2(2900.0, 3450.0);
+          float resolveThread = 1.0 - smoothstep(1.4, 3.1, length(fwidth(thread)));
+          diffuseColor.rgb *= 1.0 + sin(thread.x) * sin(thread.y) * 0.064 * resolveThread;
+        }
+      `);
+  };
+  return material;
+};
+const complexion = { value: null }, complexionEnabled = { value: 0 };
+export function setPersonComplexion(image) {
+  if (complexion.value?.image === image) return;
+  complexion.value?.dispose();
+  complexion.value = image ? new THREE.CanvasTexture(image) : null;
+  complexionEnabled.value = image ? 1 : 0;
+}
+const skinMaterial = (color, face = false) => {
+  const material = fabric(color, 0.68);
+  material.customProgramCacheKey = () => face ? 'crew-face' : 'crew-skin';
+  material.onBeforeCompile = shader => {
+    shader.uniforms.complexion = complexion;
+    shader.uniforms.complexionEnabled = complexionEnabled;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSkin;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkin = position;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSkin; uniform sampler2D complexion; uniform float complexionEnabled;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        vec3 poreSpace = vSkin * vec3(389.0, 461.0, 313.0);
+        vec3 poreCell = floor(poreSpace);
+        float poreHash = fract(sin(dot(poreCell, vec3(15.641, 31.379, 70.117))) * 43758.5453);
+        float poreSize = 1.0 - smoothstep(0.18, 1.0, length(fwidth(poreSpace)));
+        float pore = (1.0 - smoothstep(0.16, 0.50, length(fract(poreSpace) - 0.5))) * poreSize;
+        diffuseColor.rgb *= 1.0 - pore * (0.06 + poreHash * 0.15);
+        ${face ? `
+        if (complexionEnabled > 0.5) {
+          // Register the pigment to the common eye and lip landmarks. Feather it
+          // into the temples and leave the live pupils and closing eyelids clear.
+          vec2 faceUv = vec2(0.5 + vSkin.x * 3.98, 0.258 + (vSkin.y - 0.069) * 3.80);
+          vec3 pigment = texture2D(complexion, faceUv).rgb;
+          vec2 eye = vec2(abs(vSkin.x) - 0.0355, vSkin.y - 0.1495) / vec2(0.0225, 0.0105);
+          float blend = smoothstep(0.83, 1.48, length(eye)) * smoothstep(-0.010, 0.044, vSkin.z)
+            * smoothstep(0.006, 0.027, vSkin.y);
+          vec3 relativeTone = clamp(pigment / vec3(0.69, 0.49, 0.39), vec3(0.40), vec3(1.35));
+          diffuseColor.rgb *= mix(vec3(1.0), relativeTone * relativeTone, blend * 0.74);
+        }` : ''}
+      `);
+  };
+  return material;
+};
+const skinTones = [0xb08262, 0x7d5236, 0xcf9f7e, 0x5e3d2a, 0xbd8a66, 0x9c6b4c];
+const SKIN = skinTones.map(color => skinMaterial(color));
+const HEAD_SKIN = skinTones.map(color => skinMaterial(color, true));
+const SHIRT = [0xc4bda8, 0x2d4664, 0x62704a, 0x8f8f86, 0xdedbd0, 0x6e3a32, 0x505358, 0x557a96, 0xa89f8e, 0x435a3a, 0x8c6e4a, 0x9c9fa8].map(canvasMaterial);
+const PANTS = [0x3c3831, 0x495364, 0x66593f, 0x474b3a, 0x827a68, 0x3e4c59].map(canvasMaterial);
+const HAT = [0xafa388, 0x4c4b45, 0x8e4937, 0x46523a, 0xdad2bc, 0x3a4b62, 0x6b5a44].map(canvasMaterial);
 const HAIR = [0x2a2118, 0x4a3524, 0x8a8478, 0x1a1512, 0x6a4a30].map(c => fabric(c, 0.92));
 const WADER = fabric(0x495542, 0.74);
 const VEST = [M(0x9a3c1e, 0.8), M(0x8a2a22, 0.8), M(0x9a7a1e, 0.8)];
@@ -39,7 +127,9 @@ const personGeometry = (key, create) => {
 
 function figureMesh(name, geometry, material, shadow = true) {
   const mesh = new THREE.Mesh(personGeometry(name, geometry), material);
+  mesh.name = name;
   mesh.castShadow = shadow;
+  mesh.receiveShadow = true;
   return mesh;
 }
 
@@ -68,12 +158,15 @@ export function person(rr, { pose = 'stand', rod = false, hat = true, gun = fals
   if (waders) { const bib = new THREE.Mesh(personGeometry('wader-bib', () => new THREE.BoxGeometry(0.3, 0.34, 0.12)), WADER); bib.position.set(0, 0.22, 0.12); spine.add(sh(bib)); const belt = new THREE.Mesh(personGeometry('belt', () => new THREE.CylinderGeometry(0.175, 0.175, 0.04, 12)), GUN); belt.position.y = 0.06; spine.add(belt); }
   if (vest) { const v = new THREE.Mesh(personGeometry('vest', () => new THREE.BoxGeometry(0.38, 0.34, 0.3)), pick(rr, VEST)); v.position.y = 0.3; spine.add(sh(v)); }
   spine.add(figureMesh('neck', neckGeometry, skin, false));
-  const headG = new THREE.Group(); headG.position.y = 0.63; spine.add(headG);
-  const beard = rr() < 0.3, shades = rr() < 0.45;
+  const headG = new THREE.Group(); headG.position.y = 0.607; spine.add(headG);
+  const beard = rr() < 0.32, faceRoll = rr();
+  const shades = faceRoll < 0.20 && !work;
+  const form = Math.floor(faceRoll * 4);
+  const face = figureMesh(`${shades ? 'sunglasses' : 'face'} ${form}`, () => featuresGeometry(shades, form), FACE_DETAIL, false);
   headG.add(
-    figureMesh('head', headGeometry, skin),
-    figureMesh(shades ? 'face with glasses' : 'face', () => featuresGeometry(shades), FACE_DETAIL, false),
-    figureMesh(beard ? 'hair and beard' : 'hair', () => hairGeometry(beard), hair, false),
+    figureMesh(`${beard ? 'stubbled head' : 'head'} ${form}`, () => headGeometry(form, beard), HEAD_SKIN[SKIN.indexOf(skin)]),
+    face,
+    figureMesh(`hair ${form}`, () => hairGeometry(form), hair, false),
   );
   if (hat) {
     const hm = pick(rr, HAT), brimmed = rr() < 0.45;
@@ -82,14 +175,17 @@ export function person(rr, { pose = 'stand', rod = false, hat = true, gun = fals
   const arms = [];
   for (const sx of [-1, 1]) {
     const upper = new THREE.Group();
-    upper.position.set(sx * 0.245, 0.5, 0);
-    upper.add(figureMesh('upper sleeve', () => sleeveGeometry(false), shirt));
+    upper.position.set(sx * 0.215, 0.5, 0);
+    upper.add(work ? figureMesh('rolled work sleeve', rolledSleeveGeometry, shirt)
+      : figureMesh('upper sleeve', () => sleeveGeometry(false), shirt));
     const fore = new THREE.Group();
     fore.position.y = -0.3;
-    fore.add(figureMesh('lower sleeve', () => sleeveGeometry(true), shirt));
+    fore.add(work ? figureMesh(sx < 0 ? 'left forearm' : 'right forearm', () => forearmGeometry(sx), skin)
+      : figureMesh('lower sleeve', () => sleeveGeometry(true), shirt));
     upper.add(fore);
     const hand = figureMesh(sx < 0 ? 'left hand' : 'right hand', () => handGeometry(sx), skin, false);
     hand.position.y = -0.28;
+    hand.morphTargetInfluences[0] = (gun || drive || (sx > 0 && rod)) ? 1 : 0.45;
     fore.add(hand);
     spine.add(upper); arms.push({ upper, fore, hand });
   }
@@ -105,7 +201,7 @@ export function person(rr, { pose = 'stand', rod = false, hat = true, gun = fals
     const boot = figureMesh('work boot', bootGeometry, waders ? WADER : SHOE);
     boot.position.set(0, -0.415, 0.06);
     shin.add(boot);
-    hips.add(thigh); legs.push({ thigh, shin });
+    hips.add(thigh); legs.push({ thigh, shin, boot });
   }
   // things in hands
   let rodMesh = null, tip = null, gunG = null, can = null;
@@ -130,7 +226,7 @@ export function person(rr, { pose = 'stand', rod = false, hat = true, gun = fals
   if (drive) { base.rf = 1.0; base.re = 0.5; base.ro = 0.12; base.lf = 0.5; base.le = 0.6; base.lo = 0.25; base.sx = 0.08; }
   if (can) { base.lf = 0.35; base.le = 1.1; base.lo = 0.12; }
   g.userData = {
-    kind: 'person', pose, rodProp: rod, gunProp: gun, drive, can: !!can, hips, spine, head: headG, arms, legs, rod: rodMesh, tip, gun: gunG,
+    kind: 'person', pose, rodProp: rod, gunProp: gun, drive, can: !!can, hips, spine, head: headG, eyelids: shades ? null : face, arms, legs, rod: rodMesh, tip, gun: gunG,
     base, cur: { ...base }, waveT: 0, castT: -1, guide: 0, wrangle: 0, ph: rr() * 6.28, look: 0, lookX: 0, tug: 0,
     act: null, actT: 0, actDur: 0, side: rr() < 0.5 ? -1 : 1, sideT: 4 + rr() * 8, wander: 0, wanderT: 0, rate: 5, faceY: null, buddy: null, walk: null, aimT: 0, seed: rr(),
   };
@@ -239,17 +335,25 @@ const P = { ...ZERO };
 function localYaw(g, wx, wz) { g.getWorldPosition(_w); g.getWorldQuaternion(_q); _l.set(wx - _w.x, 0, wz - _w.z).applyQuaternion(_q.invert()); return Math.atan2(_l.x, _l.z); }
 export function animatePerson(g, t, dt, boat, envIn) {
   const u = g.userData; u.g = g; const ph = u.ph; dt = Math.min(dt, 0.1);
+  const dock = u.dockReaction;
+  // Dock routes own the root and the current action while somebody is reacting.
+  // A winch operator uses the fitted handle instead of an unrelated idle gesture.
+  const onDuty = dock && (dock.state !== 'idle' || u.hoistGrip != null);
   if (u.faceY === null) u.faceY = g.rotation.y;
   // --- what to do ---
   if (u.guide > 0) { u.act = 'guide'; u.actT = 0; u.actDur = 1; }
   else if (u.act === 'guide') u.act = null;
-  u.actT += dt; if (!u.act || (u.actT >= u.actDur && u.act !== 'walk')) nextAct(u);
+  if (onDuty && u.act !== 'idle') {
+    if (u.act === 'cast' && !u.castFired) u.castCd = 3;
+    startAct(u, 'idle', 2);
+  }
+  u.actT += dt; if (!onDuty && (!u.act || (u.actT >= u.actDur && u.act !== 'walk'))) nextAct(u);
   if (u.act === 'walk') {
     const [tx, tz] = u.walkTo; const dx = tx - g.position.x, dz = tz - g.position.z, d = Math.hypot(dx, dz);
     const want = Math.atan2(dx, dz); let dy = want - g.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); g.rotation.y += dy * (1 - Math.exp(-dt * 6));
     if (d > 0.15 && u.actT > 0.25) { const step = Math.min(d, 0.8 * dt); g.position.x += dx / d * step; g.position.z += dz / d * step; u.walkPh += dt * 5.8; if (envIn && envIn.heightAt) g.position.y = envIn.heightAt(g.position.x, g.position.z); }
     if (d <= 0.15 || u.actT > u.actDur + 1.5) { nextAct(u); if (u.act === 'walk') nextAct(u); }
-  } else if (u.pose === 'stand' && u.walk) { let dy = u.faceY - g.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); g.rotation.y += dy * (1 - Math.exp(-dt * 4)); }
+  } else if (!onDuty && u.pose === 'stand' && u.walk) { let dy = u.faceY - g.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); g.rotation.y += dy * (1 - Math.exp(-dt * 4)); }
   // --- target pose ---
   Object.assign(P, u.base);
   const k = u.actDur > 0 ? u.actT / u.actDur : 0;
@@ -263,12 +367,12 @@ export function animatePerson(g, t, dt, boat, envIn) {
     P.rf = lerp(P.rf, 1.42 - fight * 0.07, wrangle); P.ro = lerp(P.ro, -0.42, wrangle); P.re = lerp(P.re, 1.08 + fight * 0.1, wrangle);
     P.ltf = lerp(P.ltf, 0.72, wrangle); P.lk = lerp(P.lk, 1.28 + brace * 0.05, wrangle); P.rtf = lerp(P.rtf, 0.66, wrangle); P.rk = lerp(P.rk, 1.18 - brace * 0.05, wrangle);
   }
-  if (u.routineState === RESIDENT_ROUTINE.BRACE) {
+  if (!dock && u.routineState === RESIDENT_ROUTINE.BRACE) {
     P.sx += 0.32; P.hdx += 0.2; P.hy -= u.pose === 'stand' ? 0.1 : 0.035;
     P.lf = lerp(P.lf, 1.75, 0.72); P.lo = lerp(P.lo, -0.28, 0.72); P.le = lerp(P.le, 1.7, 0.72);
     P.rf = lerp(P.rf, 1.35, 0.62); P.ro = lerp(P.ro, 0.35, 0.62); P.re = lerp(P.re, 1.55, 0.62);
     P.lk += u.pose === 'stand' ? 0.34 : 0.08; P.rk += u.pose === 'stand' ? 0.34 : 0.08;
-  } else if (u.routineState === RESIDENT_ROUTINE.WATCH && boat) {
+  } else if (!dock && u.routineState === RESIDENT_ROUTINE.WATCH && boat) {
     const bearing = localYaw(g, boat.x, boat.z), side = Math.max(-1.15, Math.min(1.15, bearing));
     P.hdy += side * 0.68; P.sy += side * 0.22; P.sx += 0.08;
     if (u.pose === 'stand' && !u.drive) {
@@ -278,8 +382,11 @@ export function animatePerson(g, t, dt, boat, envIn) {
   }
   if (u.hoistGrip > 0) {
     const grip = u.hoistGrip;
-    P.sx = lerp(P.sx, 0.20, grip);
-    P.hdx = lerp(P.hdx, 0.37, grip);
+    const pull = Math.sin(u.hoistAngle || 0);
+    P.sx = lerp(P.sx, 0.12 + pull * 0.055, grip);
+    P.sy -= pull * 0.09 * grip; P.hx += (0.012 + pull * 0.014) * grip;
+    P.hdx = lerp(P.hdx, 0.21 + pull * 0.04, grip);
+    P.lf = lerp(P.lf, 0.20, grip); P.le = lerp(P.le, 0.58, grip);
   }
   // standing weight shift, changes side every so often
   if (u.pose === 'stand' && u.act !== 'walk') {
@@ -287,7 +394,11 @@ export function animatePerson(g, t, dt, boat, envIn) {
     P.hx += u.side * 0.035; P.hRz += u.side * 0.045; if (u.side > 0) { P.rk += 0.22; P.rtf += 0.1; } else { P.lk += 0.22; P.ltf += 0.1; }
   }
   // the wave: left arm up, hand rocking
-  if (u.waveT > 0) { u.waveT -= dt; const e = Math.min(1, u.waveT * 2) * Math.min(1, (2.4 - u.waveT) * 3); P.lf = lerp(P.lf, 2.75, e); P.lo = lerp(P.lo, 0.3 + Math.sin(t * 9) * 0.35, e); P.le = lerp(P.le, 0.35, e); P.hdx = lerp(P.hdx, -0.1, e); }
+  if (!dock && u.waveT > 0) { u.waveT -= dt; const e = Math.min(1, u.waveT * 2) * Math.min(1, (2.4 - u.waveT) * 3); P.lf = lerp(P.lf, 2.75, e); P.lo = lerp(P.lo, 0.3 + Math.sin(t * 9) * 0.35, e); P.le = lerp(P.le, 0.35, e); P.hdx = lerp(P.hdx, -0.1, e); }
+  const acknowledge = dock && (dock.state === 'notice' || dock.state === 'greet' || dock.state === 'brace');
+  const bearing = acknowledge && boat ? localYaw(g, boat.x, boat.z) : 0;
+  if (dock) dockBodyPose(u, P, BASE.stand, bearing);
+  if (dock) P.hy += 0.031 * (u.pose === 'stand' ? 1 : 1 - dock.rest);
   // breathing and a slow sway
   P.hy += Math.sin(t * 1.3 + ph) * 0.005; P.sx += Math.sin(t * 1.3 + ph) * 0.012; P.sz += Math.sin(t * 0.7 + ph) * 0.012;
   // --- ease the joints toward the target ---
@@ -296,15 +407,20 @@ export function animatePerson(g, t, dt, boat, envIn) {
   // --- the head: the boat when it is close, a chatting mate, else a slow wander ---
   let look = 0, lookX = 0, lookRate = 3;
   if (u.act === 'chat' || u.act === 'listen') { if (u.buddy) { const a = localYaw(g, u.buddy.getWorldPosition(_b).x, _b.z); look = Math.max(-1.4, Math.min(1.4, a)); lookX = 0.05; } }
-  if (boat) {
+  if (acknowledge && boat) {
+    // Let the neck lead, then give the slower torso its share of the turn.
+    look = THREE.MathUtils.clamp(bearing - c.sy - c.hRy, -1.12, 1.12);
+    lookX = -0.065; lookRate = 8;
+  } else if (!dock && boat) {
     g.getWorldPosition(_w); const d = Math.hypot(boat.x - _w.x, boat.z - _w.z);
     if (d < 45 && (boat.speed > 1.5 || d < 22 || u.act === 'idle' || u.act === 'hold')) { const a = localYaw(g, boat.x, boat.z); look = Math.max(-1.35, Math.min(1.35, a)); lookX = Math.abs(a) > 1.35 ? 0.35 : 0; }
   }
-  if (look === 0 && lookX === 0) { u.wanderT -= dt; if (u.wanderT <= 0) { u.wanderT = 2 + Math.random() * 5; u.wander = (Math.random() - 0.5) * 0.7; } look = u.wander; lookRate = 1.5; }
+  if (look === 0 && lookX === 0) { u.wanderT -= dt; if (u.wanderT <= 0) { u.wanderT = 2 + Math.random() * 5; u.wander = (Math.random() - 0.5) * 0.7; } look = u.wander * (onDuty ? 0.22 : 1); lookRate = 1.5; }
   u.look += (look - u.look) * (1 - Math.exp(-dt * lookRate)); u.lookX += (lookX - u.lookX) * (1 - Math.exp(-dt * 3));
   u.tug = Math.max(0, (u.tug || 0) - dt);
   applyPose(u);
   u.head.rotation.y += Math.sin(t * 0.7 + ph) * 0.04; u.head.rotation.x += Math.sin(t * 0.5 + ph) * 0.02;
+  if (dock) finishDockPose(u, t);
   u.castT = u.act === 'cast' ? u.actT : -1;
 }
 export function wave(g) { if (g.userData.waveT <= 0) g.userData.waveT = 2.4; }
@@ -322,6 +438,7 @@ export function walkAlong(g, ax, az, bx, bz) { g.userData.walk = { ax, az, bx, b
 const _tip = new THREE.Vector3(), _dir = new THREE.Vector3();
 export function fishingUpdate(p, t, dt, waveFn, ctx) {
   const u = p.userData; if (!u.rod || !u.line) return;
+  const reaction = u.dockReaction?.state;
   if (!u.onCast) u.onCast = (pp) => {
     rodTip(pp, _tip); pp.getWorldDirection(_dir); const r = 5 + Math.random() * 5;
     u.lineTarget.set(_tip.x + _dir.x * r, 0, _tip.z + _dir.z * r); u.lineOn = 14 + Math.random() * 14; u.line.visible = true;
@@ -340,7 +457,7 @@ export function fishingUpdate(p, t, dt, waveFn, ctx) {
     u.lineTarget.x = lerp(u.reelFrom.x, _tip.x, q * 0.9); u.lineTarget.z = lerp(u.reelFrom.z, _tip.z, q * 0.9); u.lineTarget.y = waveFn(u.lineTarget.x, u.lineTarget.z, t) + q * 0.6;
     setLine(u.line, _tip, u.lineTarget);
     if (u.reelT <= 0) { u.line.visible = false; u.castCd = 4 + Math.random() * 16; }
-  } else { u.castCd -= dt; if (u.castCd <= 0 && cast(p)) u.castCd = 1e9; }
+  } else if (!reaction || reaction === 'idle') { u.castCd -= dt; if (u.castCd <= 0 && cast(p)) u.castCd = 1e9; }
 }
 
 // ---- props ----
