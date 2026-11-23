@@ -100,8 +100,8 @@ export class Water {
       near: { value: 0.3 }, far: { value: 5000 }, uTime: { value: 0 },
       sunDir: { value: sunDir.clone().normalize() }, sunColor: { value: new THREE.Color(1.0, 0.96, 0.88) },
       foamLight: { value: new THREE.Color(1, 1, 1) },
-      absorb: { value: new THREE.Vector3(0.52, 0.13, 0.50) },
-      scatterColor: { value: new THREE.Color(0.010, 0.15, 0.085) },
+      absorb: { value: new THREE.Vector3(0.49, 0.26, 0.32) },
+      scatterColor: { value: new THREE.Color(0.026, 0.068, 0.057) },
       scatterK: { value: 0.3 },
       wakeOrigin: { value: this.wakeOrigin }, wakeSize: { value: WAKE_SIZE }, wakeTexel: { value: 1 / this.wakeResolution },
       rippleStrength: { value: 0.16 }, wakeStrength: { value: 6.0 }, dbg: { value: 0 },
@@ -267,7 +267,8 @@ export class Water {
           // path length through water roughly grows at grazing angles
           float pathLen = th * (1.0 + (1.0 - abs(V.y)) * 0.6);
           vec3 ab = mix(absorb, vec3(1.5, 2.1, 2.7), murk);
-          vec3 scCol = mix(scatterColor, vec3(0.045, 0.030, 0.012), murk); float scK = mix(scatterK, 1.4, murk);
+          vec3 scCol = mix(scatterColor, vec3(0.035, 0.14, 0.115), lake);
+          scCol = mix(scCol, vec3(0.045, 0.030, 0.012), murk); float scK = mix(scatterK, 1.4, murk);
           // Suspended bottom material changes the actual water column: red/brown wavelengths survive, visibility drops,
           // and the plume stays underneath the physically separate Fresnel reflection.
           ab = mix(ab, vec3(0.68, 1.34, 2.15), silt * 0.90);
@@ -277,14 +278,17 @@ export class Water {
           vec3 waterCol = under + scat;
           // reflection
           // Strong wash used to offset the reflection by most of the screen, stretching dark hulls into long bands.
-          // Keep ordinary ripple distortion unchanged while bounding this screen-space approximation's footprint.
+          // Project slopes into the camera's horizontal frame so the reflected bank breaks in the
+          // same direction as the wave when the boat turns. Limit displacement in rough wash.
           vec4 rp = vRefl;
-          vec2 reflectionOffset = N.xz * 0.9 * (0.5 + 0.5 * distFade);
+          vec2 right = normalize(vec2(viewMatrix[0][0], viewMatrix[2][0]) + vec2(0.00001, 0.0));
+          vec2 reflectionSlope = vec2(dot(N.xz, right), dot(N.xz, vec2(-right.y, right.x)));
+          vec2 reflectionOffset = reflectionSlope * vec2(0.14, 0.29) * (0.5 + 0.5 * distFade);
           reflectionOffset *= 0.035 / max(0.035, length(reflectionOffset));
           rp.xy += reflectionOffset * rp.w;
           vec2 rUv = rp.xy / rp.w;
           rUv = clamp(rUv, vec2(0.002), vec2(0.998));
-          vec3 refl = texture2D(tRefl, rUv, 1.6 + (1.0 - distFade) * 1.5).rgb;
+          vec3 refl = texture2D(tRefl, rUv, 0.35 + (1.0 - distFade) + clamp(foam, 0.0, 1.0)).rgb;
           float shadow = sunShadow(vWorld);
           // Scattering and floating vegetation reflect incoming light; they do not keep a daytime green glow at night.
           // Share the existing boat lamp's cone/range data with spray. The uniform branch skips its math when off.
@@ -300,12 +304,18 @@ export class Water {
           scat *= waterLight * (0.3 + 0.7 * shadow) + waterLampLight;
           waterCol = under + scat;
           // duckweed: a matte green skin on the shaded still water, in patches, pushed aside by the wake
-          float dw = 0.0;
+          float dw = 0.0, pad = 0.0, padTone = 0.0;
           if (duck > 0.2) {
-            float dn = textureGrad(tFoam, w * 0.045 + vec2(0.003, -0.002) * t, waterDx * 0.045, waterDy * 0.045).r * 0.65
-              + textureGrad(tFoam, w * 0.23 - vec2(0.004, 0.003) * t, waterDx * 0.23, waterDy * 0.23).r * 0.45;
+            float bedNoise = textureGrad(tFoam, w * 0.045 + vec2(0.003, -0.002) * t, waterDx * 0.045, waterDy * 0.045).r;
+            vec4 leaves = textureGrad(tFoam, w * 0.23 + weatherWind * sin(t * 0.8) * 0.002, waterDx * 0.23, waterDy * 0.23);
+            float dn = bedNoise * 0.65 + leaves.r * 0.45;
             dw = smoothstep(0.50, 0.70, dn * (0.45 + duck * 0.8)) * smoothstep(0.2, 0.6, duck);
-            dw *= 1.0 - smoothstep(0.02, 0.25, abs(wh) * 6.0 + foam * 1.5 + sediment * 1.8);
+            float undisturbed = 1.0 - smoothstep(0.02, 0.25, abs(wh) * 6.0 + foam * 1.5 + sediment * 1.8);
+            dw *= undisturbed;
+            float padDepth = thick * abs(V.y);
+            pad = leaves.b * smoothstep(0.22, 0.6, duck) * smoothstep(0.18, 0.47, bedNoise)
+              * smoothstep(0.015, 0.10, padDepth) * (1.0 - smoothstep(1.6, 2.6, padDepth)) * undisturbed;
+            padTone = leaves.a / max(leaves.b, 0.004);
           }
           // fresnel
           float NdV = max(dot(N, V), 0.0);
@@ -334,6 +344,10 @@ export class Water {
             vec3 duckCol = mix(vec3(0.045, 0.085, 0.018), vec3(0.11, 0.16, 0.04), dn2) * (waterLight * (0.35 + 0.65 * shadow) + waterLampLight);
             col = mix(col, duckCol, dw * 0.92);
           }
+          if (pad > 0.0) {
+            vec3 leafCol = mix(vec3(0.048, 0.072, 0.021), vec3(0.21, 0.24, 0.065), padTone);
+            col = mix(col, leafCol * (waterLight * (0.42 + 0.58 * shadow) + waterLampLight), pad);
+          }
           // foam
           float fmRaw = clamp(foam, 0.0, 1.0);
           // Shallow depth alone must not paint a white outline around every bank, trunk and wading leg. These wake
@@ -346,7 +360,8 @@ export class Water {
           // Shore foam, storm caps and blue fire still use the complete original texture detail when they can appear.
           if (fmRaw * ${FOAM_NOISE_SHAPE.maximum} > ${FOAM_NOISE_SHAPE.edge} || (th < 0.55 && shorePotential > 0.0) || seaState > 0.45 || bioluminescence > 0.0) {
             fn = textureGrad(tFoam, w * 0.55 + vec2(t * 0.03, -t * 0.02), waterDx * 0.55, waterDy * 0.55).r;
-            fn2 = textureGrad(tFoam, w * 1.7 - vec2(t * 0.05, t * 0.04), waterDx * 1.7, waterDy * 1.7).r;
+            vec2 foamDetail = textureGrad(tFoam, w * 1.7 - vec2(t * 0.05, t * 0.04), waterDx * 1.7, waterDy * 1.7).rg;
+            fn2 = foamDetail.r;
             if (th < 0.55 && shorePotential > 0.0) {
               // A travelling crest leaves broken wash, with quiet gaps between arrivals. Boat wash can still foam in
               // a sheltered calm cut, independently of wind. Reuse both existing foam samples and the wake gradient.
@@ -356,6 +371,9 @@ export class Water {
               shore = (1.0 - smoothstep(0.0, 0.55, th)) * smoothstep(0.35, 0.75, fn * 0.7 + fn2 * 0.5) * 0.6 * shoreDrive;
             }
             fm = smoothstep(${FOAM_NOISE_SHAPE.edge}, 0.85, fmRaw * (${FOAM_NOISE_SHAPE.base} + ${FOAM_NOISE_SHAPE.coarse} * fn + ${FOAM_NOISE_SHAPE.fine} * fn2)) * (0.75 + 0.25 * fn2) + shore;
+            // Thin lace persists on the edge of the churn. Dense prop wash fills the gaps.
+            float lace = 1.0 - smoothstep(0.025, 0.14, abs(foamDetail.g - 0.51));
+            fm *= mix(0.64 + 0.36 * lace, 1.0, fmRaw);
             if (seaState > 0.45) {
               float capNoise = textureGrad(tFoam, w * 0.045 - weatherWind * t * 0.035, waterDx * 0.045, waterDy * 0.045).r * 0.7
                 + textureGrad(tFoam, w * 0.13 + weatherWind * t * 0.06, waterDx * 0.13, waterDy * 0.13).r * 0.3;

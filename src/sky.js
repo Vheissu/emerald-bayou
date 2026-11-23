@@ -61,21 +61,26 @@ export class Sky {
             float flashLobe = pow(max(dot(d, flashDir), 0.0), 5.0);
             flashField = flash * (0.18 + flashLobe * 1.35);
           }
-          vec3 dayZenith = vec3(0.025, 0.13, 0.43);
-          vec3 dayHorizon = vec3(0.43, 0.55, 0.68);
+          vec3 dayZenith = vec3(0.052, 0.18, 0.37);
+          vec3 dayHorizon = vec3(0.49, 0.64, 0.71);
           vec3 nightZenith = vec3(0.0025, 0.008, 0.025);
           vec3 nightHorizon = vec3(0.018, 0.035, 0.060);
           vec3 zenith = mix(nightZenith, dayZenith, daylight);
           vec3 horizon = mix(nightHorizon, dayHorizon, daylight);
-          vec3 sky = mix(horizon, zenith, pow(clamp(y, 0.0, 1.0), 0.43));
+          float lowSun = (1.0 - smoothstep(0.03, 0.4, abs(sunDir.y))) * (1.0 - storm);
+          float sunSide = 0.5 + 0.5 * dot(normalize(d.xz + 1e-5), normalize(sunDir.xz + 1e-5));
+          horizon = mix(horizon, vec3(1.42, 0.66, 0.24), lowSun * daylight * (0.24 + 0.68 * sunSide * sunSide));
+          vec3 sky = mix(horizon, zenith, pow(clamp(y, 0.0, 1.0), 0.59));
           // sun-side brightening + haze
           sky += vec3(0.9, 0.85, 0.75) * pow(max(mu, 0.0), 6.0) * 0.22 * daylight;
-          sky += vec3(1.0, 0.97, 0.9) * pow(max(mu, 0.0), 420.0) * 30.0 * daylight;
+          vec3 solarTint = mix(vec3(1.0, 0.97, 0.88), vec3(1.0, 0.65, 0.27), lowSun);
+          float discEdge = clamp(fwidth(mu), 0.000002, 0.00003);
+          float disc = smoothstep(0.999978 - discEdge, 0.999978 + discEdge, mu);
+          sky += solarTint * (14.0 * disc + 1.25 * pow(max(mu, 0.0), 220.0)) * daylight;
           sky += vec3(1.0, 0.95, 0.85) * pow(max(mu, 0.0), 40.0) * 0.4 * daylight;
           // the warm band is strongest while the sun is on the horizon, then falls away quickly
           float twilight = exp(-abs(sunDir.y) * 13.0) * (1.0 - storm);
-          float sunSide = pow(max(dot(normalize(d.xz + 1e-5), normalize(sunDir.xz + 1e-5)), 0.0), 5.0);
-          sky += vec3(0.95, 0.22, 0.055) * twilight * sunSide * exp(-abs(y) * 7.0) * 0.75;
+          sky += vec3(0.95, 0.22, 0.055) * twilight * pow(sunSide, 5.0) * exp(-abs(y) * 7.0) * 0.75;
           if (y < 0.0) sky = mix(horizon * 0.9, mix(vec3(0.008, 0.015, 0.026), vec3(0.45, 0.55, 0.6), daylight), clamp(-y * 4.0, 0.0, 1.0));
           // cumulus: big towering cells (low-frequency mass, warped), cauliflower detail on top, lit from the sun side
           float yy = max(y, 0.0);
@@ -88,17 +93,19 @@ export class Sky {
             float big = fbm6(p * 0.27 + warp * 1.6);            // tower mass
             float det = fbm6(p * 0.95 + warp * 0.8 + 3.0);      // cauliflower edge
             float n = big * 0.68 + det * 0.32;
-            float dens = smoothstep(cover, cover + 0.17, n);
-            float thick = smoothstep(cover, cover + 0.45, n);
+            float dens = smoothstep(cover - 0.035, cover + 0.105, n);
+            float thick = smoothstep(cover - 0.015, cover + 0.26, n);
             cloudOpacity = max(cloudOpacity, dens * hf * 0.985);
             // self-shadowing: sample toward the active sun or moon and compare
-            vec2 toLight = normalize(lightDir.xz + 1e-4) * 0.09;
+            vec2 toLight = normalize(lightDir.xz + 1e-4) * 0.22;
             float nS = fbm6((p + toLight) * 0.27 + warp * 1.6) * 0.68 + fbm6((p + toLight) * 0.95 + warp * 0.8 + 3.0) * 0.32;
             float lit = clamp((n - nS) * 7.0 + 0.5, 0.0, 1.0);
             // towers: the thicker the cell, the darker its flat base and the brighter its lit crown
             vec3 shade = mix(vec3(0.015, 0.021, 0.032), vec3(0.40, 0.45, 0.56), daylight);
             vec3 base = mix(vec3(0.025, 0.034, 0.050), vec3(0.55, 0.58, 0.66), daylight);
             vec3 bright = mix(vec3(0.08, 0.10, 0.14), vec3(1.12, 1.09, 1.03), daylight);
+            bright *= mix(vec3(1.0), vec3(1.43, 0.93, 0.52), lowSun * daylight);
+            shade *= mix(vec3(1.0), vec3(1.02, 0.77, 0.7), lowSun * daylight);
             shade = mix(shade, vec3(0.035, 0.045, 0.052), storm * 0.78);
             base = mix(base, vec3(0.075, 0.085, 0.092), storm * 0.72);
             bright = mix(bright, vec3(0.20, 0.22, 0.23), storm * 0.58);
@@ -169,7 +176,7 @@ export class Sky {
           vec3 moonRight = normalize(cross(moonAxis, moonDir));
           vec3 moonUp = normalize(cross(moonDir, moonRight));
           vec2 moonQ = vec2(dot(d, moonRight), dot(d, moonUp)) / 0.014;
-          float moonR = length(moonQ), moonDisc = 1.0 - smoothstep(0.90, 1.04, moonR);
+          float moonR = length(moonQ), moonDisc = (1.0 - smoothstep(0.90, 1.04, moonR)) * step(0.5, moonDot);
           float moonZ = sqrt(max(0.0, 1.0 - moonR * moonR));
           vec3 moonNormal = normalize(moonRight * moonQ.x + moonUp * moonQ.y - moonDir * moonZ);
           float moonLit = smoothstep(0.005, 0.045, dot(moonNormal, sunDir));

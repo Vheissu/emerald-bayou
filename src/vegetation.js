@@ -124,6 +124,10 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
       let fs = shader.fragmentShader;
       fs = fs.replace('#include <common>', `#include <common>\nvarying float vFolAO; varying float vFolBack; varying vec3 vCompactColor;`);
       fs = fs.replace('#include <color_fragment>', `#include <color_fragment>\n diffuseColor.rgb *= vCompactColor * vFolAO;`);
+      // Both sides of a leaf card share the crown's outward normal. Flipping it on the
+      // reverse face makes whole branches switch from sun to shade as the camera turns.
+      if (crownNormals) fs = fs.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+        normal *= faceDirection;`);
       if (trans > 0) fs = fs.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(1.0, 0.93, 0.62) * (${trans.toFixed(3)} * vFolBack);`);
       shader.fragmentShader = fs;
@@ -152,7 +156,9 @@ function trunkGeo() {
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const y = p.getY(i); const x = p.getX(i), z = p.getZ(i);
-    const flare = 1 + 1.6 * Math.exp(-y * 14) + 0.25 * Math.exp(-y * 4);
+    const angle = Math.atan2(z, x);
+    const rib = 0.5 + 0.5 * Math.cos(angle * 4 + 0.65 * y);
+    const flare = 1 + (0.52 + 1.72 * rib) * Math.exp(-y * 9) + 0.18 * Math.exp(-y * 3);
     const taper = 1 - y * 0.35;
     p.setX(i, x * flare * taper); p.setZ(i, z * flare * taper);
   }
@@ -337,7 +343,8 @@ export class Vegetation {
     this.oak = new Kind(card, texOak, { crownNormals: true, pin: 'crown', amp: 0.22, hasCrown: true, trans: 0.4 });
     this.palm = new Kind(frond, texPalm, { pin: 'bottom', amp: 0.4 });
     this.palmetto = new Kind(frond, texPalm, { pin: 'bottom', amp: 0.14, fade: [560, 680] }, { color: 0xd8e6c0, small: true });
-    this.moss = new Kind(frond, texMoss, { pin: 'top', amp: 0.5, fade: [560, 680] }, { color: 0xb7bfae, alphaTest: 0.35, shadow: false, small: true });
+    const hanging = new THREE.PlaneGeometry(1, 1).translate(0, -0.5, 0);
+    this.moss = new Kind(hanging, texMoss, { pin: 'top', amp: 0.5, fade: [560, 680] }, { color: 0xc8c2a8, alphaTest: 0.35, shadow: false, small: true });
     // Ground cover is always two perpendicular cards. Baking that cross into the shared base geometry preserves both
     // faces and triangles while each clump carries one compact transform instead of two duplicate instance records.
     this.grass = new Kind(crossedFrond, texGrass, { pin: 'bottom', amp: 0.22, fade: [290, 410] }, { shadow: false, alphaTest: 0.45, small: true });
@@ -372,9 +379,16 @@ export class Vegetation {
     this.branchMat = registerWetMaterial(patchTrunk(new THREE.MeshStandardMaterial({ map: texBark, roughness: 0.95, color: 0x8f8375 }), 0.30));
     this.kneeMat = registerWetMaterial(new THREE.MeshStandardMaterial({ color: 0x5a4d3f, roughness: 1 }));
     this.trunkGeo = TEX.scaleTextureUvs(trunkGeo(), 2, 6);
-    this.branchGeo = TEX.scaleTextureUvs(new THREE.CylinderGeometry(0.06, 0.16, 1, 6, 1), 2, 6); this.branchGeo.translate(0, 0.5, 0);
+    this.branchGeo = TEX.scaleTextureUvs(new THREE.CylinderGeometry(0.085, 0.58, 1, 6, 3), 2, 6);
+    this.branchGeo.translate(0, 0.5, 0);
+    const limb = this.branchGeo.attributes.position;
+    for (let i = 0; i < limb.count; i++) {
+      const height = limb.getY(i);
+      limb.setZ(i, limb.getZ(i) - 0.65 * height * height);
+    }
+    this.branchGeo.computeVertexNormals();
     this.kneeGeo = new THREE.ConeGeometry(0.18, 1, 6); this.kneeGeo.translate(0, 0.5, 0);
-    this.cypTint = new THREE.Color(0.36, 0.48, 0.26); this.oakTint = new THREE.Color(0.30, 0.42, 0.25); this.palmTint = new THREE.Color(0.42, 0.55, 0.34);
+    this.cypTint = new THREE.Color(0.66, 0.59, 0.46); this.oakTint = new THREE.Color(0.52, 0.55, 0.44); this.palmTint = new THREE.Color(0.69, 0.65, 0.47);
     // scratch
     this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler(); this._s = new THREE.Vector3(); this._p = new THREE.Vector3(); this._normal = new THREE.Vector3();
     this._col = new THREE.Color(); this._tint = new THREE.Color(); this._crown = new THREE.Vector4(); this._hsl = { h: 0, s: 0, l: 0 };
@@ -529,12 +543,17 @@ export class Vegetation {
       const baseCount = tier === 2 ? Math.ceil(n * 0.5) : n;
       const cnt = foliageInstanceCount(baseCount, this.detail, tier === 2 ? 4 : 6);
       const coverage = Math.min(1.4, Math.sqrt(baseCount / Math.max(1, cnt)));
-      const sz0 = (tier === 2 ? size * 1.35 : size) * coverage;
+      const sz0 = size * (tier === 2 ? 1.7 : 1.42) * coverage;
+      // The foliage overlaps in boughs, with an irregular rim and a shallower outer canopy.
+      const branchPhase = (cx * 0.71 + cz * 0.43) % (Math.PI * 2);
       for (let i = 0; i < cnt; i++) {
-        const a = tr() * Math.PI * 2, rr = Math.sqrt(tr()) * rx, yy = (tr() - 0.5) * 2 * ry * (1 - rr / rx * 0.35);
+        const a = tr() * Math.PI * 2, radial = Math.sqrt(tr());
+        const bough = Math.cos(3 * a + branchPhase);
+        const rr = radial * rx * (0.92 + 0.18 * bough);
+        const yy = ((tr() - 0.5) * (1.5 - radial * 0.85) + 0.4 - radial * 0.58 + bough * 0.19) * ry;
         p.set(cx + Math.cos(a) * rr, cy + yy, cz + Math.sin(a) * rr);
         e.set((tr() - 0.5) * 1.1, tr() * Math.PI * 2, (tr() - 0.5) * 0.5);
-        q.setFromEuler(e); const sz = sz0 * (0.55 + tr() * 0.9); s.set(sz, sz * (0.8 + tr() * 0.4), sz);
+        q.setFromEuler(e); const sz = sz0 * (0.7 + tr() * 0.65); s.set(sz * 1.18, sz * (0.74 + tr() * 0.34), sz);
         m.compose(p, q, s);
         col.copy(tnt).multiplyScalar(0.9 + tr() * 0.2); col.g *= 0.97 + tr() * 0.06;
         batch.add(m, col, crown);
@@ -547,7 +566,7 @@ export class Vegetation {
         const a = tr() * Math.PI * 2, rr = tr() * r;
         p.set(x + Math.cos(a) * rr, y + (tr() - 0.5) * r * 0.6, z + Math.sin(a) * rr);
         e.set(0, tr() * Math.PI, 0); q.setFromEuler(e);
-        const len = (1.4 + tr() * 2.4) * lenMul; s.set(0.35 + tr() * 0.4, -len, 1);
+        const len = (1.4 + tr() * 2.4) * lenMul; s.set(0.55 + tr() * 0.64, len, 1);
         m.compose(p, q, s); col.setHSL(0.22 + tr() * 0.05, 0.12, 0.55 + tr() * 0.2); B.moss.add(m, col);
       }
     };
@@ -570,17 +589,18 @@ export class Vegetation {
       const conical = opts.conical !== undefined ? opts.conical : tr() < 0.45; // young bald cypress are pyramidal; old ones flat-topped and spreading
       const cy = h + H * (conical ? 0.58 : 0.64), crx = (conical ? 2.0 : 2.8) + H * (conical ? 0.09 : 0.14) + tr() * 1.6, cry = H * (conical ? 0.34 : 0.25);
       if (tier <= 1) for (let b = 0, count = foliageInstanceCount(5, this.detail, 2); b < count; b++) placeBranch(x, h + H * (0.4 + tr() * 0.35), z, crx * (0.7 + tr() * 0.6), r * 0.5, tr() * Math.PI * 2, 0.9 + tr() * 0.9);
-      if (conical) {
+      if (conical && tier >= 3) {
+        // The distant impostor covers all three tiers of the tapered crown.
+        crownCards(tr, B.cyp, x, cy, z, crx * 0.85, cry, 1, 1, tnt);
+      } else if (conical) {
         crownCards(tr, B.cyp, x, cy - cry * 0.5, z, crx, cry * 0.5, 22 + Math.floor(tr() * 8), 1.6 + H * 0.05, tnt);
-        if (tier < 3) {
-          crownCards(tr, B.cyp, x, cy + cry * 0.15, z, crx * 0.72, cry * 0.45, 16 + Math.floor(tr() * 6), 1.5 + H * 0.045, tnt);
-          crownCards(tr, B.cyp, x, cy + cry * 0.7, z, crx * 0.4, cry * 0.35, 8 + Math.floor(tr() * 4), 1.3 + H * 0.04, tnt);
-        }
+        crownCards(tr, B.cyp, x, cy + cry * 0.15, z, crx * 0.72, cry * 0.45, 16 + Math.floor(tr() * 6), 1.5 + H * 0.045, tnt);
+        crownCards(tr, B.cyp, x, cy + cry * 0.7, z, crx * 0.4, cry * 0.35, 8 + Math.floor(tr() * 4), 1.3 + H * 0.04, tnt);
       } else {
         crownCards(tr, B.cyp, x, cy, z, crx, cry, 34 + Math.floor(tr() * 10), 1.7 + H * 0.05, tnt);
         if (tier < 3) crownCards(tr, B.cyp, x, cy - cry * 0.9, z, crx * 0.75, cry * 0.35, 9 + Math.floor(tr() * 5), 1.6 + H * 0.04, tnt);
       }
-      mossOn(tr, x, cy - cry * 0.85, z, crx * 0.9, 8 + Math.floor(tr() * 8));
+      mossOn(tr, x, cy - cry * 0.36, z, crx * 0.78, 8 + Math.floor(tr() * 8));
       if (tier === 0 && h < 0.5 && h > -1.2) for (let k = 0, count = foliageInstanceCount(4 + tr() * 6, this.detail, 2); k < count; k++) {
         const a = tr() * Math.PI * 2, rr = 1.5 + tr() * 4;
         const kx = x + Math.cos(a) * rr, kz = z + Math.sin(a) * rr; const kh = grid(kx, kz);
@@ -595,7 +615,7 @@ export class Vegetation {
       const cy = h + H * 0.62, crx = 4 + tr() * 3.5, cry = H * 0.28;
       if (tier <= 1) for (let b = 0, count = foliageInstanceCount(5, this.detail, 2); b < count; b++) placeBranch(x, h + H * (0.35 + tr() * 0.2), z, crx * (0.8 + tr() * 0.5), r * 0.6, tr() * Math.PI * 2, 1.0 + tr() * 0.7);
       crownCards(tr, B.oak, x, cy, z, crx, cry, 30 + Math.floor(tr() * 8), 2.3 + tr() * 0.9, varyTint(tr, this.oakTint, 0.03, 0.3));
-      mossOn(tr, x, cy - cry * 0.7, z, crx * 0.9, 9 + Math.floor(tr() * 8), 1.1);
+      mossOn(tr, x, cy - cry * 0.38, z, crx * 0.78, 9 + Math.floor(tr() * 8), 1.1);
     };
     const palm = (tr, x, z, h) => {
       const H = 5 + tr() * 7;
@@ -728,16 +748,26 @@ export class Vegetation {
     }
     yield;
     // --- reeds / cattails in the shallows; across the prairie, tall sawgrass in its place ---
+    let reedX = 0, reedZ = 0, culmsLeft = 0;
     for (let t = 0, count = foliageInstanceCount(700, this.detail, 180); t < count; t++) {
       if (t > 0 && (t & 31) === 0) yield;
-      const x = x0 + rand() * CELL, z = z0 + rand() * CELL;
+      // Once a shoreline spot takes, spend the next few candidates on its root bed.
+      // Keep the per-tier candidate budget and check every stem against the bank and docks.
+      const inBed = culmsLeft > 0;
+      const x = inBed ? reedX + (rand() - 0.5) * 6.8 : x0 + rand() * CELL;
+      const z = inBed ? reedZ + (rand() - 0.5) * 3.8 : z0 + rand() * CELL;
+      if (inBed) culmsLeft--;
+      if (x < x0 || x >= x0 + CELL || z < z0 || z >= z0 + CELL) continue;
       const h = grid(x, z);
-      if (h < -0.7 || h > 0.35 + open * 0.6 || excl(x, z)) continue;
-      if (rand() > 0.35 + Math.max(0, -h) + open * 0.45) continue;
+      if (h < -0.68 || h > 0.68 + open * 0.45 || excl(x, z)) continue;
+      if (!inBed) {
+        if (rand() > 0.42 + Math.max(0, -h) + open * 0.45) continue;
+        reedX = x; reedZ = z; culmsLeft = 3 + Math.floor(rand() * 5);
+      }
       const saw = rand() < open; // sawgrass: a grass clump card, taller and straw-green
       p.set(x, h - 0.05, z); e.set(0, rand() * Math.PI, 0); q.setFromEuler(e);
-      const sz = saw ? 1.3 + rand() * 0.9 : 1.6 + rand() * 1.0; s.set(sz * (saw ? 1.3 : 0.9), sz + Math.max(0, -h), 1); m.compose(p, q, s);
-      if (saw) col.setHSL(0.17 + rand() * 0.04, 0.42, 0.3 + rand() * 0.16); else col.setHSL(0.19 + rand() * 0.05, 0.35, 0.22 + rand() * 0.14);
+      const sz = saw ? 0.95 + rand() * 1.0 : 1.05 + rand() * 1.28; s.set(sz * (saw ? 1.45 : 1.1), sz + Math.max(0, -h), 1); m.compose(p, q, s);
+      if (saw) col.setHSL(0.12 + rand() * 0.06, 0.28, 0.52 + rand() * 0.18); else col.setHSL(0.14 + rand() * 0.07, 0.20, 0.47 + rand() * 0.17);
       const batch = saw ? B.grass : B.reed;
       batch.add(m, col);
     }

@@ -68,7 +68,6 @@ export class Spray {
       v[i * 3 + 2] = v[i * 3 + 2] * drag + windZ * windStep;
       p[i * 3] += v[i * 3] * dt; p[i * 3 + 1] += v[i * 3 + 1] * dt; p[i * 3 + 2] += v[i * 3 + 2] * dt;
       if (p[i * 3 + 1] < floor) { p[i * 3 + 1] = floor; v[i * 3 + 1] = 0; this.life[i] -= dt * 6; }
-      this.size[i] += dt * 0.1;
       if (this.life[i] <= 0) { this.remove(i); continue; }
       const t = this.life[i] / this.maxLife[i];
       this.alpha[i] = this.baseAlpha[i] * Math.min(1, t * 3.0);

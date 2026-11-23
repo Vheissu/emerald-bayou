@@ -190,9 +190,11 @@ export class Terrain {
           sand = mix(sand, sandB, 0.5) * 0.75;
           float h = vWPos.y;
           float slope = 1.0 - clamp(vWorldUp, 0.0, 1.0);
-          float wMud = smoothstep(1.9, 0.2, h + macro2 * 1.2);
-          float wSand = smoothstep(-0.05, -0.9, h);
-          wSand = max(wSand, smoothstep(0.7, 0.15, abs(h - 0.45)) * smoothstep(0.3, 0.55, macro) * (1.0 - slope * 3.0));
+          float bankHeight = h + (macro2 - 0.5) * 1.1;
+          float wMud = 1.0 - smoothstep(0.18, 1.35, bankHeight);
+          float wSand = 1.0 - smoothstep(-0.9, -0.05, h);
+          float sandbar = (1.0 - smoothstep(0.12, 0.63, abs(bankHeight - 0.38))) * smoothstep(0.47, 0.67, macro);
+          wSand = max(wSand, sandbar * clamp(1.0 - slope * 3.0, 0.0, 1.0));
           vec3 col = mix(grass, mud, wMud);
           col = mix(col, sand, wSand);
           col *= mix(0.45, 1.0, smoothstep(-0.25, 1.2, h));

@@ -9,6 +9,7 @@ import { mulberry32 } from './noise.js';
 import { registerWetMaterial } from './surfacewetness.js';
 import { bottomStrikeSeverity } from './boatdamage.js';
 import { instanceStaticChildren } from './staticinstances.js';
+import { airboatGrilleTexture, airboatWearTextures, bakeParts, propBladeGeometry } from './airboatdetail.js';
 
 // Boat local frame: +X starboard, +Y up, -Z forward (bow at -Z).
 // The player boat and scheduled traffic use the same detailed hull. Keep one immutable render template so its
@@ -146,11 +147,33 @@ function createAirboatTemplate() {
   const torusGeo = (...args) => cachedGeometry('torus', args, () => new THREE.TorusGeometry(...args));
   const capsuleGeo = (...args) => cachedGeometry('capsule', args, () => new THREE.CapsuleGeometry(...args));
   const circleGeo = (...args) => cachedGeometry('circle', args, () => new THREE.CircleGeometry(...args));
-  const black = new THREE.MeshStandardMaterial({ color: 0x141616, roughness: 0.5, metalness: 0.55 });
-  const darkAlu = new THREE.MeshStandardMaterial({ color: 0x2b2e2d, roughness: 0.45, metalness: 0.8 });
+  // A unit cylinder stretched between two points. Only used for parts that are baked or batched, never mirrored.
+  const strutTo = new THREE.Vector3(), strutUp = new THREE.Vector3(0, 1, 0);
+  const strut = (parent, ax, ay, az, bx, by, bz, radius, sides = 8) => {
+    strutTo.set(bx - ax, by - ay, bz - az); const length = strutTo.length();
+    const m = new THREE.Mesh(cylinderGeo(radius, radius, 1, sides)); m.scale.set(1, length, 1);
+    m.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2); m.quaternion.setFromUnitVectors(strutUp, strutTo.normalize());
+    parent.add(m); return m;
+  };
+  const part = (parent, geometry, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) => {
+    const m = new THREE.Mesh(geometry); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); parent.add(m); return m;
+  };
+
+  // One shared weathering pair (grime runs, tannin staining, bright scratches) tints every working part. The base
+  // roughness values below are scaled by the map's 0.4-1.0 green channel.
+  const wear = airboatWearTextures();
+  const worn = (color, roughness, metalness) => new THREE.MeshStandardMaterial({ map: wear.map, roughnessMap: wear.roughnessMap, color, roughness, metalness });
+  const darkAlu = worn(0x3a3d3c, 0.62, 0.72);
   const steel = new THREE.MeshStandardMaterial({ color: 0x6a6d6a, roughness: 0.35, metalness: 0.9 });
-  const engineMat = new THREE.MeshStandardMaterial({ color: 0x1b1c1c, roughness: 0.6, metalness: 0.6 });
-  const seatMat = new THREE.MeshStandardMaterial({ color: 0x232424, roughness: 0.85 });
+  const galv = worn(0xaeb1ab, 0.6, 0.82);
+  const bareAlu = worn(0x9a9d98, 0.68, 0.7);
+  const castAlu = worn(0x85877f, 0.82, 0.55);
+  const enamel = worn(0x6b2f24, 0.78, 0.22);
+  const exhaustMat = worn(0x4f4136, 1.0, 0.5);
+  const rudderPaint = worn(0x343734, 0.85, 0.35);
+  const rubber = new THREE.MeshStandardMaterial({ color: 0x1b1c1b, roughness: 0.9, metalness: 0.0 });
+  const seatMat = worn(0x2c2d2b, 1.0, 0.0);
+  const lensMat = new THREE.MeshStandardMaterial({ color: 0x5a0e08, emissive: 0xff3a1c, emissiveIntensity: 0.35, roughness: 0.25, metalness: 0.0 });
 
   // box-projected UVs (world-ish metres * scale) for extruded / arbitrary geometry
   const boxUV = (geo, scale = 0.5) => {
@@ -162,7 +185,8 @@ function createAirboatTemplate() {
     }
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); return geo;
   };
-  // hull: welded aluminium panels with rivet rows (map + normal + roughness), polymer slick bottom, spray chines
+  // hull: welded aluminium panels with rivet rows (map + normal + roughness), polymer slick bottom, spray chines.
+  // Traffic liveries recolour by this exact base hex, so wear lives in the maps rather than the colour.
   const hp = TEX.hullPanels();
   const hullMat = new THREE.MeshStandardMaterial({ map: hp.map, normalMap: hp.normalMap, roughnessMap: hp.roughnessMap, normalScale: new THREE.Vector2(0.9, 0.9), color: 0xd8dcda, roughness: 1.0, metalness: 0.72 });
   const shape = new THREE.Shape();
@@ -186,12 +210,13 @@ function createAirboatTemplate() {
   const dp = TEX.diamondPlate(); dp.map.repeat.set(5, 11); dp.normalMap.repeat.set(5, 11);
   const deckMat = new THREE.MeshStandardMaterial({ map: dp.map, normalMap: dp.normalMap, normalScale: new THREE.Vector2(0.7, 0.7), color: 0xb9bdbc, roughness: 0.55, metalness: 0.75 });
   const deck = new THREE.Mesh(boxGeo(2.2, 0.04, 4.9), deckMat); deck.position.set(0, 0.62, -0.1); deck.receiveShadow = true; g.add(deck);
-  // gunwale rub-rails (rounded, pale polymer) + inner lip
+  // gunwale rub-rails (rounded, pale polymer) + inner lip; a matching strip closes the transom
   const rubMat = new THREE.MeshStandardMaterial({ color: 0xc9c6bd, roughness: 0.7, metalness: 0.05 });
   for (const sx of [-1, 1]) {
     const rail = new THREE.Mesh(capsuleGeo(0.045, 4.2, 4, 10), rubMat); rail.rotation.x = Math.PI / 2; rail.position.set(sx * 1.24, 0.6, 0.1); g.add(rail);
     const lip = new THREE.Mesh(boxGeo(0.06, 0.09, 4.3), darkAlu); lip.position.set(sx * 1.16, 0.66, 0.1); g.add(lip);
   }
+  const sternRub = new THREE.Mesh(capsuleGeo(0.045, 2.32, 4, 10), rubMat); sternRub.rotation.z = Math.PI / 2; sternRub.position.set(0, 0.6, 2.5); g.add(sternRub);
   const bowRub = new THREE.Mesh(torusGeo(0.62, 0.045, 8, 24, Math.PI), rubMat); bowRub.rotation.x = Math.PI / 2; bowRub.rotation.z = Math.PI; bowRub.position.set(0, 0.6, -2.35); g.add(bowRub);
   // grab rail around bow
   const bowRail = new THREE.Mesh(torusGeo(0.9, 0.025, 8, 24, Math.PI), steel);
@@ -204,7 +229,6 @@ function createAirboatTemplate() {
   for (const sx of [-0.8, 0.8]) for (const sz of [-1.0, -0.5]) { const p = new THREE.Mesh(cylinderGeo(0.03, 0.03, 0.38, 8), steel); p.position.set(sx, 0.82, sz); g.add(p); }
 
   // driver's station: footrest platform on posts; the seat pedestal comes with the driver model
-  const seatY = 1.62;
   const footrest = new THREE.Mesh(boxGeo(0.9, 0.04, 0.6), deckMat); footrest.position.set(0, 1.03, -0.05); footrest.castShadow = true; g.add(footrest);
   for (const sx of [-0.36, 0.36]) for (const sz of [-0.28, 0.2]) { const p = new THREE.Mesh(cylinderGeo(0.03, 0.03, 0.41, 8), steel); p.position.set(sx, 0.825, sz); g.add(p); }
   const seatBack = new THREE.Mesh(boxGeo(0.6, 0.5, 0.08), seatMat); seatBack.position.set(0, 1.86, 0.92); seatBack.castShadow = true; g.add(seatBack);
@@ -213,99 +237,140 @@ function createAirboatTemplate() {
   const stick = new THREE.Mesh(cylinderGeo(0.018, 0.018, 0.85, 8), steel); stick.position.set(-0.4, 1.75, 0.1); stick.rotation.z = -0.35; stick.rotation.x = 0.25; g.add(stick);
   const stickBase = new THREE.Mesh(boxGeo(0.1, 0.5, 0.1), darkAlu); stickBase.position.set(-0.55, 1.2, 0.2); g.add(stickBase);
 
-  // engine
+  // engine: faded enamel block, cast heads and air cleaner, and the belt reduction drive that lifts the crank up to
+  // the prop shaft. The redrive sits right behind the hub, so it is the machinery the chase camera sees through the guard.
   const eng = new THREE.Group(); eng.position.set(0, 1.05, 1.75);
-  const block = new THREE.Mesh(boxGeo(0.75, 0.55, 0.7), engineMat); block.castShadow = true; eng.add(block);
-  for (const sx of [-1, 1]) { const head = new THREE.Mesh(boxGeo(0.28, 0.32, 0.72), engineMat); head.position.set(sx * 0.3, 0.4, 0); head.rotation.z = -sx * 0.5; eng.add(head); }
-  const intake = new THREE.Mesh(cylinderGeo(0.16, 0.2, 0.16, 16), darkAlu); intake.position.set(0, 0.62, 0); eng.add(intake);
-  for (let i = 0; i < 4; i++) for (const sx of [-1, 1]) {
-    const pipe = new THREE.Mesh(cylinderGeo(0.035, 0.035, 0.5, 8), steel); pipe.position.set(sx * 0.5, 0.05 - i * 0.02, -0.25 + i * 0.16); pipe.rotation.z = sx * 0.9; eng.add(pipe);
+  const block = new THREE.Mesh(boxGeo(0.75, 0.55, 0.7), enamel); block.castShadow = true; eng.add(block);
+  const sump = new THREE.Mesh(boxGeo(0.6, 0.14, 0.62), castAlu); sump.position.set(0, -0.33, 0); eng.add(sump);
+  for (const sx of [-1, 1]) {
+    const head = new THREE.Mesh(boxGeo(0.28, 0.32, 0.72), castAlu); head.position.set(sx * 0.3, 0.4, 0); head.rotation.z = -sx * 0.5; eng.add(head);
+    const cover = new THREE.Mesh(boxGeo(0.2, 0.07, 0.66), enamel); cover.position.set(sx * 0.39, 0.53, 0); cover.rotation.z = -sx * 0.5; eng.add(cover);
   }
-  const shaft = new THREE.Mesh(cylinderGeo(0.06, 0.06, 0.55, 12), steel); shaft.rotation.x = Math.PI / 2; shaft.position.set(0, 0.7, 0.5); eng.add(shaft);
+  const intake = new THREE.Mesh(cylinderGeo(0.1, 0.13, 0.14, 16), castAlu); intake.position.set(0, 0.56, -0.12); eng.add(intake);
+  const filter = new THREE.Mesh(cylinderGeo(0.21, 0.21, 0.1, 28), rubber); filter.position.set(0, 0.68, -0.12); eng.add(filter);
+  const filterLid = new THREE.Mesh(cylinderGeo(0.225, 0.225, 0.025, 28), steel); filterLid.position.set(0, 0.745, -0.12); eng.add(filterLid);
+  for (let i = 0; i < 4; i++) for (const sx of [-1, 1]) {
+    const pipe = new THREE.Mesh(cylinderGeo(0.035, 0.035, 0.5, 8), exhaustMat); pipe.position.set(sx * 0.5, 0.05 - i * 0.02, -0.25 + i * 0.16); pipe.rotation.z = sx * 0.9; eng.add(pipe);
+  }
+  const shaft = new THREE.Mesh(cylinderGeo(0.06, 0.06, 0.55, 12), steel); shaft.rotation.x = Math.PI / 2; shaft.position.set(0, 0.75, 0.5); eng.add(shaft);
+  const redriveParts = new THREE.Group();
+  part(redriveParts, cylinderGeo(0.22, 0.22, 0.12, 28), 0, 0.75, 0.29, Math.PI / 2);
+  part(redriveParts, cylinderGeo(0.12, 0.12, 0.12, 20), 0, 0.12, 0.29, Math.PI / 2);
+  part(redriveParts, boxGeo(0.26, 0.62, 0.11), 0, 0.43, 0.29);
+  for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; part(redriveParts, cylinderGeo(0.018, 0.018, 0.04, 6), Math.cos(a) * 0.16, 0.75 + Math.sin(a) * 0.16, 0.36, Math.PI / 2); }
+  const redrive = new THREE.Mesh(bakeParts(redriveParts), castAlu); redrive.name = 'airboat redrive'; eng.add(redrive);
   const engMount = new THREE.Mesh(boxGeo(0.9, 0.12, 0.9), darkAlu); engMount.position.set(0, -0.35, 0); eng.add(engMount);
   for (const sx of [-0.4, 0.4]) for (const sz of [-0.4, 0.4]) { const p = new THREE.Mesh(cylinderGeo(0.03, 0.03, 0.4, 8), steel); p.position.set(sx, -0.55, sz); eng.add(p); }
   g.add(eng);
+  // Twin stacks rise from the headers and end just under the cage crown, where the condition plume already spawns.
+  const stackParts = new THREE.Group();
+  for (const sx of [-1, 1]) {
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(sx * 0.52, 1.26, 1.86), new THREE.Vector3(sx * 0.6, 1.5, 1.8), new THREE.Vector3(sx * 0.46, 1.98, 1.7),
+      new THREE.Vector3(sx * 0.32, 2.42, 1.68), new THREE.Vector3(sx * 0.3, 2.94, 1.68),
+    ]);
+    stackParts.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 28, 0.045, 8, false)));
+    part(stackParts, cylinderGeo(0.056, 0.056, 0.07, 10), sx * 0.3, 2.92, 1.68);
+    part(stackParts, cylinderGeo(0.07, 0.07, 0.03, 10), sx * 0.49, 1.36, 1.83, 0, 0, sx * 0.9);
+  }
+  const stacks = new THREE.Mesh(bakeParts(stackParts), exhaustMat); stacks.name = 'airboat exhaust stacks'; g.add(stacks);
+  stackParts.traverse(o => { if (o.isMesh && o.geometry.type === 'TubeGeometry') o.geometry.dispose(); });
 
-  // fuel tank
-  const tank = new THREE.Mesh(boxGeo(0.6, 0.35, 0.6), darkAlu); tank.position.set(0.7, 0.82, 1.9); tank.castShadow = true; g.add(tank);
-  const tank2 = tank.clone(); tank2.position.x = -0.7; g.add(tank2);
+  // fuel tanks: bare welded aluminium with filler caps and a fuel line toward the engine
+  for (const sx of [-1, 1]) {
+    const tank = new THREE.Mesh(boxGeo(0.6, 0.35, 0.6), bareAlu); tank.position.set(sx * 0.7, 0.82, 1.9); tank.castShadow = true; g.add(tank);
+    const cap = new THREE.Mesh(cylinderGeo(0.055, 0.055, 0.05, 12), steel); cap.position.set(sx * 0.84, 1.02, 1.74); g.add(cap);
+    const strap = new THREE.Mesh(boxGeo(0.64, 0.02, 0.05), rubber); strap.position.set(sx * 0.7, 1.0, 2.05); g.add(strap);
+  }
 
   // ---- cage: short drum at the front, deep spherical dome at the back ----
   const cage = new THREE.Group(); cage.name = 'airboat cage'; cage.position.set(0, 1.8, 2.35);
   const R = 1.3, depth = 0.5, domeD = 0.62;
-  const ringMat = steel;
   // dome profile: radius/z as a function of u in [0,1]
   const domePt = (u) => { const a = u * Math.PI / 2; return { r: R * Math.pow(Math.cos(a), 0.78), z: depth / 2 + domeD * Math.sin(a) }; };
   const profile = [new THREE.Vector3(R, -depth / 2, 0), new THREE.Vector3(R, depth / 2, 0)];
   for (let i = 1; i <= 10; i++) { const d = domePt(i / 10); profile.push(new THREE.Vector3(d.r, d.z, 0)); }
-  // rings / hoops
-  const hoop = (r, z, tube) => { const h = new THREE.Mesh(torusGeo(r, tube, 8, 72), ringMat); h.position.z = z; cage.add(h); };
-  hoop(R, -depth / 2, 0.03); hoop(R, depth / 2, 0.03);
-  for (const u of [0.32, 0.6, 0.82]) { const d = domePt(u); hoop(d.r, d.z, 0.018); }
-  // bars: run straight along the drum then curve in over the dome to the apex
+  // The whole welded frame (hoops, ribs, face spokes, rear frame, stanchions) is baked into one galvanised mesh.
+  const frameParts = new THREE.Group();
+  part(frameParts, torusGeo(R, 0.032, 8, 80), 0, 0, -depth / 2); part(frameParts, torusGeo(R, 0.032, 8, 80), 0, 0, depth / 2);
+  for (const u of [0.2, 0.38, 0.55, 0.7, 0.83, 0.93]) { const d = domePt(u); part(frameParts, torusGeo(d.r, 0.015, 6, 64), 0, 0, d.z); }
+  const apex = domePt(0.975); part(frameParts, torusGeo(apex.r + 0.02, 0.02, 6, 24), 0, 0, apex.z);
+  // ribs: run straight along the drum then curve in over the dome to the apex
   const barPts = profile.map(p => new THREE.Vector3(p.x, 0, p.y)); barPts.push(new THREE.Vector3(0, 0, depth / 2 + domeD + 0.01));
-  const barCurve = new THREE.CatmullRomCurve3(barPts, false, 'centripetal', 0.5);
-  const barGeo = new THREE.TubeGeometry(barCurve, 26, 0.014, 6, false);
-  const NB = 30;
-  for (let i = 0; i < NB; i++) {
-    const bar = new THREE.Mesh(barGeo, ringMat); bar.rotation.z = (i / NB) * Math.PI * 2; cage.add(bar);
-  }
+  const barGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(barPts, false, 'centripetal', 0.5), 26, 0.014, 6, false);
+  for (let i = 0; i < 36; i++) part(frameParts, barGeo, 0, 0, 0, 0, 0, (i / 36) * Math.PI * 2);
   // front face: radial spokes + inner rings
   for (let i = 0; i < 12; i++) {
     const a = (i / 12) * Math.PI * 2;
-    const spoke = new THREE.Mesh(cylinderGeo(0.012, 0.012, R, 6), ringMat);
-    spoke.position.set(Math.cos(a) * R / 2, Math.sin(a) * R / 2, -depth / 2); spoke.rotation.z = a + Math.PI / 2; cage.add(spoke);
+    part(frameParts, cylinderGeo(0.012, 0.012, R, 6), Math.cos(a) * R / 2, Math.sin(a) * R / 2, -depth / 2, 0, 0, a + Math.PI / 2);
   }
-  for (const rr of [0.5, 0.95]) hoop(rr, -depth / 2, 0.012);
-  // wire mesh: lathe over the profile for drum + dome, flat disc at the front
-  const meshTex = TEX.cageMesh();
-  const meshMat = new THREE.MeshStandardMaterial({ map: meshTex, alphaTest: 0.4, alphaToCoverage: true, side: THREE.DoubleSide, color: 0x2a2c2b, roughness: 0.6, metalness: 0.6 });
-  const lathePts = profile.map(p => new THREE.Vector2(p.x, p.y));
-  const latheGeo = new THREE.LatheGeometry(lathePts, 72); latheGeo.rotateX(Math.PI / 2);
-  const drumTex = meshTex.clone(); drumTex.repeat.set(64, 6); drumTex.needsUpdate = true;
-  const drum = new THREE.Mesh(latheGeo, meshMat.clone()); drum.material.map = drumTex; cage.add(drum);
-  const discTex = meshTex.clone(); discTex.repeat.set(24, 24); discTex.needsUpdate = true;
-  const discMat = meshMat.clone(); discMat.map = discTex;
-  const discF = new THREE.Mesh(circleGeo(R, 72), discMat); discF.position.z = -depth / 2; cage.add(discF);
-  // cage support frame down to hull
+  for (const rr of [0.5, 0.95]) part(frameParts, torusGeo(rr, 0.012, 6, 56), 0, 0, -depth / 2);
+  // rear frame: tall corner posts tangent to the hoops, a top rail for the marker lights and a deck crossbar
+  const deckY = 0.64 - 1.8, postX = R + 0.01;
   for (const sx of [-1, 1]) {
-    const post = new THREE.Mesh(cylinderGeo(0.03, 0.03, 1.8, 8), ringMat); post.position.set(sx * 1.05, -1.15 + 0.35, 0); cage.add(post);
-    const post2 = post.clone(); post2.position.z = -depth / 2; post2.scale.y = 0.85; post2.position.y = -0.98; cage.add(post2);
-    const brace = new THREE.Mesh(cylinderGeo(0.02, 0.02, 1.2, 6), ringMat); brace.position.set(sx * 0.85, -1.1, -0.9); brace.rotation.x = 0.9; brace.rotation.z = sx * 0.3; cage.add(brace);
+    strut(frameParts, sx * postX, deckY, depth / 2, sx * postX, R + 0.04, depth / 2, 0.03);
+    strut(frameParts, sx * postX, deckY, -depth / 2, sx * postX, 0.15, -depth / 2, 0.026);
+    strut(frameParts, sx * postX, -0.35, -depth / 2, sx * 1.08, deckY, -1.25, 0.022);
+    strut(frameParts, sx * 1.0, deckY, -depth / 2, sx * 1.0, -Math.sqrt(R * R - 1.0) + 0.02, -depth / 2, 0.022);
+    part(frameParts, boxGeo(0.12, 0.02, 0.6), sx * postX, deckY + 0.01, 0);
   }
-  const bumper = new THREE.Mesh(boxGeo(2.6, 0.06, 0.06), ringMat); bumper.position.set(0, -R - 0.02, 0); cage.add(bumper);
-  const bumper2 = new THREE.Mesh(boxGeo(2.6, 0.06, 0.06), ringMat); bumper2.position.set(0, R + 0.02, 0); cage.add(bumper2);
-  // propeller
+  strut(frameParts, -postX, R + 0.04, depth / 2, postX, R + 0.04, depth / 2, 0.028);
+  strut(frameParts, -postX, deckY + 0.05, depth / 2, postX, deckY + 0.05, depth / 2, 0.03);
+  strut(frameParts, -postX, deckY + 0.05, -depth / 2, postX, deckY + 0.05, -depth / 2, 0.03);
+  const cageFrame = new THREE.Mesh(bakeParts(frameParts), galv); cageFrame.name = 'airboat cage frame'; cage.add(cageFrame);
+  barGeo.dispose();
+  for (const sx of [-1, 1]) { const lens = new THREE.Mesh(boxGeo(0.07, 0.05, 0.07), lensMat); lens.position.set(sx * postX, R + 0.09, depth / 2); cage.add(lens); }
+  // Fine welded wire guard over the drum, dome and driver-side face. UVs are re-laid by arc length so every cell is
+  // about 6 cm; the texture's dithered mips keep the guard reading as a grey haze at range instead of vanishing.
+  const grilleCell = 0.24, lathePts = profile.map(p => new THREE.Vector2(p.x, p.y));
+  const latheGeo = new THREE.LatheGeometry(lathePts, 72), latheUv = latheGeo.getAttribute('uv'), arc = [0];
+  for (let j = 1; j < lathePts.length; j++) arc.push(arc[j - 1] + lathePts[j].distanceTo(lathePts[j - 1]));
+  const aroundRepeat = Math.round(Math.PI * 2 * R / grilleCell);
+  for (let i = 0; i <= 72; i++) for (let j = 0; j < lathePts.length; j++) latheUv.setXY(i * lathePts.length + j, i / 72 * aroundRepeat, arc[j] / grilleCell);
+  latheGeo.rotateX(Math.PI / 2);
+  const discGeo = new THREE.CircleGeometry(R, 72); TEX.scaleTextureUvs(discGeo, 2 * R / grilleCell, 2 * R / grilleCell);
+  const grilleParts = new THREE.Group(); part(grilleParts, latheGeo); part(grilleParts, discGeo, 0, 0, -depth / 2);
+  const grilleMat = new THREE.MeshStandardMaterial({ map: airboatGrilleTexture(), alphaTest: 0.5, alphaToCoverage: true, side: THREE.DoubleSide, color: 0x7d807b, roughness: 0.52, metalness: 0.72 });
+  const grille = new THREE.Mesh(bakeParts(grilleParts), grilleMat); grille.name = 'airboat cage grille'; cage.add(grille);
+  latheGeo.dispose(); discGeo.dispose();
+  // propeller: twisted two-blade laminate with nickel leading edges and painted tips on a bolted hub and spinner
   const prop = new THREE.Group(); prop.name = 'airboat propeller';
-  const hub = new THREE.Mesh(cylinderGeo(0.12, 0.12, 0.2, 16), darkAlu); hub.rotation.x = Math.PI / 2; prop.add(hub);
-  const bladeMat = new THREE.MeshStandardMaterial({ color: 0x2f2a22, roughness: 0.5, metalness: 0.3 });
-  for (let i = 0; i < 2; i++) {
-    const blade = new THREE.Mesh(boxGeo(0.17, R - 0.12, 0.025), bladeMat);
-    blade.position.y = (i === 0 ? 1 : -1) * (R - 0.12) / 2; blade.rotation.y = (i === 0 ? 1 : -1) * 0.35; blade.rotation.z = i === 0 ? 0 : Math.PI;
-    prop.add(blade);
-  }
+  const hubParts = new THREE.Group();
+  part(hubParts, cylinderGeo(0.16, 0.16, 0.18, 20), 0, 0, 0, Math.PI / 2);
+  part(hubParts, cylinderGeo(0.02, 0.15, 0.2, 20), 0, 0, 0.19, Math.PI / 2);
+  for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 + 0.26; part(hubParts, cylinderGeo(0.018, 0.018, 0.04, 6), Math.cos(a) * 0.11, Math.sin(a) * 0.11, -0.1, Math.PI / 2); }
+  const hub = new THREE.Mesh(bakeParts(hubParts), castAlu); hub.name = 'airboat prop hub'; prop.add(hub);
+  const bladeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.12 });
+  const blades = new THREE.Mesh(propBladeGeometry({ root: 0.13, tip: R - 0.12 }), bladeMat); blades.name = 'airboat prop blades'; prop.add(blades);
   const blur = new THREE.Mesh(circleGeo(R - 0.1, 48), new THREE.MeshBasicMaterial({ color: 0x1a1c1a, transparent: true, opacity: 0.0, depthWrite: false, side: THREE.DoubleSide }));
   blur.name = 'airboat prop blur';
   prop.add(blur);
   cage.add(prop);
   g.add(cage);
-  // rudders
+  // rudders: aluminium skins on a tube spar with pressed stiffeners; one baked frame geometry serves both
+  const rudderFrameParts = new THREE.Group();
+  part(rudderFrameParts, cylinderGeo(0.03, 0.03, 2.0, 10));
+  part(rudderFrameParts, cylinderGeo(0.016, 0.016, 1.9, 8), 0, 0, 0.62);
+  for (const y of [-0.95, 0.95]) part(rudderFrameParts, boxGeo(0.06, 0.04, 0.64), 0, y, 0.31);
+  for (const y of [-0.5, 0.02, 0.52]) part(rudderFrameParts, boxGeo(0.055, 0.03, 0.58), 0, y, 0.32);
+  const rudderFrameGeo = bakeParts(rudderFrameParts), rudderSkinGeo = boxGeo(0.032, 1.9, 0.6);
   const rudders = [];
   for (const sx of [-0.45, 0.45]) {
     const piv = new THREE.Group(); piv.position.set(sx, 1.8, 3.45);
     piv.name = sx < 0 ? 'airboat rudder port' : 'airboat rudder starboard';
-    const r = new THREE.Mesh(boxGeo(0.04, 1.9, 0.62), darkAlu); r.position.z = 0.31; r.castShadow = true; piv.add(r);
-    const frame = new THREE.Mesh(boxGeo(0.06, 2.0, 0.06), steel); piv.add(frame);
+    const r = new THREE.Mesh(rudderSkinGeo, rudderPaint); r.position.z = 0.31; r.castShadow = true; piv.add(r);
+    const frame = new THREE.Mesh(rudderFrameGeo, galv); piv.add(frame);
     g.add(piv); rudders.push(piv);
   }
   const rudderBar = new THREE.Mesh(boxGeo(1.0, 0.04, 0.04), steel); rudderBar.position.set(0, 2.85, 3.6); g.add(rudderBar);
   const rudderBarLo = new THREE.Mesh(boxGeo(1.0, 0.04, 0.04), steel); rudderBarLo.position.set(0, 0.78, 3.6); g.add(rudderBarLo);
   // hangers from the cage frame to the rudder assembly
-  for (const sx of [-0.5, 0.5]) for (const y of [0.78, 2.85]) { const h = new THREE.Mesh(cylinderGeo(0.018, 0.018, 1.3, 6), steel); h.rotation.x = Math.PI / 2; h.position.set(sx, y, 2.95); g.add(h); }
+  for (const sx of [-0.5, 0.5]) for (const y of [0.78, 2.85]) { const h = new THREE.Mesh(cylinderGeo(0.018, 0.018, 1.3, 6), galv); h.rotation.x = Math.PI / 2; h.position.set(sx, y, 2.95); g.add(h); }
 
-  // bow spotlight & cleats
+  // bow spotlight, cleats and transom tail lights
   const light = new THREE.Mesh(cylinderGeo(0.06, 0.08, 0.14, 12), steel); light.rotation.x = Math.PI / 2; light.position.set(0, 0.85, -2.5); g.add(light);
   for (const sx of [-1, 1]) for (const sz of [-2.0, 2.2]) { const c = new THREE.Mesh(boxGeo(0.16, 0.05, 0.05), steel); c.position.set(sx * 1.05, 0.66, sz); g.add(c); }
+  for (const sx of [-1, 1]) { const tail = new THREE.Mesh(boxGeo(0.12, 0.05, 0.03), lensMat); tail.position.set(sx * 0.95, 0.46, 2.515); g.add(tail); }
 
   g.traverse(o => { if (o.isMesh) { o.castShadow = o.castShadow || true; o.receiveShadow = true; } });
   g.userData.batchedDraws = instanceStaticChildren(g, new Set([prop, ...rudders]));

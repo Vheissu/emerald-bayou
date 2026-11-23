@@ -40,13 +40,18 @@ test('a stable larger display reuses the finished composite for low-resolution a
 
 test('performance mode releases full-size optional post targets', () => {
   const renderer = { getDrawingBufferSize: target => target.set(1920, 1080) };
-  const pipeline = new Pipeline(renderer, new THREE.PerspectiveCamera(52, 16 / 9, 0.3, 7500), qualityProfile(3));
+  const sunShadow = { tShadow: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, shadowOn: { value: 0 } };
+  const pipeline = new Pipeline(renderer, new THREE.PerspectiveCamera(52, 16 / 9, 0.3, 7500), qualityProfile(3), sunShadow);
   const cinematic = pipeline.memoryStats();
   assert.equal(cinematic.surfaceMist, 1);
   assert.equal(cinematic.heatHaze, 1);
   assert.equal(cinematic.cloudShadows, 1);
   assert.equal(cinematic.lensWater, 1);
-  assert.deepEqual(Object.keys(pipeline.grade.material.uniforms).filter(name => /^t[A-Z]/.test(name)).sort(), ['tBloom', 'tColor', 'tDepth', 'tNoise']);
+  const grade = pipeline.grade.material.uniforms;
+  assert.deepEqual(Object.keys(grade).filter(name => /^t[A-Z]/.test(name)).sort(), ['tBloom', 'tColor', 'tDepth', 'tNoise', 'tSunShadow']);
+  assert.equal(grade.tSunShadow, sunShadow.tShadow);
+  assert.equal(grade.sunShadowMatrix, sunShadow.shadowMatrix);
+  assert.equal(grade.sunShadowOn, sunShadow.shadowOn);
   assert.equal((pipeline.grade.material.fragmentShader.match(/texture2D\(tNoise, cloudUv\)/g) || []).length, 1);
   assert.equal((pipeline.grade.material.fragmentShader.match(/texture2D\(tNoise, heatUv\)/g) || []).length, 1);
   assert.deepEqual(

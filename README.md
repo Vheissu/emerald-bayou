@@ -10,12 +10,12 @@ Everything you see is generated at runtime except a handful of GLB props. The te
 
 <table>
 <tr>
-<td width="50%"><img src="docs/screenshots/01-hero.jpg" alt="Home bayou at mid afternoon"></td>
-<td width="50%"><img src="docs/screenshots/03-wake.jpg" alt="Running a creek at 32 mph"></td>
+<td width="50%"><img src="docs/screenshots/01-hero.jpg" alt="An airboat in a cypress creek in late afternoon light"></td>
+<td width="50%"><img src="docs/screenshots/03-wake.jpg" alt="Spray spreading behind the airboat as it runs the creek"></td>
 </tr>
 <tr>
 <td><img src="docs/screenshots/05-night.jpg" alt="Running the channel after dark with the spotlight on"></td>
-<td><img src="docs/screenshots/07-camp.jpg" alt="A fish camp under a live oak in a squall"></td>
+<td><img src="docs/screenshots/07-camp.jpg" alt="The stilt shack and dock at Mullet Bend during a squall"></td>
 </tr>
 </table>
 
@@ -192,7 +192,7 @@ Power at the camps is no longer perfect. Squalls make weak circuits sag. Thunder
 
 People are jointed figures driven by a pose target system rather than baked animation, so a man on a dock will track you as you go past, drink his beer, check his rod, cast, and reel in a fish. Boat ramps run a 150 second cycle where a truck backs down the slab, floats a boat off the trailer, motors out and comes back to winch it on.
 
-<img src="docs/screenshots/02-mission.jpg" alt="A story job in progress" width="100%">
+<img src="docs/screenshots/02-mission.jpg" alt="Following the poachers’ johnboat downriver during Poacher Chase" width="100%">
 
 ## How the world works
 

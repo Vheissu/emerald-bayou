@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cachedResource } from './cache.js';
+import { plank } from './textures.js';
 import { registerWetMaterial } from './surfacewetness.js';
 
 // Objective markers: a soft light column rising from a ring on the water (waypoint / checkpoint gate),
@@ -188,15 +189,65 @@ export function wreck() {
 }
 
 // the fish camp at the top of the creek: a tin-roof shack on stilts with a lantern post
+function shackFrame() {
+  const parts = [];
+  const board = (width, height, depth, x, y, z) => parts.push(new THREE.BoxGeometry(width, height, depth).translate(x, y, z));
+  for (const x of [-1.6, 1.6]) for (const z of [-1.6, 2.15]) {
+    parts.push(new THREE.CylinderGeometry(0.10, 0.14, 2.7, 8).translate(x, 0.87, z));
+  }
+  board(3.8, 0.16, 4.45, 0, 2.1, 0.28);
+  for (const x of [-1.65, 1.65]) {
+    board(0.10, 1.96, 0.10, x, 3.11, 2.37);
+    board(0.09, 0.09, 0.74, x, 2.99, 2.02);
+    board(1.03, 0.10, 0.10, x * 0.69, 2.99, 2.37);
+    // Outer frame and sill of each side window.
+    board(0.13, 0.10, 1.38, x, 3.08, 0.05);
+    board(0.11, 0.08, 1.35, x, 3.98, 0.05);
+    for (const z of [-0.60, 0.05, 0.70]) board(0.11, 0.90, 0.07, x, 3.53, z);
+  }
+  for (let i = 0; i < 6; i++) board(0.93, 0.11, 0.3, 0, 1.84 - i * 0.27, 2.62 + i * 0.23);
+  for (const x of [-0.39, 0.39]) {
+    parts.push(branchGeometry(new THREE.Vector3(x, 0.38, 3.88), new THREE.Vector3(x, 1.83, 2.60), 0.065, 0.065));
+  }
+  const frame = mergeGeometries(parts, false);
+  for (const part of parts) part.dispose();
+  return frame;
+}
+
+function shackRoof() {
+  const roof = new THREE.PlaneGeometry(4.18, 4.95, 72, 1);
+  roof.rotateX(-Math.PI / 2);
+  const p = roof.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const ridge = (i % 73) % 4 === 2 ? 0.04 : 0;
+    p.setY(i, 4.32 - p.getZ(i) * 0.12 + ridge);
+    p.setZ(i, p.getZ(i) + 0.32);
+  }
+  roof.computeVertexNormals();
+  return roof;
+}
+
 export function shack() {
   const g = new THREE.Group();
-  const wood = material('shack-wood', { color: 0x6b5641, roughness: 0.95 });
-  const tin = material('shack-tin', { color: 0x8d9391, roughness: 0.5, metalness: 0.6 });
-  for (const sx of [-1.6, 1.6]) for (const sz of [-1.6, 1.6]) { const p = new THREE.Mesh(cylinderGeometry(0.1, 0.12, 2.6, 8), wood); p.position.set(sx, 0.9, sz); g.add(p); }
-  const floor = new THREE.Mesh(boxGeometry(3.8, 0.12, 3.8), wood); floor.position.y = 2.1; g.add(floor);
-  const walls = new THREE.Mesh(boxGeometry(3.3, 2.1, 3.3), material('shack-wall', { color: 0x8a7a63, roughness: 0.95 })); walls.position.y = 3.2; g.add(walls);
+  const boards = plank();
+  const wood = material('shack-wood', { map: boards, color: 0xbeb2a0, roughness: 0.95 });
+  const tin = material('shack-tin', { color: 0x999182, roughness: 0.56, metalness: 0.58, side: THREE.DoubleSide });
+  g.add(new THREE.Mesh(geometry('shack-frame', [], shackFrame), wood));
+  const siding = geometry('shack-siding', [], () => {
+    const shell = new THREE.BoxGeometry(3.3, 2.18, 3.3);
+    shell.translate(0, 3.26, 0);
+    const p = shell.attributes.position;
+    for (let i = 0; i < p.count; i++) if (p.getY(i) > 4) p.setY(i, 4.35 - p.getZ(i) * 0.12);
+    shell.computeVertexNormals();
+    return shell;
+  });
+  g.add(new THREE.Mesh(siding, material('shack-wall', { map: boards, color: 0xd0c6ac, roughness: 0.94 })));
   const door = new THREE.Mesh(boxGeometry(0.8, 1.6, 0.06), material('shack-door', { color: 0x3f3229, roughness: 1 })); door.position.set(0, 2.95, 1.68); g.add(door);
-  const roof = new THREE.Mesh(boxGeometry(4.2, 0.08, 4.4), tin); roof.position.set(0, 4.35, 0); roof.rotation.x = 0.12; g.add(roof);
+  const glass = material('shack-windows', { color: 0x35423e, metalness: 0.24, roughness: 0.31 });
+  for (const x of [-1.65, 1.65]) {
+    const pane = new THREE.Mesh(boxGeometry(0.045, 0.84, 1.28), glass); pane.position.set(x, 3.53, 0.05); g.add(pane);
+  }
+  g.add(new THREE.Mesh(geometry('shack-roof', [], shackRoof), tin));
   const lamp = new THREE.Mesh(cylinderGeometry(0.04, 0.05, 3.2, 6), wood); lamp.position.set(2.4, 1.6, 2.4); g.add(lamp);
   const bulb = new THREE.Mesh(sphereGeometry(0.12, 8, 6), material('shack-bulb', { color: 0xffe2a0, emissive: 0xffc060, emissiveIntensity: 1.2 })); bulb.position.set(2.4, 3.25, 2.4); g.add(bulb);
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });

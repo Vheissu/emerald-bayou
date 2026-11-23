@@ -244,7 +244,7 @@ async function init() {
   fxScene.add(plume.mesh, spray.points);
 
   // ---- post ----
-  const pipeline = new Pipeline(renderer, camera, renderProfile);
+  const pipeline = new Pipeline(renderer, camera, renderProfile, water.uniforms);
   pipeline.setDisplaySize(renderer.domElement.width, renderer.domElement.height);
   sceneShaderTarget = pipeline.sceneRT;
   pipeline.grade.material.uniforms.tNoise.value = groundTex.noise;
@@ -1035,15 +1035,15 @@ async function init() {
           0.28 + Math.random() * 0.35, 0.7 + Math.random() * 0.7, 0.55 + Math.random() * 0.6, 0.16 + 0.12 * spF);
       }
     }
-    // (b) rooster tail: at speed the wash lifts a plume 1-4 m behind the transom
+    // (b) The chines throw two spreading fans. The surface solver carries the central churn.
     if (sp > 3) {
       const n = Math.floor(spF * spF * washF * 200 * emissionDt + Math.random());
       for (let i = 0; i < n; i++) {
-        const lat = jitter() * 1.4; const p0 = hullPt(lat, 3.4 + Math.random() * 2.6);
+        const lat = (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 0.7); const p0 = hullPt(lat, 2.7 + Math.random() * 1.45);
         const back = 0.5 + Math.random() * 1.5;
-        plume.emit(p0.x, p0.y + 0.2 + Math.random() * 0.8, p0.z,
-          -fwd2.x * back + rgt2.x * lat * 0.8 + jitter() * 0.8, 1.2 + Math.random() * 2.4 * spF, -fwd2.y * back + rgt2.y * lat * 0.8 + jitter() * 0.8,
-          0.35 + Math.random() * 0.4, 0.8 + Math.random() * 0.8, 0.7 + Math.random() * 0.6, 0.14 + 0.12 * spF);
+        plume.emit(p0.x, p0.y + 0.1 + Math.random() * 0.25, p0.z,
+          -fwd2.x * back + rgt2.x * lat * 2.1 + jitter() * 0.8, 0.85 + Math.random() * 2.0 * spF, -fwd2.y * back + rgt2.y * lat * 2.1 + jitter() * 0.8,
+          0.23 + Math.random() * 0.38, 0.65 + Math.random() * 0.8, 0.55 + Math.random() * 0.5, 0.14 + 0.12 * spF);
       }
     }
     // (c) chine sheets: thin fans of water peeling off the bow chines, travelling with the boat

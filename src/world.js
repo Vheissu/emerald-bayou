@@ -101,7 +101,7 @@ export class World {
   buildCamp(c) {
     const g = new THREE.Group(); g.name = 'camp';
     const T = this.T;
-    const sh = shack(); sh.position.set(c.x, c.h - 0.3, c.z); sh.rotation.y = c.ang + Math.PI / 2; g.add(sh);
+    const sh = shack(); sh.position.set(c.x, c.h - 0.3, c.z); sh.rotation.y = Math.atan2(c.tie.x - c.x, c.tie.z - c.z); g.add(sh);
     // dock from the bank out over the water toward the tie-up
     const dock = buildDock(14, 1.8);
     const dx = c.tie.x - c.bank.x, dz = c.tie.z - c.bank.z; const l = Math.hypot(dx, dz);

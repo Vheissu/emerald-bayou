@@ -251,22 +251,28 @@ export function mossStrands(seed = 11) {
 export function grassClump(seed = 13, tall = false) {
   const S = 256; const c = canvas(S, S); const ctx = c.getContext('2d'); const r = mulberry32(seed);
   ctx.lineCap = 'round';
-  const n = tall ? 16 : 28;
+  const n = tall ? 32 : 38;
   for (let i = 0; i < n; i++) {
     const x0 = 128 + (r() - 0.5) * (tall ? 70 : 110);
-    const len = (tall ? 200 : 120) + r() * (tall ? 56 : 120);
-    const lean = (r() - 0.5) * (tall ? 0.5 : 1.3);
-    const hue = tall ? 60 + r() * 25 : 85 + r() * 30, sat = tall ? 30 + r() * 15 : 38 + r() * 22, lum = tall ? 28 + r() * 18 : 24 + r() * 18;
+    const stalk = tall && i % 7 === 0;
+    const len = stalk ? 200 + r() * 40 : 78 + r() * 152;
+    const lean = (r() - 0.5) * (stalk ? 0.45 : 1.85);
+    const dry = r() < (tall ? 0.28 : 0.18);
+    const hue = dry ? 39 + r() * 13 : 62 + r() * 30;
+    const sat = 24 + r() * 21, lum = (dry ? 42 : 25) + r() * 16;
     const segs = 8; let px = x0, py = 256, pa = -Math.PI / 2 + lean * 0.3;
     for (let s = 0; s < segs; s++) {
-      const t = s / segs; const w = (tall ? 5 : 4.5) * (1 - t) + 0.8;
+      const t = s / segs; const w = (stalk ? 3 : 6.8) * (1 - t) + 0.8;
       const nx = px + Math.cos(pa) * len / segs, ny = py + Math.sin(pa) * len / segs;
       ctx.strokeStyle = hsl(hue, sat, lum * (0.75 + t * 0.5), 1); ctx.lineWidth = w;
       ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(nx, ny); ctx.stroke();
       px = nx; py = ny; pa += lean * 0.12;
     }
-    if (tall && r() < 0.5) { // cattail head
-      ctx.fillStyle = hsl(25, 45, 22); ctx.beginPath(); ctx.ellipse(px, py + 14, 4.5, 16, 0, 0, Math.PI * 2); ctx.fill();
+    if (stalk) {
+      const tipX = Math.cos(pa), tipY = Math.sin(pa);
+      ctx.strokeStyle = hsl(36, 35, 64); ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + tipX * 11, py + tipY * 11); ctx.stroke();
+      ctx.fillStyle = hsl(27, 37, 29); ctx.beginPath(); ctx.ellipse(px - tipX * 6, py - tipY * 6, 3.3, 11, pa + Math.PI / 2, 0, Math.PI * 2); ctx.fill();
     }
   }
   return foliageTex(c, 0.45);
@@ -311,9 +317,21 @@ export function grassGround() {
 
 export function mudGround() {
   const c = colorNoiseTexture(512, 33, (a, b, d) => {
-    const v = a * 0.55 + b * 0.3 + d * 0.15;
-    return [clamp255(50 + v * 55), clamp255(46 + v * 45), clamp255(30 + v * 30)];
+    const silt = a * 0.55 + b * 0.3 + d * 0.15;
+    const ridge = Math.max(0, 1 - Math.abs(b - 0.5 + (a - 0.5) * 0.42) * 13);
+    const v = silt + ridge * ridge * 0.17;
+    return [clamp255(44 + v * 76), clamp255(36 + v * 62), clamp255(26 + v * 44)];
   });
+  // A tile spans roughly nine metres. Fallen blades, leaf husks and twigs collect in the silt.
+  const ctx = c.getContext('2d'), rand = mulberry32(34);
+  for (let i = 0; i < 660; i++) {
+    const x = rand() * c.width, y = rand() * c.height, angle = rand() * Math.PI * 2;
+    const length = 1.2 + rand() ** 3 * 14, width = 0.4 + rand() * 1.1;
+    ctx.fillStyle = hsl(29 + rand() * 20, 18 + rand() * 20, 16 + rand() * 24, 0.8);
+    for (const ox of [0, x < length ? c.width : -c.width]) for (const oy of [0, y < length ? c.height : -c.height]) {
+      ctx.beginPath(); ctx.ellipse(x + ox, y + oy, length, width, angle, 0, Math.PI * 2); ctx.fill();
+    }
+  }
   return srgbTex(c, true);
 }
 
@@ -518,7 +536,29 @@ export function foam() {
   const data = new Uint8Array(size * size * 4);
   for (let i = 0; i < size * size; i++) {
     const v = Math.pow(Math.max(0, n1[i] * 0.7 + n2[i] * 0.5 - 0.35) * 1.8, 1.4);
-    data[i * 4] = clamp255(v * 255); data[i * 4 + 1] = n2[i] * 255; data[i * 4 + 2] = n1[i] * 255; data[i * 4 + 3] = 255;
+    data[i * 4] = clamp255(v * 255); data[i * 4 + 1] = n2[i] * 255;
+  }
+  // B holds leaf coverage, A holds premultiplied leaf tone. Wrap the small rosettes onto
+  // the opposite edge so their notched silhouettes filter cleanly at every mip level.
+  const rand = mulberry32(173);
+  for (let bed = 0; bed < 7; bed++) {
+    const bx = rand() * size, by = rand() * size;
+    for (let leaf = 0; leaf < 8; leaf++) {
+      const angle = rand() * Math.PI * 2, spread = Math.sqrt(rand()) * 29;
+      const cx = bx + Math.cos(angle) * spread, cy = by + Math.sin(angle) * spread;
+      const radius = 4 + rand() * 7, tone = 0.36 + rand() * 0.45;
+      const heading = rand() * Math.PI * 2, cos = Math.cos(heading), sin = Math.sin(heading);
+      for (let y = Math.floor(cy - radius); y <= cy + radius; y++) for (let x = Math.floor(cx - radius); x <= cx + radius; x++) {
+        const dx = x - cx, dy = y - cy, along = dx * cos + dy * sin, across = dy * cos - dx * sin;
+        const rim = Math.hypot(along, across * 1.14) / radius;
+        if (rim >= 1 || (along > 0 && Math.abs(across) < along * 0.21)) continue;
+        const alpha = Math.min(1, (1 - rim) * radius);
+        const i = (((y + size) % size) * size + (x + size) % size) * 4;
+        const vein = Math.max(0, 1 - Math.abs(across) * 0.8);
+        data[i + 2] = Math.round(255 * alpha + data[i + 2] * (1 - alpha));
+        data[i + 3] = Math.round(255 * alpha * (tone + rim * 0.09 + vein * 0.07) + data[i + 3] * (1 - alpha));
+      }
+    }
   }
   const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true; t.needsUpdate = true;
@@ -529,7 +569,14 @@ export function waterNormal() {
   const size = 512;
   const h1 = tileableNoise(size, 101, 6, 4, 0.55), h2 = tileableNoise(size, 102, 3, 24, 0.5);
   const h = new Float32Array(size * size);
-  for (let i = 0; i < h.length; i++) h[i] = h1[i] * 1.0 + h2[i] * 0.25;
+  // Bent, interrupted wave trains give highlights a long edge across the water.
+  // Integer periods and the tileable phase fields keep both slopes continuous at the seam.
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const i = y * size + x, u = x / size, v = y / size;
+    const ripple = Math.sin(2 * Math.PI * (17 * u + 6 * v) + 14 * h1[i]);
+    const crossing = Math.sin(2 * Math.PI * (9 * u - 13 * v) + 8 * h2[i]);
+    h[i] = h1[i] * 0.55 + h2[i] * 0.14 + ripple * (0.06 + 0.16 * h2[i]) + crossing * 0.055;
+  }
   const data = new Uint8Array(size * size * 4);
   const str = 18;
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {

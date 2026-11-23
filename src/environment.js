@@ -451,6 +451,7 @@ export class Environment {
     this.lightDir = this.sunDir.clone();
     this.sunWarm = new THREE.Color(0xff9a62); this.sunDay = new THREE.Color(0xfff1d6); this.sunNight = new THREE.Color(0x91a8d5); this.flashColor = new THREE.Color(0xeaf5ff);
     this.fogDay = new THREE.Color(0x94aebc); this.fogStorm = new THREE.Color(0x263a40); this.fogNight = new THREE.Color(0x07111a); this.fogMist = new THREE.Color();
+    this.fogLowSun = new THREE.Color(0xf3bb83);
     this.flash = 0; this.flashDirection = new THREE.Vector3(0, 1, 0); this.lightningCloudY = 220;
     this.boltT = 0; this.boltAge = 0; this.boltSegments = 0; this.lightningT = 16; this.thunderT = -1; this.thunderX = 0; this.thunderZ = 0; this.hailKick = 0;
     const initialSunY = Math.sin((this.hour - 6) / 24 * Math.PI * 2), initialDaylight = smooth(-0.08, 0.16, initialSunY), initialNight = 1 - smooth(-0.04, 0.18, initialSunY);
@@ -917,8 +918,11 @@ export class Environment {
     this.eyeExposure = eyeExposureStep(this.eyeExposure, this.eyeExposureTarget, dt);
     fog.exposure.value = this.eyeExposure;
     const dawnHaze = Math.exp(-Math.pow((this.hour - 6.5) / 1.8, 2)) * (1 - smooth(5, 19, V.wind));
-    fog.fogDensity.value = V.fog * lerp(1.28, 1, daylight) * (1 + dawnHaze * 0.3);
-    fog.fogColor.value.copy(this.fogNight).lerp(this.fogDay, daylight).lerp(this.fogStorm, V.storm * 0.78);
+    const litHaze = horizon * daylight * (1 - V.storm);
+    fog.shaftAmount.value = this.pipeline.quality.sunShafts && !useMoon
+      ? litHaze * this.cloudLight * smooth(0.30, 0.49, V.cloud) * smooth(0.01, 0.07, sunY) : 0;
+    fog.fogDensity.value = V.fog * lerp(1.28, 1, daylight) * (1 + dawnHaze * 0.3 + litHaze * 0.55);
+    fog.fogColor.value.copy(this.fogNight).lerp(this.fogDay, daylight).lerp(this.fogLowSun, litHaze * 0.78).lerp(this.fogStorm, V.storm * 0.78);
     this.fogMist.setRGB(lerp(0.20, 0.72, daylight), lerp(0.27, 0.75, daylight), lerp(0.31, 0.73, daylight));
     fog.fogColor.value.lerp(this.fogMist, this.restrictedVisibility * 0.82);
     fog.fogMax.value = lerp(0.6, 0.94, this.restrictedVisibility);

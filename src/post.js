@@ -30,7 +30,7 @@ function quadPass(material) {
 }
 
 export class Pipeline {
-  constructor(renderer, camera, quality = {}) {
+  constructor(renderer, camera, quality = {}, shadowUniforms = {}) {
     this.renderer = renderer; this.camera = camera;
     this.quality = quality; this.bloomEnabled = quality.bloom !== false; this.finalEnabled = quality.finalPass !== false; this.lensWetness = 0; this.dormant = false;
     const size = new THREE.Vector2(); renderer.getDrawingBufferSize(size);
@@ -80,6 +80,8 @@ export class Pipeline {
         fogColor: { value: new THREE.Color(0.60, 0.69, 0.74) }, fogDensity: { value: 0.00032 }, fogMax: { value: 0.6 }, bloomAmt: { value: 0.12 }, bloomQuality: { value: this.bloomEnabled ? 1 : 0 },
         mistAmount: { value: 0 }, mistQuality: { value: quality.surfaceMist ?? 0 }, mistLevel: { value: 0 }, mistHeight: { value: 2.8 }, mistTime: { value: 0 }, mistWind: { value: new THREE.Vector2() },
         heatAmount: { value: 0 }, heatQuality: { value: quality.heatHaze ?? 0 },
+        tSunShadow: shadowUniforms.tShadow ?? { value: null }, sunShadowMatrix: shadowUniforms.shadowMatrix ?? { value: new THREE.Matrix4() },
+        sunShadowOn: shadowUniforms.shadowOn ?? { value: 0 }, shaftAmount: { value: 0 },
         cloudShadowAmount: { value: 0 }, cloudShadowQuality: { value: quality.cloudShadows ?? 0 }, cloudShadowOffset: { value: new THREE.Vector2() },
         lensWetness: { value: 0 }, lensQuality: { value: quality.lensWater ?? 0 }, lensTime: { value: 0 }, lensWind: { value: 0 }, lensAspect: { value: w / Math.max(1, h) },
         invProj: { value: new THREE.Matrix4() }, camMat: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
@@ -89,6 +91,7 @@ export class Pipeline {
         uniform sampler2D tColor, tDepth, tBloom, tNoise; uniform float near, far, exposure, fogDensity, fogMax, bloomAmt, bloomQuality; uniform vec3 fogColor, sunDir;
         uniform float mistAmount, mistQuality, mistLevel, mistHeight, mistTime; uniform vec2 mistWind;
         uniform float heatAmount, heatQuality;
+        uniform highp sampler2DShadow tSunShadow; uniform mat4 sunShadowMatrix; uniform float sunShadowOn, shaftAmount;
         uniform float cloudShadowAmount, cloudShadowQuality; uniform vec2 cloudShadowOffset;
         uniform float lensWetness, lensQuality, lensTime, lensWind, lensAspect;
         uniform mat4 invProj, camMat; varying vec2 vUv;
@@ -193,6 +196,25 @@ export class Pipeline {
               bank = clamp(bank, 0.0, 0.42 * mistStrength);
               c = mix(c, fc * 1.035, bank);
             }
+          }
+          // Integrate the sunlit parts of the low air up to the nearest visible surface.
+          // This uses the same tree and hull shadows as the water, including lights outside the viewport.
+          float shaft = shaftAmount * sunShadowOn * smoothstep(0.28, 0.96, dot(vdir, sunDir));
+          if (shaft > 0.004) {
+            float reach = min(82.0, z / max(-viewRay.z, 0.05));
+            vec3 start = (sunShadowMatrix * vec4(cameraWorld, 1.0)).xyz;
+            vec3 stride = (sunShadowMatrix * vec4(vdir * (reach / 8.0), 0.0)).xyz;
+            float offset = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+            float litAir = 0.0;
+            for (int i = 0; i < 8; i++) {
+              float stepNo = float(i) + offset;
+              vec3 sc = start + stepNo * stride;
+              if (all(greaterThan(sc, vec3(0.0))) && all(lessThan(sc, vec3(1.0)))) {
+                float height = cameraWorld.y + vdir.y * (reach / 8.0) * stepNo - mistLevel;
+                litAir += texture(tSunShadow, sc - vec3(0.0, 0.0, 0.0006)) * (1.0 - smoothstep(1.0, 19.0, height));
+              }
+            }
+            c += vec3(1.0, 0.61, 0.28) * shaft * litAir * reach * 0.00019;
           }
           c += texture2D(tBloom, vUv).rgb * bloomAmt * bloomQuality;
           if (lensStrength > 0.003) {
