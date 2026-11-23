@@ -259,7 +259,7 @@ export function pickSite(hf, key, cx, cz, rr, homeDist) {
         const a = a0 + k * Math.PI / 4; const dx = Math.cos(a), dz = Math.sin(a);
         let shelf = null, shore = null, prev = c.h;
         for (let r = 2; r <= 60; r += 2) {
-          const h = hf.compute(x + dx * r, z + dz * r);
+          const h = hf.settlementHeight(x + dx * r, z + dz * r);
           if (!shelf && h > -1.9) shelf = { r: r - 2, h: prev };
           if (h > 0.05) { shore = { r, h }; break; }
           prev = h;
@@ -267,14 +267,14 @@ export function pickSite(hf, key, cx, cz, rr, homeDist) {
         if (!shore) continue;
         if (kind === 'ramp') {
           const sx = x + dx * shore.r, sz = z + dz * shore.r;
-          const hBot = hf.compute(sx - dx * 9, sz - dz * 9), hTop = hf.compute(sx + dx * 9, sz + dz * 9), hPad = hf.compute(sx + dx * 15, sz + dz * 15);
+          const hBot = hf.compute(sx - dx * 9, sz - dz * 9), hTop = hf.settlementHeight(sx + dx * 9, sz + dz * 9), hPad = hf.settlementHeight(sx + dx * 15, sz + dz * 15);
           if (hBot < -2.2 || hBot > -0.35 || hTop < 0.45 || hTop > 2.4 || Math.abs(hPad - hTop) > 0.9) continue;
           if (!wideHere(hf, sx - dx * 9, sz - dz * 9, a)) continue;
-          return { key, kind, x: sx, z: sz, h: shore.h, ang: a + Math.PI, hTop, hBot, seed: rr() * 1e9 | 0 };
+          return { key, kind, x: sx, z: sz, h: hf.compute(sx, sz), ang: a + Math.PI, hTop: hf.compute(sx + dx * 9, sz + dz * 9), hBot, seed: rr() * 1e9 | 0 };
         }
         if (!shelf || shelf.h > -1.3 || shelf.h < -2.9) continue;
         const bx = x + dx * shelf.r, bz = z + dz * shelf.r;
-        const bank = hf.compute(bx + dx * 11, bz + dz * 11);
+        const bank = hf.settlementHeight(bx + dx * 11, bz + dz * 11);
         if (bank < 0.3 || bank > 2.0 || !wideHere(hf, bx, bz, a) || hf.compute(bx - dx * 14, bz - dz * 14) > -1.4) continue;
         return { key, kind, x: bx, z: bz, h: shelf.h, ang: a, seed: rr() * 1e9 | 0 };
       }
@@ -283,12 +283,20 @@ export function pickSite(hf, key, cx, cz, rr, homeDist) {
     // house: like a camp, deep water then a bank shelf, the house a little further up
     if (c.s < 0.85 || c.lake > 0.4 || c.h > -2.0) continue;
     for (let a0 = rr() * 6.28, k = 0; k < 8; k++) {
-      const a = a0 + k * Math.PI / 4; let bank = null;
+      const a = a0 + k * Math.PI / 4, dx = Math.cos(a), dz = Math.sin(a); let bank = null;
       if (!wideHere(hf, x, z, a)) continue;
-      for (let r = 14; r <= 34; r += 4) { const bx = x + Math.cos(a) * r, bz = z + Math.sin(a) * r; const h = hf.compute(bx, bz); if (h > 0.45 && h < 1.7) { bank = { x: bx, z: bz, h, r }; break; } if (h > 1.7) break; }
+      for (let r = 14; r <= 34; r += 4) {
+        const bx = x + dx * r, bz = z + dz * r, shelf = hf.settlementHeight(bx, bz);
+        if (shelf > 0.45 && shelf < 1.7) {
+          bank = { x: bx, z: bz, h: hf.compute(bx, bz), r }; break;
+        }
+        if (shelf > 1.7) break;
+      }
       if (!bank) continue;
-      const hx = x + Math.cos(a) * (bank.r + 11), hz = z + Math.sin(a) * (bank.r + 11); const hh = hf.compute(hx, hz); if (hh < 0.4 || hh > 2.6) continue;
-      return { key, kind, x: hx, z: hz, h: hh, ang: a, bank, tie: { x: x + Math.cos(a) * (bank.r - 9), z: z + Math.sin(a) * (bank.r - 9) }, seed: rr() * 1e9 | 0 };
+      const hx = x + dx * (bank.r + 11), hz = z + dz * (bank.r + 11);
+      const shelf = hf.settlementHeight(hx, hz); if (shelf < 0.4 || shelf > 2.6) continue;
+      const tie = { x: x + dx * (bank.r - 9), z: z + dz * (bank.r - 9) };
+      return { key, kind, x: hx, z: hz, h: hf.compute(hx, hz), ang: a, bank, tie, seed: rr() * 1e9 | 0 };
     }
   }
   return null;

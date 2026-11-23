@@ -12,6 +12,8 @@ test('the fine fan guard keeps its wire coverage down the whole mip chain', () =
   assert.ok(base > 0.2 && base < 0.45, `base coverage ${base}`);
   // Screen-door levels stay near the true wire coverage instead of fading to nothing or filling solid.
   for (const level of mips.slice(1, 5)) assert.ok(Math.abs(meanAlpha(level) - base) < 0.12, `level ${level.width}`);
+  // Below a full dither cell the wire drops out entirely rather than turning a distant dome opaque.
+  for (const level of mips.slice(5)) assert.equal(meanAlpha(level), 0);
   for (const level of mips.slice(1)) for (let i = 3; i < level.data.length; i += 4) assert.ok(level.data[i] === 0 || level.data[i] === 255);
 
   const texture = airboatGrilleTexture();

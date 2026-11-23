@@ -184,7 +184,8 @@ export class Terrain {
           vec3 grassB = texture2D(tGrass, tuv * 0.023 + 0.31).rgb;
           grass = mix(grass, grassB, 0.45) * mix(0.14, 0.27, macro) * vec3(0.8, 1.0, 0.68);
           grass = mix(grass, grass * vec3(1.1, 0.95, 0.7), smoothstep(0.55, 0.8, macro2) * 0.6);
-          vec3 mud = texture2D(tMud, tuv * 0.11).rgb * mix(0.5, 0.8, texture2D(tNoise, tuv * 0.05).g);
+          float bankGrain = texture2D(tNoise, tuv * 0.05).g;
+          vec3 mud = texture2D(tMud, tuv * 0.11).rgb * mix(0.5, 0.8, bankGrain);
           vec3 sand = texture2D(tSand, tuv * 0.13).rgb;
           vec3 sandB = texture2D(tSand, tuv * 0.031 + 0.2).rgb;
           sand = mix(sand, sandB, 0.5) * 0.75;
@@ -197,6 +198,12 @@ export class Terrain {
           wSand = max(wSand, sandbar * clamp(1.0 - slope * 3.0, 0.0, 1.0));
           vec3 col = mix(grass, mud, wMud);
           col = mix(col, sand, wSand);
+          // On steep dry faces the soil cover breaks and pale limestone shows through.
+          float exposed = smoothstep(0.065, 0.28, slope) * smoothstep(0.7, 2.4, h);
+          float mineral = smoothstep(0.32, 0.72, bankGrain * 0.72 + macro2 * 0.28);
+          exposed *= 0.38 + mineral * 0.5;
+          vec3 bankFace = mix(mud * vec3(1.2, 1.08, 0.94), sand * vec3(0.72, 0.70, 0.62), 0.16 + 0.32 * mineral);
+          col = mix(col, bankFace, exposed);
           col *= mix(0.45, 1.0, smoothstep(-0.25, 1.2, h));
           float shorelineDamp = 1.0 - smoothstep(uWaterLevel + 0.1, uWaterLevel + 1.1, h);
           float wetFilm = clamp((uSurfaceWetness + shorelineDamp * 0.38) * smoothstep(0.2, 0.82, vWorldUp), 0.0, 1.0);

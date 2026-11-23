@@ -131,7 +131,7 @@ export class WorldHeight {
 
   // ---- the ground itself (without sandbars) ----
   // returns { h, s (water mask), lake, prairie, hammock }
-  computeBase(x, z, wantInfo = false) {
+  computeBase(x, z) {
     const sx = this.sx, sx2 = this.sx2, sx3 = this.sx3;
     const dHome = Math.hypot(x - HOME_X, z - HOME_Z);
     const wildF = smooth(560, 780, dHome); // 0 in the hand-tuned bayou, 1 out in the wild
@@ -141,7 +141,7 @@ export class WorldHeight {
     base -= 3.2 * smooth(0.28, 0.5, pool);
     // main river channel (runs the whole length of the world)
     const hw = this.riverHalfWidth(z) + 6 * sx.noise(x * 0.03, z * 0.03);
-    const d = Math.abs(x - this.riverCenterX(z));
+    const riverX = this.riverCenterX(z), d = Math.abs(x - riverX);
     let s = smooth(hw + 26, hw - 10, d);
     let lake = 0, prairie = 0, hammock = 0;
     if (dHome < 900) {
@@ -149,7 +149,7 @@ export class WorldHeight {
       const dl = Math.hypot(x - this.lagoon.x, z - this.lagoon.y) + 12 * sx.noise(x * 0.02 + 5, z * 0.02);
       s = Math.max(s, smooth(150, 105, dl));
       // side creek
-      const cx = this.riverCenterX(z) - 150 - 30 * Math.sin(z * 0.02);
+      const cx = riverX - 150 - 30 * Math.sin(z * 0.02);
       const dc = Math.abs(x - cx);
       if (z > -600 && z < 100) s = Math.max(s, smooth(22, 6, dc) * smooth(-600, -500, z) * smooth(100, 20, z));
     }
@@ -173,24 +173,50 @@ export class WorldHeight {
     }
     const bottom = -4.2 - 1.6 * sx.fbm(x * 0.03 + 11, z * 0.03, 3) - 2.2 * lake;
     let h = base * (1 - s) + bottom * s;
+    let relief = 0;
+    if (h > 0.08) {
+      // Long wooded ridges follow the drainage. Between them the original low floodplain stays
+      // open. On the sawgrass prairie only tree islands get appreciable height.
+      const openMarsh = prairie * (1 - hammock);
+      const ridgeField = sx3.noise(x * 0.010 + pool * 0.64 + 13.2, z * 0.0048 - 7.4);
+      const ridge = smooth(-0.27, 0.72, ridgeField + (base - 1.7) * 0.20);
+      const highGround = smooth(0.32, 2.55, h);
+      relief = highGround * (1 - openMarsh) * ridge * (4.7 + 2.3 * smooth(1.45, 3.2, base));
+      // The outer bank of a meander climbs quickly behind its wet toe. The inner bank stays
+      // low at the water's edge, with a gentle levee farther back on the floodplain.
+      const offset = d - hw;
+      const bend = Math.sin(z * 0.011 + 1.3) * 0.67 + Math.sin(z * 0.027 + 0.4) * 0.33;
+      const outside = smooth(-0.45, 0.45, bend * Math.sign(x - riverX));
+      const rim = smooth(3, 24 - outside * 9, offset) * (1 - smooth(30, 64, offset));
+      relief += rim * smooth(0.08, 1.25, h) * (0.4 + 2.55 * outside) * (1 - openMarsh * 0.8);
+      // Low grass ridges and swales run through open flats, flooding at different stages of the tide.
+      relief += openMarsh * smooth(0.08, 0.32, h) * (0.47 * ridgeField - 0.09);
+      // Leave a low shelf where the channel meets the bank; the taller shoulders sit inland.
+      relief *= 1 - smooth(0, 0.16, s);
+    }
     if (dHome < 900) {
       // island for the tower
       const di = Math.hypot(x - this.island.x, z - this.island.y) + 4 * sx.noise(x * 0.05, z * 0.05 + 2);
       const fi = smooth(40, 22, di);
-      if (fi > 0) h = h * (1 - fi) + (2.1 + 0.3 * sx.noise(x * 0.1, z * 0.1)) * fi;
+      if (fi > 0) {
+        h = h * (1 - fi) + (2.1 + 0.3 * sx.noise(x * 0.1, z * 0.1)) * fi;
+        relief *= 1 - fi;
+      }
     }
     // the edge of the world: the ground rises into pine flats the boat cannot climb
     const edge = smooth(WORLD_HALF - 500, WORLD_HALF - 80, Math.max(Math.abs(x), Math.abs(z)));
     if (edge > 0) h = h * (1 - edge) + (7 + 2 * sx.noise(x * 0.01, z * 0.01)) * edge;
-    if (!wantInfo) return { h, s, lake, prairie, hammock };
-    return { h, s, lake, prairie, hammock };
+    return { h: h + relief * (1 - edge), floodplainHeight: h, s, lake, prairie, hammock };
   }
-  compute(x, z) {
-    let h = this.computeBase(x, z).h;
+  withSandbars(x, z, h) {
     const bh = this.barHeight(x, z);
     if (bh > h) h = bh + 0.08 * this.sx.noise(x * 0.4, z * 0.4);
     return h;
   }
+  compute(x, z) { return this.withSandbars(x, z, this.computeBase(x, z).h); }
+  // Existing camp and homestead keys were seeded from this floodplain. Use it to find their
+  // sites, then seat the structures on the finished terrain at those coordinates.
+  settlementHeight(x, z) { return this.withSandbars(x, z, this.computeBase(x, z).floodplainHeight); }
   // openness for the vegetation: 1 = open sawgrass (few trees), 0 = swamp forest
   openness(x, z) { const c = this.computeBase(x, z); return c.prairie * (1 - c.hammock); }
 

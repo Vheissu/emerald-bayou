@@ -36,7 +36,8 @@ export function ditheredCoverageMips({ data, coverage, size }) {
       const a = (prev[(2 * y) * prevSize + 2 * x] + prev[(2 * y) * prevSize + 2 * x + 1] + prev[(2 * y + 1) * prevSize + 2 * x] + prev[(2 * y + 1) * prevSize + 2 * x + 1]) / 4;
       const i = y * s + x; next[i] = a;
       const threshold = (BAYER4[(y & 3) * 4 + (x & 3)] + 0.5) / 16;
-      out[i * 4] = 168; out[i * 4 + 1] = 171; out[i * 4 + 2] = 165; out[i * 4 + 3] = a > threshold ? 255 : 0;
+      // A 4x4 dither cell no longer fits below 4x4 texels; drop the wire there so far boats keep open ribs, not a solid dome.
+      out[i * 4] = 168; out[i * 4 + 1] = 171; out[i * 4 + 2] = 165; out[i * 4 + 3] = s >= 4 && a > threshold ? 255 : 0;
     }
     mipmaps.push({ data: out, width: s, height: s }); prev = next; prevSize = s;
   }

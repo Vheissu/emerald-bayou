@@ -72,13 +72,22 @@ export class World {
             const a = a0 + k * Math.PI / 4;
             let bank = null;
             if (!wideHere(hf, x, z, a)) continue;
-            for (let r = 14; r <= 34; r += 4) { const bx = x + Math.cos(a) * r, bz = z + Math.sin(a) * r; const h = hf.compute(bx, bz); if (h > 0.45 && h < 1.6) { bank = { x: bx, z: bz, h, r }; break; } if (h > 1.6) break; }
+            const dx = Math.cos(a), dz = Math.sin(a);
+            for (let r = 14; r <= 34; r += 4) {
+              const bx = x + dx * r, bz = z + dz * r, shelf = hf.settlementHeight(bx, bz);
+              if (shelf > 0.45 && shelf < 1.6) {
+                bank = { x: bx, z: bz, h: hf.compute(bx, bz), r }; break;
+              }
+              if (shelf > 1.6) break;
+            }
             if (!bank) continue;
             // a little further in for the shack, on ground not much higher
-            const sx = x + Math.cos(a) * (bank.r + 7), sz = z + Math.sin(a) * (bank.r + 7); const sh = hf.compute(sx, sz);
+            const sx = x + dx * (bank.r + 7), sz = z + dz * (bank.r + 7);
+            const sh = hf.settlementHeight(sx, sz);
             if (sh < 0.4 || sh > 2.4) continue;
             const name = `${FIRST[Math.floor(rr() * FIRST.length)]} ${SECOND[Math.floor(rr() * SECOND.length)]}`;
-            camp = { key, name, x: sx, z: sz, h: sh, tie: { x: x + Math.cos(a) * (bank.r - 9), z: z + Math.sin(a) * (bank.r - 9) }, bank, ang: a, seed: hash2(ci, cj) };
+            const tie = { x: x + dx * (bank.r - 9), z: z + dz * (bank.r - 9) };
+            camp = { key, name, x: sx, z: sz, h: hf.compute(sx, sz), tie, bank, ang: a, seed: hash2(ci, cj) };
           }
         }
       }

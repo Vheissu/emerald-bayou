@@ -832,6 +832,7 @@ async function init() {
       }
     }
 
+    const boatReset = phys.prevFloor === null;
     if (started && !game.paused) {
       currents.flowAt(phys.pos.x, phys.pos.y, currentFlow);
       phys.update(dt, input, playerWater, time, currentFlow);
@@ -972,7 +973,8 @@ async function init() {
     // world updates
     sky.update(time, camera.position);
     terrain.update(time, camera.position);
-    veg.update(time, environment.lightDir, wind, camera.position);
+    veg.update(time, environment.lightDir, wind, camera.position,
+      started && !game.paused ? phys : null, boatReset || phys.prevFloor === null);
     birds.update(time, camera.position, dt);
     manatees.update(dt, time, phys.pos.x, phys.pos.y);
     gators.update(dt, time, phys.pos.x, phys.pos.y, phys.speed, phys.heading, environment.spotOn, environment.night, environment.restrictedVisibility, environment.values.storm, environment.waterLevel);
@@ -1107,7 +1109,7 @@ async function init() {
     // Keep the compact static PMREM across backgrounding. Rebuilding it on return is synchronous and caused the
     // first resumed frame to stall; the much larger post, water, shadow and chart attachments are still released.
     cancelEnvironmentReflectionJob();
-    pipeline.hibernate(); water.hibernate();
+    pipeline.hibernate(); water.hibernate(); veg.marsh.clear();
     minimap.releaseTiles(); worldMap.hibernate();
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; water.uniforms.shadowOn.value = 0; }
     resizeDrawingSurface(renderer, 1, 1, 1, false); qualityController.reset(); void audio.suspend();

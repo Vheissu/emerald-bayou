@@ -110,6 +110,8 @@ The water is the part that took longest. Real reflection and refraction passes, 
 
 At idle, `G` drops the bow anchor. Water depth sets the amount of rode, and the hull drifts within that scope before the line comes tight. Firm mud holds best; soft muck, shell and sawgrass give sooner. Current, storm load or too much throttle can make the anchor drag while the bow swings into the load. The rode is one fixed 12-point line, reused for every drop.
 
+A crossing wake lifts the side it reaches first. The boat samples immersion at the bow, stern, centre and both chines. Cargo makes it sit deeper at idle, and it climbs onto plane as it picks up speed. Drive through a reed bed and the stems part at the bow, bend in the prop wash, then stand back up.
+
 Spray leaves the hull along the local water slope and settles at the current tide height. Fish jumps, gator splashes, working-boat wakes and ramp launches rise with surge too. Gusts carry droplets, mist and engine smoke downwind. These effects reuse the existing particle buffers, while the hull shares the five wave samples already used for buoyancy and attitude. Pausing stops the player and chase-skiff spray emitters.
 
 Spray and mist take their light from the scene. Moonlight leaves a faint blue return, cloud cover dims the sheets, and lightning catches them for the duration of the flash. The bow spotlight picks out droplets inside its cone; spray beside or behind the lamp stays dark. Blue-fire wakes keep their own glow. Both particle shaders share the light uniforms and retain their existing geometry and textures.
@@ -198,7 +200,7 @@ People are jointed figures driven by a pose target system rather than baked anim
 
 <img src="docs/screenshots/04-chart.jpg" alt="The chart, 16 miles square across nine regions" width="100%">
 
-`src/heightfield.js` is plain JavaScript with no three.js import, which lets the main thread and a pool of up to four web workers evaluate the same terrain function. The home bayou around the tower is hand shaped inside a 560 m radius, blending out to procedural noise by 780 m. Past that, domain warped ridged noise carves rivers and creeks, fbm makes lakes, and flat sawgrass prairie fills the gaps with tree hammocks scattered through it. Sandbars are seeded per 400 m cell.
+`src/heightfield.js` is plain JavaScript with no three.js import, which lets the main thread and a pool of up to four web workers evaluate the same terrain function. The home bayou around the tower is hand shaped inside a 560 m radius, blending out to procedural noise by 780 m. Wooded ridges rise behind the low bank shelves. Outside bends climb more sharply, with limestone showing through the steeper faces. Farther out, tree islands break up the sawgrass prairie and the tide reaches into its shallow swales. Sandbars are seeded per 400 m cell.
 
 `src/terrain.js` streams that as a quadtree, six levels from 100 m chunks up to 3200 m, 64 segments each, out to 7.2 km. Skirts hide the LOD cracks and a coarse parent stays visible until all four of its children have finished building, so you never see a hole. Vegetation is built per chunk as instanced meshes with tiers by level, dropping grass and cypress knees first and ending at crossed cards for far trees. Tree positions are seeded per 100 m cell and accepted at the exact terrain height, which is what makes every LOD agree with every other one.
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { crossedFoliageCardGeometry, foliageInstanceCount, foliageRangeVisible, normalizeFoliageDetail, Vegetation } from '../src/vegetation.js';
+import { crossedFoliageCardGeometry, foliageInstanceCount, foliageRangeVisible, MarshReaction, normalizeFoliageDetail, Vegetation } from '../src/vegetation.js';
 import { surfaceWetMaterialStats } from '../src/surfacewetness.js';
 
 function deferredVegetation(chunks) {
@@ -10,7 +10,7 @@ function deferredVegetation(chunks) {
     normalAt(x, z, out) { return out.set(0, 1, 0); },
   };
   return Object.assign(Object.create(Vegetation.prototype), {
-    terrain, exclusions: [], kinds: [], solid: [], solidRevision: 0, detail: 1,
+    terrain, exclusions: [], kinds: [], solid: [], solidRevision: 0, detail: 1, marsh: new MarshReaction(),
     solidRefreshQueue: [], solidRefreshQueued: new Set(),
     _m: new THREE.Matrix4(), _q: new THREE.Quaternion(), _e: new THREE.Euler(),
     _s: new THREE.Vector3(), _p: new THREE.Vector3(), _normal: new THREE.Vector3(), _col: new THREE.Color(),
@@ -18,6 +18,47 @@ function deferredVegetation(chunks) {
     cypTint: new THREE.Color(0.36, 0.48, 0.26), oakTint: new THREE.Color(0.30, 0.42, 0.25), palmTint: new THREE.Color(0.42, 0.55, 0.34),
   });
 }
+
+test('marsh reaction follows a turning airboat, then the older marks recover to standing', () => {
+  const marsh = new MarshReaction(), uniforms = marsh.uniforms;
+  const boat = { pos: new THREE.Vector2(), y: 0.2, heading: 0, speed: 10, rpm: 0.9, airborne: false };
+  for (let i = 0; i < 41; i++) {
+    const time = i * 0.05;
+    boat.pos.set(10 * Math.sin(time), 10 * (Math.cos(time) - 1));
+    boat.heading = time - Math.PI / 2;
+    marsh.update(time, boat);
+  }
+  const trail = uniforms.uMarshTrail.value, [x, z, forwardX, forwardZ] = uniforms.uMarshBoat.value.toArray();
+  assert.deepEqual([x, z], boat.pos.toArray());
+  assert.ok(Math.abs(forwardX - Math.cos(2)) < 1e-12);
+  assert.ok(Math.abs(forwardZ + Math.sin(2)) < 1e-12);
+  assert.ok(uniforms.uMarshCount.value > 4 && uniforms.uMarshCount.value <= trail.length);
+  assert.ok(trail[0].y < trail[3].y);
+  assert.ok(trail[1].w > trail[4].w);
+  boat.speed = 0; boat.rpm = 0.18;
+  for (let i = 41; i <= 66; i++) marsh.update(i * 0.05, boat);
+  assert.equal(uniforms.uMarshCount.value, 0);
+  assert.equal(uniforms.uMarshContact.value.y, 0);
+  assert.equal(uniforms.uMarshContact.value.z, 0);
+});
+
+test('marsh reaction discards old contact on restart, teleport, and pause', () => {
+  const marsh = new MarshReaction(), uniforms = marsh.uniforms;
+  const boat = { pos: new THREE.Vector2(), y: 0, heading: 0, speed: 9, rpm: 1, airborne: false };
+  marsh.update(0, boat);
+  boat.pos.y -= 1.5; marsh.update(0.16, boat);
+  assert.equal(uniforms.uMarshCount.value, 2);
+  boat.pos.x += 1; marsh.update(0.2, boat, true);
+  assert.equal(uniforms.uMarshCount.value, 1);
+  boat.pos.x += 890; marsh.update(0.22, boat);
+  assert.equal(uniforms.uMarshCount.value, 1);
+  assert.equal(uniforms.uMarshTrail.value[0].x, boat.pos.x);
+  boat.airborne = true; marsh.update(0.23, boat);
+  assert.equal(uniforms.uMarshContact.value.y, 0);
+  assert.equal(uniforms.uMarshContact.value.z, 0);
+  marsh.update(0.25, null);
+  assert.equal(uniforms.uMarshCount.value, 0);
+});
 
 function levelZeroChunk(key, x0) {
   return {
@@ -212,6 +253,8 @@ test('deferred grass warms its actual wind and compact-instance shader before an
     const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
     mesh.material.onBeforeCompile(shader);
     assert.match(shader.vertexShader, /compactRotate/); assert.match(shader.vertexShader, /windOffset/);
+    assert.match(shader.vertexShader, /marshReaction\(wBase, hFac\) \* compactKeep/);
+    assert.equal(shader.uniforms.uMarshTrail, vegetation.marsh.uniforms.uMarshTrail);
     mesh.geometry.addEventListener('dispose', () => disposed++);
     await gate;
   });

@@ -65,19 +65,124 @@ vec3 windFlutter(vec3 wp, float amp, float g) {
 
 const WIND_GLSL = WIND_V2 ? WIND_GLSL_V2 : WIND_GLSL_V1;
 
+const MARSH_TRAIL_POINTS = 8;
+const MARSH_TRAIL_STEP = 0.15;
+const MARSH_RECOVERY_TIME = 1.2;
+const MARSH_TRAIL_RADIUS = 4.4;
+
+// Recent boat positions share one fixed set of uniforms across all the ground-cover batches.
+export class MarshReaction {
+  constructor() {
+    this.uniforms = {
+      uMarshBoat: { value: new THREE.Vector4() },       // x, z, forward x, forward z
+      uMarshContact: { value: new THREE.Vector3() },    // height, hull brush, prop wash
+      uMarshCount: { value: 0 },
+      uMarshTrail: { value: Array.from({ length: MARSH_TRAIL_POINTS }, () => new THREE.Vector4()) },
+    };
+    this.marks = Array.from({ length: MARSH_TRAIL_POINTS }, () => new THREE.Vector4());
+    this.markTimes = new Float64Array(MARSH_TRAIL_POINTS);
+    this.clear();
+  }
+  clear() {
+    this.count = 0;
+    this.head = 0;
+    this.nextMark = -Infinity;
+    this.prevTime = -Infinity;
+    this.uniforms.uMarshCount.value = 0;
+    this.uniforms.uMarshContact.value.set(0, 0, 0);
+  }
+  update(time, boat, reset = false) {
+    if (!boat) { this.clear(); return; }
+    const center = this.uniforms.uMarshBoat.value;
+    const { x, y: z } = boat.pos;
+    const elapsed = time - this.prevTime;
+    // Do not draw a trail across a scene cut, including a debug move with no reset event.
+    const moved = Math.hypot(x - center.x, z - center.y);
+    if (reset || elapsed < 0 || elapsed > 0.25 || moved > Math.max(7, elapsed * 45)) this.clear();
+    this.prevTime = time;
+    const fwdX = -Math.sin(boat.heading), fwdZ = -Math.cos(boat.heading);
+    center.set(x, z, fwdX, fwdZ);
+    const speed = boat.speed;
+    const brush = boat.airborne ? 0 : THREE.MathUtils.smoothstep(speed, 0.22, 4.5);
+    const wash = boat.airborne ? 0 : THREE.MathUtils.smoothstep(boat.rpm, 0.24, 0.92);
+    this.uniforms.uMarshContact.value.set(boat.y, brush, wash);
+
+    // One mark every 150 ms while moving. Idle wash is handled by the live stern, so it leaves no phantom path.
+    if (brush > 0 && time >= this.nextMark) {
+      this.marks[this.head].set(x, z, boat.y, brush * (0.7 + wash * 0.3));
+      this.markTimes[this.head] = time;
+      this.head = (this.head + 1) % MARSH_TRAIL_POINTS;
+      this.count = Math.min(this.count + 1, MARSH_TRAIL_POINTS);
+      this.nextMark = time + MARSH_TRAIL_STEP;
+    }
+    const trail = this.uniforms.uMarshTrail.value;
+    for (let i = 0; i < this.count; i++) {
+      const index = (this.head - i - 1 + MARSH_TRAIL_POINTS) % MARSH_TRAIL_POINTS;
+      const age = time - this.markTimes[index];
+      if (age >= MARSH_RECOVERY_TIME) { this.count = i; break; }
+      trail[i].copy(this.marks[index]);
+      // Hold the lean briefly, then ease back into the ambient wind.
+      trail[i].w *= 1 - THREE.MathUtils.smoothstep(age, 0.14, MARSH_RECOVERY_TIME);
+      if (i === 0) trail[i].w *= THREE.MathUtils.smoothstep(age, 0, MARSH_TRAIL_STEP);
+    }
+    this.uniforms.uMarshCount.value = this.count;
+  }
+}
+
+const MARSH_REACTION_GLSL = `
+uniform vec4 uMarshBoat, uMarshTrail[${MARSH_TRAIL_POINTS}];
+uniform vec3 uMarshContact;
+uniform int uMarshCount;
+float marshHeightEnvelope(float root, float hull) {
+  return (1.0 - smoothstep(0.8, 2.2, root - hull)) * (1.0 - smoothstep(1.1, 2.5, hull - root));
+}
+vec3 marshReaction(vec3 root, float bladeHeight) {
+  vec2 fromBoat = root.xz - uMarshBoat.xy;
+  // The eight samples expire within 1.2 s. The coarse range rejects distant instances before the trail loop.
+  if (dot(fromBoat, fromBoat) > 3600.0 || (uMarshCount == 0 && uMarshContact.y + uMarshContact.z <= 0.0))
+    return vec3(0.0);
+  vec2 forward = uMarshBoat.zw;
+  float along = dot(fromBoat, forward);
+  vec2 away = fromBoat - forward * clamp(along, -2.6, 2.9);
+  float hullDist = length(away);
+  float hullHeight = marshHeightEnvelope(root.y, uMarshContact.x);
+  float brush = (1.0 - smoothstep(1.2, 2.7, hullDist)) * uMarshContact.y;
+  vec2 lateral = fromBoat - along * forward;
+  float washWidth = 2.1 + clamp(-along - 2.5, 0.0, 8.0) * 0.29;
+  float wash = smoothstep(1.5, 3.1, -along) * (1.0 - smoothstep(4.5, 11.5, -along))
+    * (1.0 - smoothstep(0.5, washWidth, length(lateral))) * uMarshContact.z * 0.75;
+  vec2 displacement = (away / max(hullDist, 0.28) * brush
+    + normalize(lateral * 0.46 - forward * 2.0) * wash) * hullHeight;
+  float strongest = max(brush, wash) * hullHeight, total = (brush + wash) * hullHeight;
+  for (int i = 0; i < ${MARSH_TRAIL_POINTS}; i++) {
+    if (i >= uMarshCount) break;
+    vec4 mark = uMarshTrail[i];
+    vec2 offset = root.xz - mark.xy;
+    float dist = length(offset);
+    float lean = (1.0 - smoothstep(1.0, ${MARSH_TRAIL_RADIUS}, dist)) * mark.w * marshHeightEnvelope(root.y, mark.z);
+    displacement += offset / max(dist, 0.4) * lean;
+    strongest = max(strongest, lean);
+    total += lean;
+  }
+  displacement *= (strongest / max(total, 0.001)) * bladeHeight * bladeHeight;
+  return vec3(displacement.x, -0.40 * length(displacement), displacement.y);
+}`;
+
 // Patch a material so instanced cards get wind sway and (optionally) crown-centred normals,
 // crown-depth ambient occlusion and sun translucency (leaves lit from behind glow).
-function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp = 0.12, hasCrown = false, trans = 0.0, fade = null } = {}) {
+function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp = 0.12, hasCrown = false, trans = 0.0, fade = null, marsh = null } = {}) {
   const isDepth = !!mat.isMeshDepthMaterial;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = { value: 0 };
     shader.uniforms.uSunDir = { value: new THREE.Vector3(0, 1, 0) };
     shader.uniforms.uWind = { value: new THREE.Vector3(1, 1, 0) };
+    if (marsh) Object.assign(shader.uniforms, marsh.uniforms);
     // small foliage shrinks away before the edge of the ring it lives in, so it never switches off in view
     shader.uniforms.uFade = { value: fade && !isDepth ? new THREE.Vector2(fade[0], fade[1]) : new THREE.Vector2(1e8, 1e8 + 1) };
     mat.userData.shader = shader;
     let vs = shader.vertexShader;
     vs = vs.replace('#include <common>', `#include <common>\n${WIND_GLSL}
+      ${marsh ? MARSH_REACTION_GLSL : ''}
       uniform vec3 uSunDir; uniform vec2 uFade; varying float vFolAO; varying float vFolBack; varying vec3 vCompactColor;
       attribute vec3 iPosition; attribute vec4 iQuaternion; attribute vec3 iScale; attribute vec3 iColor;
       ${hasCrown ? 'attribute vec4 iCrown;' : ''}
@@ -107,6 +212,7 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
       vec3 cardOrigin = (modelMatrix * vec4(iPosition, 1.0)).xyz;
       float gW = gust(wBase);
       mvPosition.xyz += windOffset(wBase, hFac, ${amp.toFixed(3)}, gW) + (windFlutter(cardOrigin, ${(amp * 0.07).toFixed(3)}, gW) + windBranch(cardOrigin, hFac, ${(amp * 0.55).toFixed(3)}, gW)) * ${hasCrown ? '1.0' : (pin === 'top' ? '(1.0 - uv.y)' : pin === 'y' ? 'hFac' : 'uv.y')};
+      ${marsh ? 'mvPosition.xyz += marshReaction(wBase, hFac) * compactKeep;' : ''}
       ${hasCrown ? `
         // crown-depth AO: cards deep inside the crown are darker, the outer shell is lit
         vec3 dc = mvPosition.xyz - compactCrownCenter; dc.y *= 1.6;
@@ -133,7 +239,7 @@ function patchFoliage(mat, { crownNormals = false, pin = 'bottom', pinH = 1, amp
       shader.fragmentShader = fs;
     }
   };
-  mat.customProgramCacheKey = () => `fol-fade-v2-${crownNormals}-${pin}-${pinH}-${amp}-${hasCrown}-${trans}-${isDepth}`; // uFade is a uniform, not part of the program
+  mat.customProgramCacheKey = () => `fol-fade-v2-${crownNormals}-${pin}-${pinH}-${amp}-${hasCrown}-${trans}-${isDepth}-${!!marsh}`; // uFade is a uniform, not part of the program
 }
 
 function makeDepthMat(map, alphaTest, opts) {
@@ -331,6 +437,7 @@ export class Vegetation {
     this.terrain = terrain;
     this.exclusions = exclusions; // [{x,z,r}] (home area only)
     this.detail = normalizeFoliageDetail(options.detail);
+    this.marsh = new MarshReaction();
     const texCyp = timed('cypressTextureMs', () => TEX.cypressFoliage());
     const texOak = timed('oakTextureMs', () => TEX.oakFoliage());
     const texPalm = timed('palmTextureMs', () => TEX.palmFrond());
@@ -347,8 +454,8 @@ export class Vegetation {
     this.moss = new Kind(hanging, texMoss, { pin: 'top', amp: 0.5, fade: [560, 680] }, { color: 0xc8c2a8, alphaTest: 0.35, shadow: false, small: true });
     // Ground cover is always two perpendicular cards. Baking that cross into the shared base geometry preserves both
     // faces and triangles while each clump carries one compact transform instead of two duplicate instance records.
-    this.grass = new Kind(crossedFrond, texGrass, { pin: 'bottom', amp: 0.22, fade: [290, 410] }, { shadow: false, alphaTest: 0.45, small: true });
-    this.reed = new Kind(crossedFrond, texReed, { pin: 'bottom', amp: 0.3, fade: [560, 680] }, { shadow: false, alphaTest: 0.45, small: true });
+    this.grass = new Kind(crossedFrond, texGrass, { pin: 'bottom', amp: 0.22, fade: [290, 410], marsh: this.marsh }, { shadow: false, alphaTest: 0.45, small: true });
+    this.reed = new Kind(crossedFrond, texReed, { pin: 'bottom', amp: 0.3, fade: [560, 680], marsh: this.marsh }, { shadow: false, alphaTest: 0.45, small: true });
     this.kinds = [this.cyp, this.oak, this.palm, this.palmetto, this.moss, this.grass, this.reed];
     this.solid = []; // Meshy grass clumps, instanced like the cards, only in the nearest tier
     this.solidRevision = 0;
@@ -620,7 +727,10 @@ export class Vegetation {
     const palm = (tr, x, z, h) => {
       const H = 5 + tr() * 7;
       placeTrunk(tr, x, h - 0.2, z, H * 0.8, 0.22 + tr() * 0.1, 0.12);
-      if (tier < 4) palmCrown(tr, B.palm, x, h + H * 0.8 - 0.2, z, tier === 3 ? 4 : 11 + Math.floor(tr() * 4), 2.6 + tr() * 1.2, 0.45, 1.7, this.palmTint);
+      if (tier < 4) {
+        p.set(0, H * 0.8, 0).applyQuaternion(q);
+        palmCrown(tr, B.palm, x + p.x, h - 0.2 + p.y, z + p.z, tier === 3 ? 4 : 11 + Math.floor(tr() * 4), 2.6 + tr() * 1.2, 0.45, 1.7, this.palmTint);
+      }
     };
     // exact ground height for trees so every LOD agrees on where a tree stands; the grid is only a cheap prefilter
     let placed = 0, streamedTreeWork = 0;
@@ -659,10 +769,10 @@ export class Vegetation {
     for (let t = 0; t < 30; t++) {
       if (tier <= 1 && t > 0 && (t & 7) === 0) yield;
       const x = x0 + rand() * CELL, z = z0 + rand() * CELL;
-      const hg = grid(x, z); if (hg < 0.5 || hg > 6.4) continue;
+      const hg = grid(x, z); if (hg < 0.5 || hg > 14) continue;
       if (rand() < Math.min(0.98, open * 1.25)) continue;
       const h = hf.compute(x, z);
-      if (h < 0.9 || h > 6 || excl(x, z)) continue;
+      if (h < 0.9 || h > 13.5 || excl(x, z)) continue;
       if (nearHome && Math.abs(x - T.riverCenterX(z)) > 170 && rand() < 0.7) continue;
       if (!free(x, z, 7)) continue; occupy(x, z, 7);
       const tr = treeRand(); placed++;
@@ -676,10 +786,10 @@ export class Vegetation {
     for (let t = 0; t < 12; t++) {
       if (tier <= 1 && t === 6) yield;
       const x = x0 + rand() * CELL, z = z0 + rand() * CELL;
-      const hg = grid(x, z); if (hg < -0.1 || hg > 5.4) continue;
+      const hg = grid(x, z); if (hg < -0.1 || hg > 10.4) continue;
       if (rand() < Math.min(0.95, open * 1.15)) continue;
       const h = hf.compute(x, z);
-      if (h < 0.3 || h > 5 || excl(x, z)) continue;
+      if (h < 0.3 || h > 10 || excl(x, z)) continue;
       if (!free(x, z, 3)) continue; occupy(x, z, 3);
       const tr = treeRand(); placed++;
       if (keepTree(x, z, 389)) {
@@ -727,7 +837,7 @@ export class Vegetation {
       if (t > 0 && (t & 7) === 0) yield;
       const x = x0 + rand() * CELL, z = z0 + rand() * CELL;
       const h = grid(x, z);
-      if (h < 0.5 || h > 6 || excl(x, z)) continue;
+      if (h < 0.5 || h > 12 || excl(x, z)) continue;
       if (rand() < open * 0.6) continue;
       const sz = 1.0 + rand() * 1.1;
       palmCrown(rand, B.palmetto, x, h - 0.1, z, 7 + Math.floor(rand() * 4), sz, 0.25, 1.2, this.palmTint);
@@ -778,7 +888,7 @@ export class Vegetation {
       if (t > 0 && (t & 31) === 0) yield;
       const x = x0 + rand() * CELL, z = z0 + rand() * CELL;
       const h = grid(x, z);
-      if (h < 0.15 || h > 6 || excl(x, z)) continue;
+      if (h < 0.15 || h > 13.5 || excl(x, z)) continue;
       const nrm = T.normalAt(x, z, this._normal);
       if (nrm.y < 0.8) continue;
       p.set(x, h - 0.05, z); e.set(0, rand() * Math.PI, 0); q.setFromEuler(e);
@@ -792,7 +902,7 @@ export class Vegetation {
     const kinds = [];
     for (const resource of resources) {
       if (!resource?.geo || !resource?.mat) continue;
-      const k = new Kind(resource.geo, resource.mat.map, { pin: 'y', pinH: resource.height, amp: 0.2, fade: [150, 210] }, { color: 0xd8dcc8, shadow: false, alphaTest: 0.01, small: true });
+      const k = new Kind(resource.geo, resource.mat.map, { pin: 'y', pinH: resource.height, amp: 0.2, fade: [150, 210], marsh: this.marsh }, { color: 0xd8dcc8, shadow: false, alphaTest: 0.01, small: true });
       k.mat.side = THREE.FrontSide; kinds.push(k);
     }
     return kinds;
@@ -878,9 +988,10 @@ export class Vegetation {
       }
     }
   }
-  update(t, sunDir, wind, camera = null) {
+  update(t, sunDir, wind, camera = null, boat = null, reset = false) {
     this.updateSolidChunks(); // one near chunk per frame keeps deferred upgrades below the terrain build budget
     this.updateRangeVisibility(camera);
+    this.marsh.update(t, boat, reset);
     for (const k of this.kinds) k.setTime(t, sunDir, wind);
     for (const m of this.extraMats) { const sh = m.userData.shader; if (sh) { sh.uniforms.uTime.value = t; if (wind) sh.uniforms.uWind.value.copy(wind); } }
     for (const m of [this.trunkMat, this.branchMat]) { const sh = m.userData.shader; if (sh) { sh.uniforms.uTime.value = t; if (wind) sh.uniforms.uWind.value.copy(wind); } }

@@ -173,7 +173,7 @@ function createAirboatTemplate() {
   const rudderPaint = worn(0x343734, 0.85, 0.35);
   const rubber = new THREE.MeshStandardMaterial({ color: 0x1b1c1b, roughness: 0.9, metalness: 0.0 });
   const seatMat = worn(0x2c2d2b, 1.0, 0.0);
-  const lensMat = new THREE.MeshStandardMaterial({ color: 0x5a0e08, emissive: 0xff3a1c, emissiveIntensity: 0.35, roughness: 0.25, metalness: 0.0 });
+  const reflectorMat = new THREE.MeshStandardMaterial({ color: 0x8a1a10, roughness: 0.3, metalness: 0.0 });
 
   // box-projected UVs (world-ish metres * scale) for extruded / arbitrary geometry
   const boxUV = (geo, scale = 0.5) => {
@@ -292,12 +292,12 @@ function createAirboatTemplate() {
   for (let i = 1; i <= 10; i++) { const d = domePt(i / 10); profile.push(new THREE.Vector3(d.r, d.z, 0)); }
   // The whole welded frame (hoops, ribs, face spokes, rear frame, stanchions) is baked into one galvanised mesh.
   const frameParts = new THREE.Group();
-  part(frameParts, torusGeo(R, 0.032, 8, 80), 0, 0, -depth / 2); part(frameParts, torusGeo(R, 0.032, 8, 80), 0, 0, depth / 2);
-  for (const u of [0.2, 0.38, 0.55, 0.7, 0.83, 0.93]) { const d = domePt(u); part(frameParts, torusGeo(d.r, 0.015, 6, 64), 0, 0, d.z); }
+  part(frameParts, torusGeo(R, 0.032, 8, 72), 0, 0, -depth / 2); part(frameParts, torusGeo(R, 0.032, 8, 72), 0, 0, depth / 2);
+  for (const u of [0.2, 0.38, 0.55, 0.7, 0.83, 0.93]) { const d = domePt(u); part(frameParts, torusGeo(d.r, 0.015, 5, 48), 0, 0, d.z); }
   const apex = domePt(0.975); part(frameParts, torusGeo(apex.r + 0.02, 0.02, 6, 24), 0, 0, apex.z);
   // ribs: run straight along the drum then curve in over the dome to the apex
   const barPts = profile.map(p => new THREE.Vector3(p.x, 0, p.y)); barPts.push(new THREE.Vector3(0, 0, depth / 2 + domeD + 0.01));
-  const barGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(barPts, false, 'centripetal', 0.5), 26, 0.014, 6, false);
+  const barGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(barPts, false, 'centripetal', 0.5), 18, 0.014, 5, false);
   for (let i = 0; i < 36; i++) part(frameParts, barGeo, 0, 0, 0, 0, 0, (i / 36) * Math.PI * 2);
   // front face: radial spokes + inner rings
   for (let i = 0; i < 12; i++) {
@@ -319,7 +319,7 @@ function createAirboatTemplate() {
   strut(frameParts, -postX, deckY + 0.05, -depth / 2, postX, deckY + 0.05, -depth / 2, 0.03);
   const cageFrame = new THREE.Mesh(bakeParts(frameParts), galv); cageFrame.name = 'airboat cage frame'; cage.add(cageFrame);
   barGeo.dispose();
-  for (const sx of [-1, 1]) { const lens = new THREE.Mesh(boxGeo(0.07, 0.05, 0.07), lensMat); lens.position.set(sx * postX, R + 0.09, depth / 2); cage.add(lens); }
+  for (const sx of [-1, 1]) { const lens = new THREE.Mesh(boxGeo(0.07, 0.05, 0.07), reflectorMat); lens.position.set(sx * postX, R + 0.09, depth / 2); cage.add(lens); }
   // Fine welded wire guard over the drum, dome and driver-side face. UVs are re-laid by arc length so every cell is
   // about 6 cm; the texture's dithered mips keep the guard reading as a grey haze at range instead of vanishing.
   const grilleCell = 0.24, lathePts = profile.map(p => new THREE.Vector2(p.x, p.y));
@@ -367,10 +367,10 @@ function createAirboatTemplate() {
   // hangers from the cage frame to the rudder assembly
   for (const sx of [-0.5, 0.5]) for (const y of [0.78, 2.85]) { const h = new THREE.Mesh(cylinderGeo(0.018, 0.018, 1.3, 6), galv); h.rotation.x = Math.PI / 2; h.position.set(sx, y, 2.95); g.add(h); }
 
-  // bow spotlight, cleats and transom tail lights
+  // bow spotlight, cleats and transom reflectors
   const light = new THREE.Mesh(cylinderGeo(0.06, 0.08, 0.14, 12), steel); light.rotation.x = Math.PI / 2; light.position.set(0, 0.85, -2.5); g.add(light);
   for (const sx of [-1, 1]) for (const sz of [-2.0, 2.2]) { const c = new THREE.Mesh(boxGeo(0.16, 0.05, 0.05), steel); c.position.set(sx * 1.05, 0.66, sz); g.add(c); }
-  for (const sx of [-1, 1]) { const tail = new THREE.Mesh(boxGeo(0.12, 0.05, 0.03), lensMat); tail.position.set(sx * 0.95, 0.46, 2.515); g.add(tail); }
+  for (const sx of [-1, 1]) { const tail = new THREE.Mesh(boxGeo(0.12, 0.05, 0.03), reflectorMat); tail.position.set(sx * 0.95, 0.46, 2.515); g.add(tail); }
 
   g.traverse(o => { if (o.isMesh) { o.castShadow = o.castShadow || true; o.receiveShadow = true; } });
   g.userData.batchedDraws = instanceStaticChildren(g, new Set([prop, ...rudders]));
@@ -559,6 +559,17 @@ export function updateSeatedDriverPose(driver, physics = {}, dt = 0, time = 0) {
 // ---------------- physics ----------------
 const DRAFT = 0.32; // hull bottom sits this far below the hull reference point
 const G = 9.8;
+const WATER_PROBES = [
+  { along: 0, across: 0, area: 0.38 },
+  { along: 2.5, across: 0, area: 0.115 },
+  { along: -2.3, across: 0, area: 0.125 },
+  { along: 0, across: -1.1, area: 0.19 },
+  { along: 0, across: 1.1, area: 0.19 },
+];
+// The forward and aft shares balance their moments on flat water. Use the corresponding
+// second moments to scale angular acceleration about the hull reference.
+const PITCH_INERTIA = 1.38;
+const ROLL_INERTIA = 0.46;
 const HULL_COLLISION_CIRCLES = [0, -1.7, 1.2, 0, 0, 1.3, 0, 1.6, 1.25];
 const hullHeightAt = (terrain, px, pz, right, forward, ox, oz) => terrain.heightAt(px + right.x * ox + forward.x * (-oz), pz + right.y * ox + forward.y * (-oz));
 const springStep = (value, target, velocity, stiffness, damping, dt) => velocity + ((target - value) * stiffness - velocity * damping) * dt;
@@ -600,6 +611,9 @@ export class AirboatPhysics {
     this.anchorConstraint = null;
     this._anchorForce = { x: 0, z: 0, force: 0, load: 0, distance: 0, extension: 0, taut: false };
     this._g = new THREE.Vector2(); this._n = new THREE.Vector2(); this._f = new THREE.Vector2(); this._r = new THREE.Vector2();
+    this._waterDepths = new Float64Array(WATER_PROBES.length);
+    this._previousWaterHeights = new Float64Array(WATER_PROBES.length);
+    this._buoyancy = { lift: 0, pitchMoment: 0, rollMoment: 0 };
   }
   forward(out = new THREE.Vector2()) { return out.set(-Math.sin(this.heading), -Math.cos(this.heading)); }
   right(out = new THREE.Vector2()) { return out.set(-Math.cos(this.heading), Math.sin(this.heading)); }
@@ -660,14 +674,48 @@ export class AirboatPhysics {
     if (this.anchorConstraint) this.anchorConstraint.resetRequested = true;
     this.anchorConstraint = null;
     this.pos.set(x, z); this.vel.set(0, 0); this.heading = heading; this.angVel = 0; this.y = 0; this.vy = 0;
-    this.pitch = this.roll = this.pitchVel = this.rollVel = 0; this.prevFloor = null; this.airTime = 0; this.airPeak = 0; this.lastFloat.set(x, z);
+    this.pitch = this.roll = this.pitchVel = this.rollVel = 0; this.prevFloor = null; this.lastSurfVel = 0;
+    this.airTime = 0; this.airPeak = 0; this.lastFloat.set(x, z);
     this.airborne = false; this.landedFrame = false; this.takeoffFrame = false; this.landQuality = ''; this.wipeT = 0; this.stuffT = 0; this.impact = 0; this.bottomStrike = 0; this.hit = 0;
     this.windHeel = 0; this.apparentWind = 0; this.crosswind = 0;
     this.current.set(0, 0); this.waterSpeed = 0;
   }
 
+  sampleBuoyancy(waveFn, t, dt, forward, right, planingLift) {
+    const heights = this._previousWaterHeights, depths = this._waterDepths;
+    const pitch = Math.sin(this.pitch), roll = Math.sin(this.roll);
+    const pitchRate = Math.cos(this.pitch) * this.pitchVel, rollRate = Math.cos(this.roll) * this.rollVel;
+    const firstSample = this.prevFloor === null;
+    let lift = 0, pitchMoment = 0, rollMoment = 0;
+    for (let i = 0; i < WATER_PROBES.length; i++) {
+      const { along, across, area } = WATER_PROBES[i];
+      const wx = this.pos.x + forward.x * along + right.x * across;
+      const wz = this.pos.y + forward.y * along + right.y * across;
+      const height = waveFn(wx, wz, t);
+      // Physics right points along local -X. Positive render roll lifts the local +X chine.
+      const depth = height - (this.y - DRAFT + along * pitch - across * roll);
+      const submersion = Math.min(2.2, Math.max(0, depth / DRAFT));
+      const waterRate = firstSample ? 0 : Math.max(-1.6, Math.min(1.6, (height - heights[i]) / dt));
+      const relativeRate = this.vy + along * pitchRate - across * rollRate - waterRate;
+      depths[i] = depth;
+      heights[i] = height;
+      const pressure = G * submersion * (planingLift + Math.max(0, submersion - 1) * 0.6);
+      const force = area * Math.max(0, pressure - relativeRate * 3.8 * Math.min(1, submersion));
+      lift += force;
+      pitchMoment += along * force;
+      rollMoment -= across * force;
+    }
+    this._buoyancy.lift = lift;
+    this._buoyancy.pitchMoment = pitchMoment;
+    this._buoyancy.rollMoment = rollMoment;
+    this.waterSlopeForward = (heights[1] - heights[2]) / 4.8;
+    this.waterSlopeRight = (heights[4] - heights[3]) / 2.2;
+    return heights[0];
+  }
+
   update(dt, input, waveFn, t, flow = null) {
     dt = Math.min(dt, 1 / 30);
+    if (!(dt > 0)) return;
     const T = this.T;
     const tgtThrottle = input.throttle; // -0.35..1
     this.throttle += (tgtThrottle - this.throttle) * (1 - Math.exp(-dt * (tgtThrottle > this.throttle ? 2.2 : 4.0)));
@@ -687,19 +735,21 @@ export class AirboatPhysics {
     const hR = (hullHeightAt(T, px, pz, rgt, fwd, 1.1, -1.0) + hullHeightAt(T, px, pz, rgt, fwd, 1.1, 1.6)) * 0.5;
     const hMean = (hC * 2 + hBow + hStern + hL + hR) / 6;
     const floor = Math.max(hC, hMean) + DRAFT;
-    const waterC = waveFn(px, pz, t);
+    if (this.prevFloor === null && floor > this.y) this.y = floor;
+    const throughWater = (this.vel.x - (flow?.x || 0)) * fwd.x + (this.vel.y - (flow?.y || 0)) * fwd.y;
+    const planingLift = 1 + 0.21 * this.smooth(5, 13, throughWater);
+    const waterC = this.sampleBuoyancy(waveFn, t, dt, fwd, rgt, planingLift);
     this.groundH = hC; this.waterH = waterC;
     // the hull rides whichever is higher: the water it floats on or the ground under it. Only that support surface can
     // throw the hull upward - a river bed rising toward the surface under a floating hull is not a ramp
     const support = Math.max(floor, waterC);
-    if (this.prevFloor === null) { this.prevFloor = support; if (floor > this.y) this.y = floor; }
+    if (this.prevFloor === null) this.prevFloor = support;
     const surfVel = Math.max(-20, Math.min(20, (support - this.prevFloor) / dt));
     this.prevFloor = support; this.surfVel = surfVel; this.floor = floor; this.support = support;
 
     // ---- vertical dynamics: gravity, buoyancy, ground contact ----
-    const sub = Math.max(0, Math.min(2.2, (waterC + DRAFT - this.y) / DRAFT)); // 1 = floating at equilibrium
-    const buoy = G * sub * (1 + Math.max(0, sub - 1) * 0.6);
-    const ay = -G + buoy / massF - this.vy * (3.8 * Math.min(sub, 1)) - this.vy * 0.04;
+    const previousY = this.y;
+    const ay = -G + this._buoyancy.lift / massF - this.vy * 0.04;
     this.vy += ay * dt;
     this.y += this.vy * dt;
     let impact = 0, contact = false;
@@ -710,11 +760,21 @@ export class AirboatPhysics {
       this.y = floor; contact = true;
       if (this.vy < surfVel) this.vy = surfVel + impact * 0.10; // small bounce
     }
+    // The next attitude step has not happened yet. Apply only the heave and ground
+    // correction to the cached depths to tell whether any part of the hull has touched.
+    const rise = this.y - previousY;
+    let immersed = 0, deepest = 0;
+    for (let i = 0; i < WATER_PROBES.length; i++) {
+      const depth = Math.max(0, this._waterDepths[i] - rise);
+      immersed += depth * WATER_PROBES[i].area;
+      deepest = Math.max(deepest, depth);
+    }
     this.contact = contact;
-    this.wet = Math.max(0, Math.min(1, (waterC + DRAFT + 0.12 - this.y) / (DRAFT + 0.12)));
     this.landFac = contact ? Math.max(0, Math.min(1, (floor - (waterC + DRAFT * 0.25)) / 0.4)) : 0;
     const wasAir = this.airborne;
-    this.airborne = !contact && this.wet <= 0.02;
+    this.airborne = !contact && deepest <= 0.008;
+    // The hull already has full lateral grip just before reaching its planing draft.
+    this.wet = this.airborne ? 0 : Math.min(1, immersed * planingLift / (DRAFT * 0.96));
     this.landedFrame = wasAir && !this.airborne;
     this.takeoffFrame = !wasAir && this.airborne;
     this.hop = this.airborne && this.airTime < 0.25; // little skips off wave tops are not jumps
@@ -803,24 +863,9 @@ export class AirboatPhysics {
     this.grounded = land;
 
     // ---- attitude ----
-    const wb = waveFn(px + fwd.x * 2.5, pz + fwd.y * 2.5, t), ws = waveFn(px - fwd.x * 2.3, pz - fwd.y * 2.3, t);
-    const wl = waveFn(px - rgt.x * 1.1, pz - rgt.y * 1.1, t), wr = waveFn(px + rgt.x * 1.1, pz + rgt.y * 1.1, t);
-    // Spray follows the same local water plane without sampling waves for thousands of emitted droplets.
-    this.waterSlopeForward = (wb - ws) / 4.8; this.waterSlopeRight = (wr - wl) / 2.2;
-    const wavePitch = Math.atan2(wb - ws, 4.8) * wet, waveRoll = Math.atan2(wr - wl, 2.2) * wet;
-    const landPitch = Math.atan2(hBow - hStern, 4.9) * land, landRoll = Math.atan2(hR - hL, 2.2) * land;
+    const landPitch = Math.atan2(hBow - hStern, 4.9), landRoll = Math.atan2(hL - hR, 2.2);
     const accelF = thrust + df;
-    const surfPitch = wavePitch + landPitch; // slope of whatever the hull is sitting on (bow-up positive)
-    let tgtPitch, tgtRoll;
-    if (this.airborne) {
-      // no aero surfaces: the hull keeps the rotation it left the lip with, drifting slowly toward the flight path,
-      // and the driver can lean (S = nose up, W = nose down) to set up the landing
-      tgtPitch = Math.atan2(this.vy, Math.max(this.speed, 3)) * 0.25;
-      tgtRoll = this.angVel * 0.08 + this.windHeel * 0.4;
-    } else {
-      tgtPitch = accelF * 0.012 * wet + Math.min(vf, 14) * 0.0035 * wet + surfPitch + (this.damageTrim || 0) * wet;
-      tgtRoll = -vl * 0.02 * wet + this.angVel * vf * 0.012 + waveRoll + landRoll + (this.damageList || 0) * wet + this.windHeel;
-    }
+    const surfPitch = Math.atan(this.waterSlopeForward) * (1 - land) + landPitch * land;
     if (this.takeoffFrame) {
       // the stern is still on the ramp as the bow clears it: a nose-up pop proportional to how hard the lip was rising
       this.pitchVel += Math.max(0, Math.min(0.8, this.lastSurfVel * 0.1));
@@ -828,6 +873,9 @@ export class AirboatPhysics {
       if (this.lastSurfVel > 2.5) this.vy += this.lastSurfVel * 0.08; // the lip
     }
     if (this.airborne) {
+      // In flight the hull drifts toward the flight path and the driver can set up the landing.
+      const tgtPitch = Math.atan2(this.vy, Math.max(this.speed, 3)) * 0.25;
+      const tgtRoll = this.angVel * 0.08 + this.windHeel * 0.4;
       const lean = wiped ? 0 : (input.pitch || 0);
       this.pitchVel += lean * 2.2 * dt;
       this.pitchVel = springStep(this.pitch, tgtPitch, this.pitchVel, 1.0, 1.8, dt);
@@ -836,8 +884,16 @@ export class AirboatPhysics {
       this.rollVel = springStep(this.roll, tgtRoll, this.rollVel, 6, 2.5, dt); this.roll += this.rollVel * dt;
     } else {
       const kP = this.landedFrame ? 14 : 30, dP = this.landedFrame ? 4 : 6;
-      this.pitchVel = springStep(this.pitch, tgtPitch, this.pitchVel, kP, dP, dt); this.pitch += this.pitchVel * dt;
-      this.rollVel = springStep(this.roll, tgtRoll, this.rollVel, 28, 5.5, dt); this.roll += this.rollVel * dt;
+      const pitchTrim = (accelF * 0.012 + Math.min(vf, 14) * 0.0035 + (this.damageTrim || 0)) * wet;
+      const rollTrim = (-vl * 0.02 + (this.damageList || 0)) * wet + this.angVel * vf * 0.012 + this.windHeel;
+      const waterPitchAcceleration = this._buoyancy.pitchMoment / (PITCH_INERTIA * massF) + kP * pitchTrim - 2 * this.pitchVel;
+      const waterRollAcceleration = this._buoyancy.rollMoment / (ROLL_INERTIA * massF) + 33 * rollTrim - 1.7 * this.rollVel;
+      const landPitchAcceleration = (landPitch + pitchTrim - this.pitch) * kP - dP * this.pitchVel;
+      const landRollAcceleration = (landRoll + rollTrim - this.roll) * 28 - 5.5 * this.rollVel;
+      this.pitchVel += (waterPitchAcceleration * (1 - land) + landPitchAcceleration * land) * dt;
+      this.rollVel += (waterRollAcceleration * (1 - land) + landRollAcceleration * land) * dt;
+      this.pitch += this.pitchVel * dt;
+      this.roll += this.rollVel * dt;
     }
     // ---- landing quality: how the hull met the surface decides whether it skips, slams or stuffs the bow ----
     this.surfPitch = surfPitch;
