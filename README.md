@@ -28,7 +28,7 @@ The highway crosses the home channel just south of the starting berth. Red and g
 <td width="50%"><img src="docs/screenshots/19-swim-cove.jpg" alt="Swimmers off the fishing piers in Gulf Cut"></td>
 </tr></table>
 
-Two skiffs lie tied outside the fishing piers. Idle past and the lines hang slack. A close wake rolls the hulls against their fenders and pulls the lines tight. Up on the bridge, a delivery van, a pickup and two sedans slow in rain and switch on their lights as visibility drops.
+Two fishing crews use the outside faces of the piers. While the skiffs are tied up, a passing wake rolls them against their fenders and pulls the lines tight. Up on the bridge, a delivery van, a pickup and two sedans slow in rain and switch on their lights as visibility drops.
 
 <table><tr>
 <td width="50%"><img src="docs/screenshots/23-cove-mooring.jpg" alt="A skiff tied bow and stern at the fishing pier"></td>
@@ -40,6 +40,22 @@ On the east bank, look for shells and broken reeds along the high-water line. Th
 <table><tr>
 <td width="50%"><img src="docs/screenshots/25-tidal-bank.jpg" alt="The wet band below the stilt houses as the tide recedes"></td>
 <td width="50%"><img src="docs/screenshots/26-shorebirds.jpg" alt="Willets foraging on the exposed mud below Gulf Cut Bridge"></td>
+</tr></table>
+
+### Fishing crews
+
+Watch the piers on a clear morning. The painted skiff leaves first and anchors off the bank north of Gulf Cut. The alloy skiff follows a different route around the sandbar and under the bridge. At each spot the angler stands to cast. You can follow the float from splashdown to the retrieve.
+
+An idle pass can get a wave. Run close at speed and the angler reels in and braces. Other skippers watch your approach and ease off when they need room. Canoe crews shorten their paddle strokes as your wake reaches them.
+
+When a squall is due, the fishing crews head for their own piers. They slow in the approach, swing the bow out and back alongside. They wait there through the storm before heading out again.
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/27-fishing-departure.jpg" alt="The painted skiff casting off from the north fishing pier"></td>
+<td width="50%"><img src="docs/screenshots/28-fishing-ground.jpg" alt="A crew fishing from its anchored skiff on the outside bank"></td>
+</tr><tr>
+<td><img src="docs/screenshots/29-storm-return.jpg" alt="The fishing crew returning to Gulf Cut in the rain"></td>
+<td><img src="docs/screenshots/30-canoe-close-pass.jpg" alt="The survey canoe crew watches a passing airboat"></td>
 </tr></table>
 
 ## Races and boat parts

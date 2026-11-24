@@ -12,7 +12,7 @@ test('every retained powered-craft director contributes to the player wake field
   ].map(file => readFile(join(root, 'src', file), 'utf8')));
 
   assert.match(main, /const physicalWakeFields = \[life\.traffic\]/);
-  assert.match(main, /const directedVesselSources = \[skiff, encounters, incidents, story, aftermath\]/);
+  assert.match(main, /const directedVesselSources = \[skiff, encounters, incidents, story, aftermath, world\]/);
   assert.match(main, /physicalWakeFields\.push\(\.\.\.directedVesselSources\)/);
   assert.match(main, /ecology\.setDirectedVesselSources\(directedVesselSources\)/);
   assert.match(main, /sampleWakeFields\(physicalWakeFields, x, z, t\)/);

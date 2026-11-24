@@ -37,7 +37,7 @@ function fixture() {
 // Decode the values actually sent to the shader and compare them with the real directors' CPU methods. This
 // catches source eligibility, default speeds/scales, group identity, and nested caps rather than testing a mock field.
 function packedHeight(surface, x, z, t, withPlayer = true) {
-  const groups = new Float64Array(10);
+  const groups = new Float64Array(surface.sampleGroups.length);
   for (let i = 0; i < surface.count; i++) {
     const j = i * 4, p = surface.pose, m = surface.motion, dx = x - p[j], dz = z - p[j + 1];
     if (m[j + 3] && dx * dx + dz * dz > 10609) continue;
@@ -45,7 +45,7 @@ function packedHeight(surface, x, z, t, withPlayer = true) {
   }
   const story = clampWakeHeight(groups[4] + clampWakeHeight(groups[5], 0.24) + clampWakeHeight(groups[6], 0.24) + groups[7], 0.28);
   return clampWakeHeight(clampWakeHeight(groups[0], 0.24) + groups[1] + clampWakeHeight(groups[2], 0.24)
-    + clampWakeHeight(groups[3], 0.24) + story + clampWakeHeight(groups[8], 0.2), 0.34) + (withPlayer ? groups[9] : 0);
+    + clampWakeHeight(groups[3], 0.24) + story + clampWakeHeight(groups[8], 0.2) + clampWakeHeight(groups[10], 0.24), 0.34) + (withPlayer ? groups[9] : 0);
 }
 
 test('packed wake sources match every real CPU field including nested story and overlap caps', () => {
@@ -125,7 +125,7 @@ test('the player wake fades with hull contact in both the rendered and resident-
 
 test('vessel crests displace the retained mesh before world projection without a new render pass', async () => {
   const [main, water] = await Promise.all(['main', 'water'].map(name => readFile(new URL(`../src/${name}.js`, import.meta.url), 'utf8')));
-  assert.match(main, /water\.vesselWakes\.sources = \{ traffic: life\.traffic, skiff, encounters, incidents, story, aftermath, player: phys \}/);
+  assert.match(main, /water\.vesselWakes\.sources = \{ world, traffic: life\.traffic, skiff, encounters, incidents, story, aftermath, player: phys \}/);
   assert.match(main, /water\.vesselWakes\.update\(camera\.position, started\)/);
   assert.ok(water.indexOf('wave += vesselWakeSample') < water.indexOf('wp.y += wave.x'));
   assert.match(water, /\.\.\.this\.vesselWakes\.uniforms/);
@@ -134,4 +134,18 @@ test('vessel crests displace the retained mesh before world projection without a
   assert.match(VESSEL_WAKE_GLSL, /received \+ groups\[9\]/);
   assert.doesNotMatch(VESSEL_WAKE_GLSL, /\bfloat\s+filter\b/);
   assert.match(water, /reflectionOffset \*= 0.035 \/ max\(0.035, length\(reflectionOffset\)\)/);
+});
+
+test('an underway fishing skiff makes a physical wake and excludes its own hull probes', () => {
+  const trip = agent({ speed: 5, wakeMaxSpeed: 5.5, wakeScale: .095 });
+  const shore = {group: {visible: true}, fishingTrips: [trip]};
+  const surface = new VesselWakeSurface(); surface.sources = {world: {waterfront: shore}};
+  surface.update({x: 0,z: 0});
+  const expected = wakeSampleAt(0, 0, 0, 5, 5.5, .095, 14.7, 40, .7);
+  assert.ok(Math.abs(expected) > .01);
+  assert.ok(Math.abs(surface.heightAt(14.7, 40, .7) - expected) < 1e-6);
+  assert.equal(surface.heightAt(14.7, 40, .7, trip), 0);
+  trip.active = false;
+  surface.update({x: 0,z: 0});
+  assert.equal(surface.count, 0);
 });

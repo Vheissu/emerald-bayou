@@ -7,6 +7,7 @@ import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
 import { SITE_CELL, pickSite, buildSite, animateSite, wideHere } from './sites.js';
 import { person, cooler, bucket, fishingLine } from './folk.js';
 import { trimOldest } from './cache.js';
+import { sampleVesselWake } from './wakefield.js';
 import { WakeStampPool } from './wakestamps.js';
 import { buildCampWork, poseCampWorker, updateCampWork } from './campwork.js';
 import { updateDockWeather } from './dockweather.js';
@@ -265,6 +266,18 @@ export class World {
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const tr = this.trapAt(i, j); if (tr && !this.collected.has(tr.key) && Math.hypot(tr.x - x, tr.z - z) <= r) out.push(tr); }
     return out;
   }
+  wakeHeightAt(x, z, t) {
+    const shore = this.waterfront;
+    if (!shore?.group.visible) return 0;
+    return sampleVesselWake(shore.fishingTrips, x, z, t);
+  }
+  visitActiveVessels(visitor) {
+    const shore = this.waterfront;
+    if (!shore?.group.visible) return;
+    for (const trip of shore.fishingTrips) {
+      if (trip.active) visitor(trip.x, trip.z, trip.speed, 'skiff', trip);
+    }
+  }
   stamps(out) { this.stampPool.appendTo(out); }
   collectTrap(tr) {
     this.collected.add(tr.key);
@@ -306,6 +319,7 @@ export class World {
     this.stampPool.reset();
     const P = this.phys; const fx = this.fx || {};
     const ctx = this.context; ctx.bx = bx; ctx.bz = bz; ctx.speed = P ? P.speed : 0; ctx.dt = dt; ctx.plume = fx.plume; ctx.spray = fx.spray; ctx.audio = fx.audio; ctx.fish = fx.fish; ctx.playerWakeAt = fx.playerWakeAt; ctx.ob = 0; ctx.obPitch = 1; ctx.obX = 0; ctx.obZ = 0; ctx.truck = 0; ctx.onShot = this.onShot; ctx.humanActivity = this.humanActivity ?? 1;
+    ctx.boatWaveAt = fx.boatWaveAt; ctx.heading = P?.heading ?? 0;
     ctx.vx = P?.vel?.x ?? 0; ctx.vz = P?.vel?.y ?? 0;
     ctx.residentDt = this.environment?.game?.playing && !this.environment.game.paused ? dt : 0;
     updateDockWeather(this.homeWeather, dt, bx, bz, this.environment);

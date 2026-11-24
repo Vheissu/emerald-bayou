@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { buildSkiff } from './npc.js';
+import { buildFishingCrew, updateFishingCrew } from './skifffishingcrew.js';
+import { createFishingTrip, stepFishingTrip } from './skifffishingtrip.js';
 import { sampleHullSurface } from './hullsurface.js';
 import { registerWetMaterial } from './surfacewetness.js';
 import { vesselWindHeel } from './vesselwind.js';
@@ -7,7 +9,11 @@ import { addBeam, addBox, tintGeometry, waterfrontMesh, waterfrontSurface } from
 import { COVE_MOORINGS, MOORING_TRAVEL } from './waterfrontlayout.js';
 
 const { clamp } = THREE.MathUtils;
-const heading = -Math.PI / 2;
+const fishingLights = {
+  port: { x: -.73, y: .493, z: -.42 }, starboard: { x: .73, y: .493, z: -.42 },
+  stern: { x: -.57, y: .91, z: 1.74 },
+};
+const badWeather = new Set(['squall', 'thunderstorm', 'hail', 'tropical', 'hurricane']);
 const ropeSegments = 12, radialSegments = 5, ropeRadius = 0.013;
 const ropeRing = Array.from({ length: radialSegments }, (_, i) => {
   const angle = i * Math.PI * 2 / radialSegments;
@@ -139,6 +145,12 @@ function dressSkiff(mesh, berth, index) {
   // Tilt the stored outboard up so the skeg stays clear of the bank and fouling.
   mesh.userData.motor.rotation.x = 0.44;
   const hardware = [], rubber = [];
+  for (const lens of [fishingLights.port, fishingLights.starboard]) {
+    addBox(hardware, 0x3f4140, .09, .055, .12, lens.x, lens.y - .034, lens.z);
+  }
+  const sternLamp = fishingLights.stern;
+  addBox(hardware, 0x777c76, .023, .48, .023, sternLamp.x, sternLamp.y - .26, sternLamp.z);
+  addBox(hardware, 0xc7c6ad, .062, .06, .062, sternLamp.x, sternLamp.y - .015, sternLamp.z);
   for (const side of [-1, 1]) {
     const gunwale = [[-2.35, 0.17, 0.053], [-1.72, 0.38, 0.55], [-0.55, 0.45, 0.783], [0.75, 0.45, 0.862], [1.92, 0.41, 0.868]]
       .map(([z, y, x]) => new THREE.Vector3(side * x, y, z));
@@ -149,6 +161,14 @@ function dressSkiff(mesh, berth, index) {
       addBeam(hardware, index ? 0x758678 : 0xa09a74, a, b, 0.024, 0.018);
     }
   }
+  // The primer bulb and sagging fuel hose stay down by the transom, out
+  // of the helmsman's footwell. The aft thwart carries a faded foam pad.
+  const hose = new THREE.CatmullRomCurve3([
+    [.51,.47,1.2], [.61,.34,1.34], [.57,.18,1.62], [.37,.22,1.81], [.12,.53,1.94],
+  ].map(v => new THREE.Vector3(...v)));
+  tintGeometry(rubber, new THREE.TubeGeometry(hose,16,.012,6,false), 0x2b2d27);
+  tintGeometry(rubber, new THREE.CapsuleGeometry(.028,.074,3,7).rotateZ(.86).translate(.29,.30,1.85), 0x292924);
+  addBox(rubber, index ? 0x666754 : 0x6f6752, 1.26,.037,.32,0,.551,-.95);
   const inside = -berth.side;
   for (const z of [-0.18, 0.98]) {
     const cylinder = new THREE.CapsuleGeometry(0.085, 0.28, 4, 9)
@@ -163,10 +183,23 @@ function dressSkiff(mesh, berth, index) {
   mesh.add(waterfrontMesh(hardware, dockMetal), waterfrontMesh(rubber, fenderRubber));
 }
 
+function pierCoil(post, side) {
+  // The loose end lives beside its own cleat while the boat is out.
+  const points = [];
+  for (let n = 0; n <= 40; n++) {
+    const u = n / 40, angle = u * Math.PI * 4.8;
+    points.push(new THREE.Vector3(post.x + Math.sin(angle) * (.16 - .06*u),
+      post.y - .041 + u * .015, post.z - side*(.22 - (.19 - .07*u)*Math.cos(angle))));
+  }
+  const mesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 42, ropeRadius, 5, false), ropeMaterial);
+  mesh.receiveShadow = true; mesh.visible = false;
+  return mesh;
+}
+
 function syncHull(boat) {
-  const { mesh, berth, surface, motion } = boat;
-  mesh.position.set(berth.x + motion.x, surface.waterHeight - 0.042, berth.z + motion.z);
-  mesh.rotation.set(boat.pitch, heading + motion.yaw, boat.roll, 'YXZ');
+  const { mesh, trip, surface, motion } = boat;
+  mesh.position.set(trip.x + motion.x, surface.waterHeight - 0.042, trip.z + motion.z);
+  mesh.rotation.set(boat.pitch, trip.heading + motion.yaw, boat.roll, 'YXZ');
   mesh.updateMatrix();
   const x = mesh.position.x, z = mesh.position.z, yaw = mesh.rotation.y;
   const fx = -Math.sin(yaw), fz = -Math.cos(yaw), o = boat.obstacle;
@@ -177,15 +210,20 @@ function syncHull(boat) {
 export function buildMooredSkiffs(group) {
   return COVE_MOORINGS.map((berth, index) => {
     const { side, pier } = berth, mesh = buildSkiff({ crew: false });
-    mesh.name = index === 0 ? 'Painted moored skiff' : 'Alloy moored skiff';
+    mesh.name = index === 0 ? 'Painted fishing skiff' : 'Alloy fishing skiff';
     dressSkiff(mesh, berth, index);
     const motion = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0, yawRate: 0, side };
-    const boat = { berth, mesh, motion, surface: { waterHeight: 0 }, pitch: 0, roll: 0, impactRoll: 0, lastWake: 0 };
+    const trip = createFishingTrip(berth, index);
+    const controls = { player: {}, otherBoats: [] };
+    const boat = { berth, mesh, motion, trip, controls, surface: { waterHeight: 0 }, pitch: 0, roll: 0, impactRoll: 0, contactHold: 0, lastWake: 0 };
+    trip.mesh = mesh; trip.navigationLights = true; trip.navigationLightLayout = fishingLights; trip.wakeMaxSpeed = 5.5; trip.wakeScale = 0.095;
+    boat.crew = buildFishingCrew(boat, index);
     boat.obstacle = { ax: berth.x, az: berth.z, bx: berth.x, bz: berth.z, r: 0.86, tag: 'boat',
       onHit: (speed, nx, nz, player) => {
         const kick = Math.min(1.4, speed * 0.27);
         motion.vx -= nx * kick; motion.vz -= nz * kick;
-        motion.yawRate -= nz * kick * clamp((player.pos.x - (berth.x + motion.x)) * 0.2, -0.47, 0.47);
+        motion.yawRate -= nz * kick * clamp((player.pos.x - mesh.position.x) * 0.2, -0.47, 0.47);
+        if (speed > 1) boat.contactHold = Math.min(2.6, speed * .33);
         boat.impactRoll = clamp(boat.impactRoll - nz * kick * 0.11, -0.17, 0.17);
       } };
     syncHull(boat);
@@ -193,55 +231,140 @@ export function buildMooredSkiffs(group) {
       const post = new THREE.Vector3(berth.x - z + (i ? -0.14 : 0.36), pier.deck + 0.059, pier.z + berth.side * 1.40);
       const eye = new THREE.Vector3(-side * 0.69, 0.546, z);
       const end = eye.clone().applyMatrix4(mesh.matrix), line = {
-        mesh: lineMesh(), post, eye, end, length: post.distanceTo(end) + (i ? 0.10 : 0.14), extension: 0,
+        mesh: lineMesh(), coil: pierCoil(post, side), post, eye, end, length: post.distanceTo(end) + (i ? 0.10 : 0.14), extension: 0,
       };
       dockCleat(group, post.x, post.y - 0.027, post.z);
       bendLine(line);
-      group.add(line.mesh);
+      group.add(line.mesh, line.coil);
       return line;
     });
-    group.add(mesh);
+    const anchorMesh = lineMesh();
+    anchorMesh.name = 'Fishing skiff anchor rode'; anchorMesh.visible = false;
+    boat.anchor = { mesh: anchorMesh, eye: new THREE.Vector3(side * .58, .46, -1.59),
+      post: new THREE.Vector3(), end: new THREE.Vector3(), bottom: new THREE.Vector3(), paid: 0, length: 0 };
+    group.add(mesh, anchorMesh);
     return boat;
   });
+}
+
+function stepTiedHull(boat, dt, wind, windDir, wake, ctx) {
+  const { motion, mesh } = boat;
+  const { x, z } = mesh.position;
+  let pullX = 0, pullZ = 0, torque = 0;
+  for (const line of boat.lines) {
+    const span = line.post.distanceTo(line.end), extension = Math.max(0, span - line.length);
+    const tension = Math.min(5, 5.2 * extension) / Math.max(span, 0.05);
+    const dx = (line.post.x - line.end.x) * tension, dz = (line.post.z - line.end.z) * tension;
+    pullX += dx; pullZ += dz;
+    torque += (line.end.z - z) * dx - (line.end.x - x) * dz;
+  }
+  const kick = clamp((wake - boat.lastWake) / Math.max(0.01, dt), -2, 2);
+  const wakeReach = clamp((z - ctx.bz) * 0.08, -1, 1);
+  const windForce = Math.min(3, wind * wind * 0.0038);
+  stepMooringMotion(motion, dt, (windDir?.x ?? 0) * windForce + pullX,
+    (windDir?.z ?? 0) * windForce + pullZ + kick * 0.64 * wakeReach,
+    0.68 * torque + kick * 0.13 + (windDir?.z ?? 0) * windForce * 0.17);
+}
+
+function updateTrip(boat, boats, dt, wind, wake, ctx, environment) {
+  const { trip, controls } = boat;
+  const player = controls.player;
+  player.x = ctx.bx; player.z = ctx.bz; player.vx = ctx.vx ?? 0; player.vz = ctx.vz ?? 0;
+  player.speed = ctx.speed ?? 0; player.heading = ctx.heading ?? 0;
+  controls.heightAt = ctx.heightAt;
+  boat.contactHold = Math.max(0, boat.contactHold - dt);
+  controls.contactHold = boat.contactHold;
+  controls.wind = wind; controls.wake = wake;
+  controls.daylight = environment?.daylight ?? 1;
+  controls.waterLevel = environment?.waterLevel ?? 0;
+  controls.storm = environment?.sampleStormAt?.(trip.x, trip.z) ?? environment?.values?.storm ?? 0;
+  controls.stormApproaching = (badWeather.has(environment?.nextKey) && environment.remaining < 45)
+    || (badWeather.has(environment?.key) && (environment.mix < 1 || environment.key === 'hurricane'));
+  const nearby = controls.otherBoats;
+  nearby.length = 0;
+  for (const neighbor of boats) if (neighbor !== boat) nearby.push(neighbor.trip);
+  if (environment?.traffic?.boats) for (const b of environment.traffic.boats) if (b.active) nearby.push(b);
+  stepFishingTrip(trip, dt, controls);
+  trip.active = !trip.secured;
+}
+
+// Lower the anchor off the bow at the fishing hole. Its bottom stays put
+// while the hull sheers in the wind and the fishing float rides separately.
+function updateFishingAnchor(boat, dt, ctx) {
+  const { anchor, mesh, trip } = boat;
+  const payingOut = trip.phase === 'fishing';
+  if (!payingOut && anchor.paid <= 0) return;
+  anchor.post.copy(anchor.eye).applyMatrix4(mesh.matrix);
+  if (payingOut && anchor.paid === 0) {
+    const x = anchor.post.x - Math.sin(mesh.rotation.y) * 2.5;
+    const z = anchor.post.z - Math.cos(mesh.rotation.y) * 2.5;
+    anchor.bottom.set(x, ctx.heightAt?.(x, z) ?? mesh.position.y - 2, z);
+  }
+  anchor.paid = clamp(anchor.paid + (payingOut ? .45 : -.85) * dt, 0, 1);
+  anchor.mesh.visible = anchor.paid > .005;
+  if (!anchor.mesh.visible) return;
+  anchor.end.lerpVectors(anchor.post, anchor.bottom, anchor.paid);
+  anchor.length = anchor.post.distanceTo(anchor.end) + .09 * anchor.paid;
+  bendLine(anchor);
+}
+
+function updateOutboard(boat, dt, ctx) {
+  const { trip, mesh } = boat, motor = mesh.userData.motor;
+  const moving = !trip.secured && trip.phase !== 'fishing';
+  const speed = Math.abs(trip.speed);
+  const running = moving ? clamp(speed / trip.wakeMaxSpeed, 0, 1) : 0;
+  motor.rotation.x = THREE.MathUtils.damp(motor.rotation.x, moving ? 0.05 : 0.44, 2.7, dt);
+  motor.userData.prop.rotation.z += dt * (moving ? 8 + running * 55 : 0);
+  if (!moving || dt <= 0) return;
+  const distance = Math.hypot(trip.x - ctx.bx, trip.z - ctx.bz);
+  const level = clamp(1 - distance / 130, 0, 1) ** 1.6 * (.11 + running * .58);
+  if (level > ctx.ob) { ctx.ob = level; ctx.obPitch = .79 + running*.35; ctx.obX = trip.x; ctx.obZ = trip.z; }
+  if (distance > 105 || speed < .26) return;
+  const sh = Math.sin(trip.heading), ch = Math.cos(trip.heading);
+  ctx.emitStamp?.(trip.x + sh * 2.05, trip.z + ch * 2.05, .64 + .32 * running,
+    .09 + .25 * running, .13 + .92 * running, .59 + .46 * running);
 }
 
 export function updateMooredSkiffs(boats, time, waveAt, ctx, environment) {
   for (const boat of boats) {
     const dt = Math.min(ctx.residentDt || 0, 0.05);
-    const { berth, motion, mesh } = boat;
-    const x = berth.x + motion.x, z = berth.z + motion.z;
-    const wind = (environment?.sampleWindAt?.(x, z) ?? 0) * (environment?.gust ?? 1);
+    const { trip, motion, mesh } = boat;
+    const wind = (environment?.sampleWindAt?.(trip.x, trip.z) ?? 0) * (environment?.gust ?? 1);
     const windDir = environment?.windDir;
-    const playerWake = ctx.playerWakeAt?.(x, z, time) ?? 0;
-    const trafficWake = environment?.traffic?.wakeHeightAt?.(x, z, time) ?? 0;
+    const playerWake = ctx.playerWakeAt?.(trip.x, trip.z, time) ?? 0;
+    const trafficWake = environment?.traffic?.wakeHeightAt?.(trip.x, trip.z, time) ?? 0;
     const wake = clamp(playerWake + trafficWake, -0.37, 0.37);
+    if (dt > 0) updateTrip(boat, boats, dt, wind, playerWake, ctx, environment);
     const response = -Math.expm1(-dt * 4.4);
-    sampleHullSurface(boat.surface, (wx, wz, t) => waveAt(wx, wz, t) + clamp(
-      (ctx.playerWakeAt?.(wx, wz, t) ?? 0) + (environment?.traffic?.wakeHeightAt?.(wx, wz, t) ?? 0), -0.37, 0.37),
-    x, z, mesh.rotation.y, time);
-    const heel = vesselWindHeel(windDir, wind, mesh.rotation.y, 0.55);
-    boat.impactRoll *= Math.exp(-dt * 2.2);
-    boat.pitch += (boat.surface.waterPitch * 0.86 - boat.pitch) * response;
-    boat.roll += (boat.surface.waterRoll * 0.85 + heel + boat.impactRoll - boat.roll) * response;
-    let pullX = 0, pullZ = 0, torque = 0;
-    for (const line of boat.lines) {
-      const span = line.post.distanceTo(line.end), extension = Math.max(0, span - line.length);
-      const tension = Math.min(5, 5.2 * extension) / Math.max(span, 0.05);
-      const dx = (line.post.x - line.end.x) * tension, dz = (line.post.z - line.end.z) * tension;
-      pullX += dx; pullZ += dz;
-      torque += (line.end.z - z) * dx - (line.end.x - x) * dz;
+    if (trip.secured) stepTiedHull(boat, dt, wind, windDir, wake, ctx);
+    else {
+      const settle = Math.exp(-dt * 3);
+      const anchored = trip.phase === 'fishing';
+      const drift = anchored ? clamp(wind * .012, 0, .18) : 0;
+      motion.x += ((windDir?.x ?? 0) * drift - motion.x) * (1 - settle);
+      motion.z += ((windDir?.z ?? 0) * drift - motion.z) * (1 - settle);
+      const sheer = anchored ? ((windDir?.x ?? 0) * Math.cos(trip.heading) - (windDir?.z ?? 0) * Math.sin(trip.heading)) * drift + wake * .25 : 0;
+      motion.yaw += (sheer - motion.yaw) * (1 - settle);
+      motion.vx *= settle; motion.vz *= settle; motion.yawRate *= settle;
     }
-    const kick = clamp((wake - boat.lastWake) / Math.max(0.01, dt), -2, 2);
-    const wakeReach = clamp((z - ctx.bz) * 0.08, -1, 1);
-    const windForce = Math.min(3, wind * wind * 0.0038);
-    stepMooringMotion(motion, dt, (windDir?.x ?? 0) * windForce + pullX,
-      (windDir?.z ?? 0) * windForce + pullZ + kick * 0.64 * wakeReach,
-      0.68 * torque + kick * 0.13 + (windDir?.z ?? 0) * windForce * 0.17);
+    const field = ctx.boatWaveAt || ((wx, wz, t) => waveAt(wx, wz, t) + clamp(
+      (ctx.playerWakeAt?.(wx, wz, t) ?? 0) + (environment?.traffic?.wakeHeightAt?.(wx, wz, t) ?? 0), -.37, .37));
+    sampleHullSurface(boat.surface, field, trip.x + motion.x, trip.z + motion.z, trip.heading + motion.yaw, time, trip);
+    const heel = vesselWindHeel(windDir, wind, trip.heading, 0.55);
+    const turn = trip.turn;
+    mesh.userData.motor.rotation.y = THREE.MathUtils.damp(mesh.userData.motor.rotation.y, clamp(-turn * .5, -.56, .56), 4, dt);
+    boat.impactRoll *= Math.exp(-dt * 2.2);
+    boat.pitch += (boat.surface.waterPitch * .86 + .005 * Math.abs(trip.speed) - boat.pitch) * response;
+    boat.roll += (boat.surface.waterRoll * .85 + heel + boat.impactRoll + clamp(turn * trip.speed * .025, -.12, .12) - boat.roll) * response;
     if (dt > 0) boat.lastWake = wake;
     syncHull(boat);
+    updateFishingAnchor(boat, dt, ctx);
+    updateOutboard(boat, dt, ctx);
+    updateFishingCrew(boat.crew, boat, trip, dt, time, ctx, field);
     for (const line of boat.lines) {
+      line.mesh.visible = trip.secured; line.coil.visible = !trip.secured;
       line.end.copy(line.eye).applyMatrix4(mesh.matrix);
-      bendLine(line);
+      if (trip.secured) bendLine(line);
     }
   }
 }

@@ -49,3 +49,34 @@ test('skiffs follow the water with lines attached and hull collisions outside sw
     }
   }
 });
+
+test('a crew leaves its lines on the pier, fishes at anchor and ties up again in a squall', () => {
+  const boats = buildMooredSkiffs(new THREE.Group()), [boat] = boats;
+  const terrain = new WorldHeight(7);
+  const ctx = { bx: 31, bz: 39, vx: 0, vz: 0, speed: 0, residentDt: .05, ob: 0,
+    heightAt: (x,z) => terrain.compute(x,z) };
+  const weather = { daylight: 1, waterLevel: 0, sampleWindAt: () => 3,
+    windDir: new THREE.Vector3(1,0,0), values: {storm: 0} };
+  let time = 0;
+  function until(check, limit) {
+    const stop = time + limit;
+    while (!check() && time < stop) {
+      time += ctx.residentDt;
+      updateMooredSkiffs(boats, time, () => 0, ctx, weather);
+    }
+    assert.ok(check(), 'expected trip event by ' + stop + 's');
+  }
+  until(() => boat.crew.rigging === 'soaking' && boat.anchor.paid === 1, 65);
+  assert.ok(boat.trip.active && boat.lines.every(line => line.coil.visible && !line.mesh.visible));
+  assert.ok(ctx.ob > 0 && boat.anchor.mesh.visible && boat.crew.float.visible);
+  const bottom = boat.anchor.bottom.clone();
+  assert.equal(bottom.y, terrain.compute(bottom.x, bottom.z));
+  assert.ok(boat.mesh.position.distanceTo(new THREE.Vector3(boat.berth.x,0,boat.berth.z)) > 45);
+  assert.ok(Math.hypot(boat.obstacle.ax - boat.mesh.position.x, boat.obstacle.az - boat.mesh.position.z) < 1.5);
+  weather.values.storm = .8;
+  until(() => boats.every(b => b.trip.secured), 90);
+  assert.ok(boat.lines.every(line => line.mesh.visible && !line.coil.visible));
+  assert.equal(boat.anchor.mesh.visible, false);
+  assert.equal(boat.crew.line.visible, false);
+  assert.equal(boat.trip.active, false);
+});

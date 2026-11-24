@@ -2,7 +2,7 @@ import { clampWakeHeight, playerWakeScale, trafficWakeScale, wakeSampleFromPose 
 
 // Enough for every retained powered hull, including all recovery sites, without a texture or another draw pass.
 export const MAX_SURFACE_WAKE_SOURCES = 48;
-const GROUPS = 10;
+const GROUPS = 11;
 export const SURFACE_WAKE_RANGE = 240;
 
 export class VesselWakeSurface {
@@ -44,6 +44,8 @@ export class VesselWakeSurface {
       // These groups mirror wakeHeightAt's limits, including the story director's nested sub-fields. Do not flatten
       // them into one capped sum: that would change the crest which the player actually crosses in a pursuit.
       for (const b of s.traffic?.boats || []) if (b.active && b.kind !== 'canoe') this.add(b.x, b.z, b.heading, b.speed, b.max, trafficWakeScale(b.kind), 0, false, b);
+      const shore = s.world?.waterfront;
+      if (shore?.group.visible) this.agents(shore.fishingTrips, 10, 5.5, 0.095);
       const skiff = s.skiff;
       if (skiff?.active) this.add(skiff.pos.x, skiff.pos.y, skiff.heading, skiff.speed, skiff.maxSpeed, 0.11, 1, true, skiff);
       this.agents(s.encounters?.agents, 2, 12.4, 0.11);
@@ -81,7 +83,7 @@ export class VesselWakeSurface {
     }
     const story = clampWakeHeight(groups[4] + clampWakeHeight(groups[5], 0.24) + clampWakeHeight(groups[6], 0.24) + groups[7], 0.28);
     return clampWakeHeight(clampWakeHeight(groups[0], 0.24) + groups[1] + clampWakeHeight(groups[2], 0.24)
-      + clampWakeHeight(groups[3], 0.24) + story + clampWakeHeight(groups[8], 0.2), 0.34) + groups[9];
+      + clampWakeHeight(groups[3], 0.24) + story + clampWakeHeight(groups[8], 0.2) + clampWakeHeight(groups[10], 0.24), 0.34) + groups[9];
   }
 }
 
@@ -132,6 +134,6 @@ vec3 vesselWakeSample(vec2 p, float t, float spacing) {
   }
   vec3 story = limitVesselWave(groups[4] + limitVesselWave(groups[5], 0.24) + limitVesselWave(groups[6], 0.24) + groups[7], 0.28);
   vec3 received = limitVesselWave(limitVesselWave(groups[0], 0.24) + groups[1] + limitVesselWave(groups[2], 0.24)
-    + limitVesselWave(groups[3], 0.24) + story + limitVesselWave(groups[8], 0.2), 0.34);
+    + limitVesselWave(groups[3], 0.24) + story + limitVesselWave(groups[8], 0.2) + limitVesselWave(groups[10], 0.24), 0.34);
   return (received + groups[9]) * wakeResolutionFade;
 }`;

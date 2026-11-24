@@ -313,7 +313,7 @@ async function init() {
   const playerWater = (x, z, t) => water.waveHeight(x, z, t) + sampleWakeFields(physicalWakeFields, x, z, t);
   const shorebirds = new ShorebirdFlock(terrain, renderProfile.id === 'fallback' ? 4 : 8, (x, z) => world.vegetationBlockedAt(x, z));
   scene.add(shorebirds.mesh);
-  world.fx = { plume, spray, audio, fish: life.fish, playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) };
+  world.fx = { plume, spray, audio, fish: life.fish, boatWaveAt: (x, z, t, receiver) => water.boatWaveHeight(x, z, t, receiver), playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) };
   world.onShot = (x, z) => {
     waders.flushNear(x, z, 140, 'gunshot');
     shorebirds.startleNear(x, z, 140);
@@ -360,9 +360,9 @@ async function init() {
     { id: 'world incident', source: incidents }, { id: 'story craft', source: story }, { id: 'storm recovery', source: aftermath },
   ];
   const outboardMix = { id: '', level: 0, pitch: 1, x: 0, z: 0 };
-  const directedVesselSources = [skiff, encounters, incidents, story, aftermath];
+  const directedVesselSources = [skiff, encounters, incidents, story, aftermath, world];
   physicalWakeFields.push(...directedVesselSources);
-  water.vesselWakes.sources = { traffic: life.traffic, skiff, encounters, incidents, story, aftermath, player: phys };
+  water.vesselWakes.sources = { world, traffic: life.traffic, skiff, encounters, incidents, story, aftermath, player: phys };
   ecology.setDirectedVesselSources(directedVesselSources);
   const directedNavigationLights = new DirectedNavigationLights(scene);
   const discoveries = new FieldDiscoveryDirector({ scene, terrain, world, water, phys, game, audio, environment, regions, life, law, reputation, encounters, incidents, story, aftermath, radio });
