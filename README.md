@@ -15,7 +15,7 @@ The rivers, tree stands, fish camps and dock crews are seeded from world coordin
 </tr>
 <tr>
 <td><img src="docs/screenshots/05-night.jpg" alt="Running the channel after dark with the spotlight on"></td>
-<td><img src="docs/screenshots/07-camp.jpg" alt="A dock worker tending the crab-pot hoist at Mullet Bend"></td>
+<td><img src="docs/screenshots/07-camp.jpg" alt="The fuel landing, crab-pot hoist and fishing cabin at Mullet Bend"></td>
 </tr>
 </table>
 
@@ -46,6 +46,8 @@ The game runs without them. `src/models.js` catches the failed loads and falls b
 The GitHub Pages workflow downloads and verifies this archive before it builds the public game.
 
 The authored [brown pelican](assets/wildlife/README.md) and [great egret](assets/wildlife/great-egret.md) ship with the repository, separately from that archive. Their editable Blender scenes, source images and rebuild scripts are included.
+
+The Mullet Bend landing uses timber from Dekogon's Laguna Dock and two barrels from Meshingun Studio's Decay: Oil Drums District. The third-party artwork in the assembled landing retains its Fab license. The MIT license covers the game code. [Laguna Dock](https://www.fab.com/listings/479edb95-e334-4528-b082-d2ecc2255692) · [Oil Drums District](https://www.fab.com/listings/1ba1866e-ed8b-49b6-86c4-811f8e1fa9ce) · [Fab license](https://www.fab.com/eula)
 
 ## Controls
 
@@ -143,6 +145,13 @@ At Mullet Bend, idle in toward the working dock. The dockhand looks up from the 
 </tr></table>
 
 [Watch the dock crew greet a boat and take cover](docs/screenshots/dock-crew.webp)
+
+Two drums sit on a loading platform beside the Mullet Bend slip. A hand pump feeds the hose hanging between them. Timber duckboards lead uphill from the dock to the cabin's screened serving hatch. [Fuel landing close-up](docs/screenshots/17-fuel-landing.jpg)
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/15-mullet-day.jpg" alt="Mullet Bend from the water on a clear afternoon"></td>
+<td width="50%"><img src="docs/screenshots/16-mullet-rain.jpg" alt="The same approach to Mullet Bend in light rain"></td>
+</tr></table>
 
 Spray leaves the hull along the local water slope and settles at the current tide height. Fish jumps, gator splashes, working-boat wakes and ramp launches rise with surge too. Gusts carry droplets, mist and engine smoke downwind. These effects reuse the existing particle buffers, while the hull shares the five wave samples already used for buoyancy and attitude. Pausing stops the player and chase-skiff spray emitters.
 

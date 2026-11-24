@@ -142,8 +142,8 @@ function dockMaterials() {
   return sharedDockMaterials;
 }
 
-function dockResources(length, width) {
-  const key = `${length}:${width}`;
+function dockResources(length, width, loadingGate) {
+  const key = `${length}:${width}:${loadingGate}`;
   if (dockCache.has(key)) return dockCache.get(key);
   const parts = [], plankParts = [];
   const n = Math.ceil(length / 3);
@@ -155,7 +155,10 @@ function dockResources(length, width) {
   plankParts.push(box(width, 0.12, length + 0.4, 0, 0.75, -length / 2));
   for (const sx of [-1, 1]) {
     for (let i = 0; i <= n * 2; i++) parts.push(box(0.08, 1.0, 0.08, sx * width / 2, 1.25, -(i / (n * 2)) * length));
-    parts.push(box(0.06, 0.06, length, sx * width / 2, 1.75, -length / 2));
+    // The fuel platform joins the port rail between the third and fourth posts.
+    const pitch = length / (n * 2);
+    const spans = loadingGate && sx === -1 ? [[0, 3 * pitch], [4 * pitch, length]] : [[0, length]];
+    for (const [start, end] of spans) parts.push(box(0.06, 0.06, end - start, sx * width / 2, 1.75, -(start + end) / 2));
   }
   const frameGeo = sharedResource(mergeGeometries(parts.map(g => g.toNonIndexed()), false));
   const plankGeo = sharedResource(TEX.scaleTextureUvs(mergeGeometries(plankParts.map(g => g.toNonIndexed()), false), 1, 4));
@@ -208,8 +211,8 @@ function buildDockShelter(width) {
   return shelter;
 }
 
-export function buildDock(length = 14, width = 2.0, { weather = false, shelter = false } = {}) {
-  const { frameGeo, plankGeo, frameMat, plankMat } = dockResources(length, width);
+export function buildDock(length = 14, width = 2.0, { weather = false, shelter = false, loadingGate = false } = {}) {
+  const { frameGeo, plankGeo, frameMat, plankMat } = dockResources(length, width, loadingGate);
   const g = new THREE.Group();
   const a = new THREE.Mesh(frameGeo, frameMat); a.castShadow = true; a.receiveShadow = true;
   const b = new THREE.Mesh(plankGeo, plankMat); b.castShadow = true; b.receiveShadow = true;

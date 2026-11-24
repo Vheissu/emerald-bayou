@@ -35,3 +35,7 @@ Square seamless tileable PBR base-color texture swatch of weathered heavyweight 
 ## Crew complexion
 
 Face albedo reference for a realistic game character. Precisely front-facing orthographic close-up of a fictional 45-year-old South Florida dock worker with medium brown olive skin. Neutral relaxed face, lips closed, eyes looking straight ahead, his ears both visible. Short dark stubble strongest on chin, temples lightly greying, faint crow's feet, sun freckles, fine pore detail and weathered cheek texture. Natural understated features. Bald head for an unobstructed forehead. Perfectly even diffuse cross-polarized studio lighting, flat color, no cast shadows, no nose shadow, no rims or glossy highlights. No clothing visible, frame from just above head to just below chin, symmetric centered head occupying most of the square, plain neutral grey backdrop. High resolution photorealistic game asset reference, no wording, no props or tattoos.
+
+## Painted cypress
+
+An orthographic albedo scan of one broad length of Southern cypress. The grain runs horizontally. Chipped grey-green paint exposes silvery fibres and warm tan wood in the cracks. Use flat light, with no plank gaps, hardware or lettering. The material is cut into weatherboards, a screen door frame and hatch trim at Mullet Bend.

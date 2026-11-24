@@ -272,3 +272,81 @@ export function shack() {
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
+
+// The screen door, bait window and raised duckboards belong to the fishing cabin at Mullet Bend.
+export function dressMulletCabin(sh, terrain) {
+  const painted = material('mullet-painted-cypress', { color: 0xd6d8c8, roughness: 0.88 });
+  if (!painted.map && !painted.userData.textureRequested && globalThis.document?.createElementNS && !globalThis.navigator?.connection?.saveData) {
+    painted.userData.textureRequested = true;
+    new THREE.TextureLoader().load(new URL('../assets/environment/painted-cypress.webp', import.meta.url).href, texture => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.anisotropy = 4;
+      painted.map = texture;
+      painted.needsUpdate = true;
+    });
+  }
+  const trim = geometry('mullet-cabin-joinery', [], () => {
+    const pieces = [];
+    const board = (w, h, d, x, y, z, pitch = 0) => {
+      const part = new THREE.BoxGeometry(w, h, d);
+      const uv = part.attributes.uv, p = part.attributes.position;
+      const offset = pieces.length * 0.173;
+      for (let i = 0; i < uv.count; i++) {
+        const u = h > w ? p.getY(i) : p.getX(i);
+        const v = h > w ? p.getX(i) : p.getY(i);
+        uv.setXY(i, u * 0.83 + offset, (v + p.getZ(i)) * 0.83 + offset * 0.51);
+      }
+      pieces.push(part.rotateX(pitch).translate(x, y, z));
+    };
+    // Lap each weatherboard over the one below. Cut the courses around the
+    // doorway and serving hatch so their reveals remain visible at a grazing angle.
+    for (let i = 0; i < 13; i++) {
+      const y = 2.25 + i * 0.148;
+      const course = (left, right) => board(right - left, 0.15, 0.022, (left + right) / 2, y, 1.662, -0.06);
+      course(0.47, 1.60);
+      if (y < 2.93 || y > 3.75) course(-1.60, -0.47);
+      else { course(-1.60, -1.48); course(-0.54, -0.47); }
+    }
+    // Screen door over the old timber leaf: narrow stiles and a solid kick panel.
+    for (const x of [-0.43, 0.43]) board(0.082, 1.81, 0.084, x, 3.08, 1.715);
+    for (const y of [2.21, 2.73, 3.08, 3.96]) board(0.84, 0.064, 0.085, 0, y, 1.72);
+    for (let i = 0; i < 5; i++) board(0.156, 0.46, 0.04, (i - 2) * 0.159, 2.47, 1.72);
+    // Shutter propped over the serving hatch; its stay runs to the sill.
+    for (const x of [-1.45, -0.57]) board(0.073, 0.79, 0.082, x, 3.35, 1.70);
+    board(1.02, 0.082, 0.22, -1.01, 2.95, 1.74);
+    board(0.97, 0.07, 0.075, -1.01, 3.77, 1.72);
+    for (let i = 0; i < 6; i++) {
+      const run = i * 0.115;
+      board(1.02, 0.038, 0.12, -1.01, 3.78 - run * 0.38, 1.73 + run, 0.36);
+    }
+    board(0.029, 0.63, 0.033, -1.42, 3.29, 2.02, 0.96);
+    for (const x of [-1.62, 1.62]) board(0.117, 1.89, 0.08, x, 3.14, 1.69);
+    board(4.18, 0.115, 0.065, 0, 3.98, 2.76);
+    const merged = mergeGeometries(pieces);
+    for (const piece of pieces) piece.dispose();
+    return merged;
+  });
+  sh.add(new THREE.Mesh(trim, painted));
+  const flyscreen = material('mullet-screen', { color: 0x2d3834, roughness: 0.79, metalness: 0.22 });
+  const screen = new THREE.Mesh(boxGeometry(0.84, 0.73, 0.034), flyscreen);
+  screen.position.set(-1.01, 3.35, 1.675);
+  const doorScreen = new THREE.Mesh(boxGeometry(0.8, 1.19, 0.02), flyscreen);
+  doorScreen.position.set(0, 3.32, 1.713);
+  sh.add(screen, doorScreen);
+
+  // Join the last stair to the bank. Use the local terrain sample for each sleeper
+  // so the approach follows the slope without burying the boards in the mud.
+  const parts = [], point = new THREE.Vector3();
+  for (let i = 0; i < 13; i++) {
+    const z = 3.91 + i * 0.245;
+    sh.localToWorld(point.set(0, 0, z));
+    const y = terrain.heightAt(point.x, point.z) - sh.position.y + 0.075;
+    parts.push(new THREE.BoxGeometry(0.98 + 0.035 * Math.sin(i * 2.4), 0.13, 0.237)
+      .rotateY(0.012 * Math.sin(i * 1.79)).translate(0, y, z));
+  }
+  const approach = new THREE.Mesh(mergeGeometries(parts), material('mullet-duckboards', { map: plank(), color: 0xe1c6a5, roughness: 0.89 }));
+  approach.name = 'Cabin duckboards';
+  sh.add(approach);
+  for (const part of parts) part.dispose();
+}

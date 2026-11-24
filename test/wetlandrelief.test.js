@@ -23,6 +23,12 @@ test('charted camps and homesteads keep their seeded positions and sit on the sc
   assert.equal(camp.name, 'Mullet Bend');
   assert.ok(Math.abs(camp.x + 572.5501) < 0.001 && Math.abs(camp.z - 1055.2708) < 0.001);
   assert.equal(camp.h, hf.compute(camp.x, camp.z));
+  assert.ok(camp.h > 1 && camp.h < 1.5, 'the cabin should sit on its graded bank');
+  for (const x of [-1.6, 1.6]) for (const z of [-1.6, 2.15]) {
+    const yaw = Math.atan2(camp.tie.x - camp.x, camp.tie.z - camp.z);
+    const ground = hf.compute(camp.x + x * Math.cos(yaw) + z * Math.sin(yaw), camp.z - x * Math.sin(yaw) + z * Math.cos(yaw));
+    assert.ok(ground >= camp.h - 0.78, 'a cabin pile must reach the bank');
+  }
   assert.ok(hf.compute(camp.tie.x, camp.tie.z) < -1);
   const house = world.siteAt(-1, 1);
   assert.equal(house.kind, 'house');

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise.js';
-import { shack, crabFloat, fuelDrum } from './markers.js';
+import { shack, crabFloat, fuelDrum, dressMulletCabin } from './markers.js';
 import { buildDock, positionDockShelter } from './tower.js';
 import { buildSkiff } from './npc.js';
 import { HOME_X, HOME_Z, WORLD_HALF } from './heightfield.js';
@@ -12,6 +12,7 @@ import { buildCampWork, poseCampWorker, updateCampWork } from './campwork.js';
 import { updateDockWeather } from './dockweather.js';
 import { buildRoofDrain, updateRoofDrain } from './roofdrain.js';
 import { attachLandingResident, updateDockResidents } from './dockresidents.js';
+import { buildMulletFuelLanding, mulletFuelColliders, MULLET_BEND_KEY } from './mulletlanding.js';
 
 // The things scattered through the endless bayou: fish camps on the channel banks (one per ~1.6 km cell, seeded, so
 // they are the same for everyone every time) and lost crab-trap floats drifting in the back pools. Everything is
@@ -114,11 +115,13 @@ export class World {
   buildCamp(c) {
     const g = new THREE.Group(); g.name = 'camp';
     const T = this.T;
+    const mulletBend = c.key === MULLET_BEND_KEY;
     const sh = shack(); sh.position.set(c.x, c.h - 0.3, c.z); sh.rotation.y = Math.atan2(c.tie.x - c.x, c.tie.z - c.z); g.add(sh);
+    if (mulletBend) dressMulletCabin(sh, T);
     g.userData.roofDrain = buildRoofDrain(sh);
     g.userData.porchLamp = sh.localToWorld(sh.userData.lampPosition.clone());
     // dock from the bank out over the water toward the tie-up
-    const dock = buildDock(14, 1.8, { weather: true, shelter: true });
+    const dock = buildDock(14, 1.8, { weather: true, shelter: true, loadingGate: mulletBend });
     const dx = c.tie.x - c.bank.x, dz = c.tie.z - c.bank.z; const l = Math.hypot(dx, dz);
     dock.position.set(c.bank.x, 0, c.bank.z); dock.rotation.y = Math.atan2(dx / l, dz / l) + Math.PI; g.add(dock);
     const dockShelter = positionDockShelter(dock, T);
@@ -127,7 +130,15 @@ export class World {
     const skiff = buildSkiff({ crew: false }); const side = rr() < 0.5 ? -1 : 1;
     const sx = c.bank.x + dx / l * 9 + (-dz / l) * side * 2.4, sz = c.bank.z + dz / l * 9 + (dx / l) * side * 2.4;
     skiff.position.set(sx, -0.05, sz); skiff.rotation.y = Math.atan2(dx / l, dz / l) + (rr() - 0.5) * 0.4; skiff.rotation.order = 'YXZ'; g.add(skiff); g.userData.skiff = skiff; g.userData.skiffWater = { x: sx, z: sz, heading: skiff.rotation.y };
-    for (let i = 0; i < 2 + Math.floor(rr() * 3); i++) { const d = fuelDrum(); const a = c.ang + (rr() - 0.5) * 1.6, r = 4 + rr() * 5; const px = c.x + Math.cos(a) * r, pz = c.z + Math.sin(a) * r; d.position.set(px, T.heightAt(px, pz) - 0.05, pz); d.rotation.y = rr() * 6; g.add(d); }
+    const platformDrums = mulletBend ? [] : null;
+    for (let i = 0; i < 2 + Math.floor(rr() * 3); i++) {
+      const d = fuelDrum();
+      const a = c.ang + (rr() - 0.5) * 1.6, r = 4 + rr() * 5;
+      const px = c.x + Math.cos(a) * r, pz = c.z + Math.sin(a) * r;
+      d.position.set(px, T.heightAt(px, pz) - 0.05, pz); d.rotation.y = rr() * 6; g.add(d);
+      if (platformDrums && i < 2) platformDrums.push(d);
+    }
+    if (platformDrums) g.userData.mulletFuelLanding = buildMulletFuelLanding(dock, platformDrums);
     for (let i = 0; i < 3; i++) { const f = crabFloat(); const a = rr() * 6.28, r = 2 + rr() * 3; const px = c.x + Math.cos(a) * r, pz = c.z + Math.sin(a) * r; f.position.set(px, T.heightAt(px, pz) + 0.1, pz); f.rotation.z = 1.2; f.rotation.y = rr() * 6; g.add(f); }
     // A spreading live oak shades the shack. Preserve the seed order for crews and other props.
     if (rr() < 0.7) {
@@ -217,7 +228,9 @@ export class World {
   }
   campColliders(c) {
     const dx = c.tie.x - c.bank.x, dz = c.tie.z - c.bank.z, l = Math.hypot(dx, dz) || 1;
-    return [{ ax: c.bank.x, az: c.bank.z, bx: c.bank.x + dx / l * 14, bz: c.bank.z + dz / l * 14, r: 1.1, tag: 'dock' }, { x: c.x, z: c.z, r: 2.6, tag: 'house' }];
+    const colliders = [{ ax: c.bank.x, az: c.bank.z, bx: c.bank.x + dx / l * 14, bz: c.bank.z + dz / l * 14, r: 1.1, tag: 'dock' }, { x: c.x, z: c.z, r: 2.6, tag: 'house' }];
+    if (c.key === MULLET_BEND_KEY) colliders.push(...mulletFuelColliders(c));
+    return colliders;
   }
   // ---- lost traps ----
   trapAt(ci, cj) {

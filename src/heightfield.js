@@ -194,6 +194,15 @@ export class WorldHeight {
       // Leave a low shelf where the channel meets the bank; the taller shoulders sit inland.
       relief *= 1 - smooth(0, 0.16, s);
     }
+    // The cabin at Mullet Bend occupies a graded piece of the old floodplain.
+    // Feather its shoulders back into the natural ridge before the next bend.
+    if (this.seed === 7 && h > 0 && Math.abs(x + 572.55) < 22 && Math.abs(z - 1055.27) < 22) {
+      const dx = x + 572.55, dz = z - 1055.27;
+      const apron = 1 - smooth(7.5, 22, Math.hypot(dx, dz));
+      const towardDock = dx * 0.944 - dz * 0.331;
+      const grade = 1.28 - 0.58 * smooth(3.5, 7, towardDock);
+      relief -= apron * (relief + Math.max(0, h - grade));
+    }
     if (dHome < 900) {
       // island for the tower
       const di = Math.hypot(x - this.island.x, z - this.island.y) + 4 * sx.noise(x * 0.05, z * 0.05 + 2);

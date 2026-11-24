@@ -70,6 +70,25 @@ test('working wharves reuse seeded mesh resources and animate an actual wet load
   }
 });
 
+test('the fuel platform has its own hull contact and leaves the Mullet Bend berth clear', () => {
+  const world = new World({ hf: new WorldHeight(7) }, null, null);
+  const site = world.campAt(-1, 0);
+  const [pier, house, ...platform] = world.campColliders(site);
+  assert.equal(pier.tag, 'dock');
+  assert.equal(house.tag, 'house');
+  assert.equal(platform.length, 2);
+  const yaw = Math.atan2(site.tie.x - site.bank.x, site.tie.z - site.bank.z) + Math.PI;
+  const dockPoint = (x, z) => new THREE.Vector3(x, 0, z)
+    .applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw).add(new THREE.Vector3(site.bank.x, 0, site.bank.z));
+  const distance = (point, cap) => {
+    const axis = new THREE.Line3(new THREE.Vector3(cap.ax, 0, cap.az), new THREE.Vector3(cap.bx, 0, cap.bz));
+    return axis.closestPointToPoint(point, true, new THREE.Vector3()).distanceTo(point) - cap.r;
+  };
+  for (const x of [-2.9, -1.3]) assert.ok(platform.some(cap => distance(dockPoint(x, -4.9), cap) < 0));
+  for (const cap of platform) assert.ok(distance(dockPoint(-2.4, -9), cap) > 2.7);
+  assert.equal(world.campColliders(world.campAt(0, 0)).length, 2);
+});
+
 test('porch barrels catch local rain, keep dripping after it clears and pause with the game', async () => {
   const { buildRoofDrain, updateRoofDrain } = await import('../src/roofdrain.js');
   const a = buildRoofDrain(new THREE.Group()), b = buildRoofDrain(new THREE.Group());
