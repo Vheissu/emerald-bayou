@@ -7,6 +7,7 @@ import { animateSite } from './sites.js';
 import { cageMesh, loadPaintedCypress, plank, scaleTextureUvs } from './textures.js';
 import { addBeam, addBox, tintGeometry, waterfrontMesh, waterfrontSurface } from './waterfrontgeometry.js';
 import { buildGulfCutBridge, placeFabFenders, updateGulfCutBridge } from './waterfrontbridge.js';
+import { buildMooredSkiffs, updateMooredSkiffs } from './mooredskiffs.js';
 import { COVE, FISHING_PIERS, GULF_CUT, WATERFRONT_HOUSES, swimmerStep } from './waterfrontlayout.js';
 
 const cabin = waterfrontSurface(0xffffff);
@@ -434,7 +435,8 @@ export function buildWaterfront(terrain, vegetation) {
       house.add(wall);
     }
   });
-  return { group, bridge, cove, laundry };
+  const mooredSkiffs = buildMooredSkiffs(group);
+  return { group, bridge, cove, laundry, mooredSkiffs, mooringColliders: mooredSkiffs.map(boat => boat.obstacle) };
 }
 
 function updateSwimmer(s, dt, terrain, time, waveAt, ctx, weather) {
@@ -487,9 +489,10 @@ function updateSwimmer(s, dt, terrain, time, waveAt, ctx, weather) {
 export function updateWaterfront(waterfront, terrain, time, waveAt, wind, ctx, environment) {
   if (!waterfront.group.visible) return;
   const distZ = ctx.bz - GULF_CUT.z;
-  if (distZ * distZ + ctx.bx * ctx.bx < 610 ** 2) updateGulfCutBridge(waterfront.bridge, time, environment?.night ?? 0);
+  if (distZ * distZ + ctx.bx * ctx.bx < 610 ** 2) updateGulfCutBridge(waterfront.bridge, time, environment?.night ?? 0, environment);
   if ((ctx.bx - COVE.x) ** 2 + (ctx.bz - COVE.z) ** 2 > 205 ** 2) return;
   glass.emissiveIntensity = (environment?.night ?? 0) * 0.44;
+  updateMooredSkiffs(waterfront.mooredSkiffs, time, waveAt, ctx, environment);
   for (const [i, cloth] of waterfront.laundry.entries()) {
     const gust = (wind?.y ?? 0.6) * 0.19;
     cloth.rotation.set(Math.sin(time * 2.3 + i * 2.1) * gust, Math.PI / 2, Math.sin(time * 3.4 + i) * gust * 0.48);

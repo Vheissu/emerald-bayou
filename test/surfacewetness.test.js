@@ -5,7 +5,7 @@ import { Environment } from '../src/environment.js';
 import { Terrain } from '../src/terrain.js';
 import {
   normalizeSurfaceWetness, registerWetMaterial, setGlobalSurfaceWetness, surfaceWetMaterialStats,
-  surfaceWetnessStep, surfaceWetnessTarget, terrainWetFilm, unregisterWetMaterial,
+  surfaceWetnessStep, surfaceWetnessTarget, terrainWetFilm, tidalBankStep, unregisterWetMaterial,
 } from '../src/surfacewetness.js';
 
 test('rain, hail and night fog leave different amounts of surface moisture', () => {
@@ -34,9 +34,23 @@ test('surfaces wet quickly, dry slowly and ignore a paused frame', () => {
 
 test('the terrain wet film favours level surfaces and the tidal edge', () => {
   assert.equal(terrainWetFilm(1, 0.1, 0.3, 0), 0);
-  assert.ok(terrainWetFilm(0, 1, 0.2, 0) > 0.3);
+  assert.ok(terrainWetFilm(0, 1, 0.1, 0) > 0.3);
   assert.equal(terrainWetFilm(0, 1, 2, 0), 0);
   assert.ok(terrainWetFilm(0.8, 1, 2, 0) > 0.79);
+});
+
+test('a falling tide exposes damp sediment which dries from the upper edge down', () => {
+  assert.equal(tidalBankStep(undefined, -0.23, 0), -0.23);
+  assert.equal(tidalBankStep(-0.23, 0.45, 1), 0.45);
+  assert.equal(tidalBankStep(0.45, -0.23, 0), 0.45);
+  const breeze = tidalBankStep(0.45, -0.23, 55, 1);
+  const shade = tidalBankStep(0.45, -0.23, 55, 0);
+  assert.ok(breeze < shade && shade < 0.45 && breeze > -0.23);
+  const bank = 0.23, ebb = -0.23;
+  assert.ok(terrainWetFilm(0, 0.98, bank, ebb, shade) > 0.35);
+  assert.equal(terrainWetFilm(0, 0.98, bank, ebb), 0);
+  assert.equal(terrainWetFilm(0, 0.98, 1.75, ebb, shade), 0);
+  assert.ok(terrainWetFilm(0, 1, 0.32, ebb, shade, 0.2) > terrainWetFilm(0, 1, 0.32, ebb, shade, 0.8));
 });
 
 test('shared outdoor materials stay reusable and do not trigger shader recompiles', () => {
@@ -65,7 +79,7 @@ test('shared outdoor materials stay reusable and do not trigger shader recompile
   material.dispose();
 });
 
-test('terrain moisture uses two retained uniforms in the existing material program', () => {
+test('terrain moisture retains the recent tide in the existing material program', () => {
   const terrain = Object.assign(Object.create(Terrain.prototype), {
     group: new THREE.Group(), surfaceWetness: 0.64, surfaceWaterLevel: 0.31, uniforms: null,
   });
@@ -81,15 +95,20 @@ test('terrain moisture uses two retained uniforms in the existing material progr
   assert.equal(shader.uniforms.uSurfaceWetness.value, 0.64);
   assert.equal(shader.uniforms.uWaterLevel.value, 0.31);
   assert.match(shader.vertexShader, /vWorldUp/);
-  assert.match(shader.fragmentShader, /shorelineDamp/);
+  assert.equal(shader.uniforms.uRecentWaterLevel.value, 0.31);
+  assert.match(shader.fragmentShader, /recentReach/);
   assert.match(shader.fragmentShader, /roughnessFactor = mix/);
-  assert.equal(terrain.material.customProgramCacheKey(), 'terrain-wet-v1');
+  assert.equal(terrain.material.customProgramCacheKey(), 'terrain-tidal-bank');
 
   const uniforms = terrain.uniforms;
   terrain.setSurfaceWetness(0.8, 0.4);
   assert.equal(terrain.uniforms, uniforms);
   assert.equal(uniforms.uSurfaceWetness.value, 0.8);
   assert.equal(uniforms.uWaterLevel.value, 0.4);
+  assert.equal(uniforms.uRecentWaterLevel.value, 0.4);
+  terrain.setSurfaceWetness(0, -0.12, 0);
+  assert.equal(uniforms.uWaterLevel.value, -0.12);
+  assert.equal(uniforms.uRecentWaterLevel.value, 0.4);
 
   terrain.material.dispose();
   Object.values(textures).forEach(texture => texture.dispose());

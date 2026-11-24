@@ -321,6 +321,26 @@ export class EngineAudio {
       const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol, now + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, now + 0.12); o.connect(g); g.connect(destination); o.start(now); o.stop(now + 0.14); tail = o; }
     this.releaseSpatialDestination(destination, tail);
   }
+  willetCall(x, z) {
+    const distance = Math.hypot(x - this.listenerX, z - this.listenerZ);
+    if (!this.ctx || distance > 65) return;
+    const ctx = this.ctx, start = ctx.currentTime, voice = ctx.createOscillator(), gain = ctx.createGain();
+    const level = 0.075 * (1 - distance / 72);
+    const destination = this.spatialDestination(x, z, 0.94);
+    voice.type = 'sine';
+    for (const delay of [0, 0.16]) {
+      const t = start + delay, pitch = delay ? 1590 : 1870;
+      voice.frequency.setValueAtTime(pitch, t);
+      voice.frequency.exponentialRampToValueAtTime(pitch * 1.21, t + 0.033);
+      voice.frequency.exponentialRampToValueAtTime(pitch * 0.82, t + 0.128);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(level, t + 0.023);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.135);
+    }
+    voice.connect(gain); gain.connect(destination);
+    this.releaseSpatialDestination(destination, voice);
+    voice.start(start); voice.stop(start + 0.31);
+  }
   // heron / egret flushed off the flat: a harsh croak
   squawk(vol = 0.25, x, z) {
     if (!this.ctx || vol < 0.02) return; const ctx = this.ctx, now = ctx.currentTime;

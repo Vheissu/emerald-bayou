@@ -1,3 +1,4 @@
+import { gulfCutApproachHeight } from './gulfcutgrade.js';
 // The world's height function. Pure maths, no three.js, so the same module runs in the terrain workers and on the
 // main thread (physics, wildlife, mission placement) and every consumer sees exactly the same ground.
 //
@@ -222,7 +223,10 @@ export class WorldHeight {
     if (bh > h) h = bh + 0.08 * this.sx.noise(x * 0.4, z * 0.4);
     return h;
   }
-  compute(x, z) { return this.withSandbars(x, z, this.computeBase(x, z).h); }
+  compute(x, z) {
+    const height = this.withSandbars(x, z, this.computeBase(x, z).h);
+    return this.seed === 7 ? gulfCutApproachHeight(x, z, height) : height;
+  }
   // Existing camp and homestead keys were seeded from this floodplain. Use it to find their
   // sites, then seat the structures on the finished terrain at those coordinates.
   settlementHeight(x, z) { return this.withSandbars(x, z, this.computeBase(x, z).floodplainHeight); }

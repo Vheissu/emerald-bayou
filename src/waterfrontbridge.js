@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { bridgeDeckAt, bridgeOverheadAt, bridgeZAt, GULF_CUT } from './waterfrontlayout.js';
 import { addBeam, addBox, tintGeometry, waterfrontMesh, waterfrontSurface } from './waterfrontgeometry.js';
 import { noiseTex, scaleTextureUvs } from './textures.js';
+import { buildBridgeTraffic, moveBridgeTraffic } from './bridgetraffic.js';
 
 const concrete = waterfrontSurface(0xffffff, { bumpScale: 0.036 });
 const asphalt = waterfrontSurface(0xffffff, { roughness: 0.94 });
@@ -48,25 +49,6 @@ function addBent(batch, x) {
   }
 }
 
-function buildCar(color, delivery) {
-  const body = [], details = [], runningLights = [];
-  const length = delivery ? 5.65 : 4.3;
-  addBox(body, color, length, 0.45, 1.9, 0, 0.61, 0);
-  addBox(body, color, delivery ? 3.04 : 2.17, delivery ? 1.14 : 0.11, 1.66, delivery ? -0.82 : 0, delivery ? 1.34 : 1.22, 0);
-  addBox(details, 0x293438, delivery ? 1.43 : 2.06, 0.44, 1.62, delivery ? 1.68 : -0.14, 0.99, 0);
-  for (const x of [-length * 0.33, length * 0.34]) for (const z of [-0.92, 0.92]) {
-    const geometry = new THREE.CylinderGeometry(0.33, 0.33, 0.14, 12).rotateX(Math.PI / 2).translate(x, 0.33, z);
-    tintGeometry(details, geometry, 0x212322);
-  }
-  for (const z of [-0.65, 0.65]) {
-    addBox(runningLights, 0xffe5ac, 0.045, 0.13, 0.24, length / 2, 0.68, z);
-    addBox(runningLights, 0xdb472d, 0.048, 0.12, 0.24, -length / 2, 0.68, z);
-  }
-  const g = new THREE.Group();
-  g.add(waterfrontMesh(body, asphalt), waterfrontMesh(details, galvanized), waterfrontMesh(runningLights, lamp, false));
-  return g;
-}
-
 export function buildGulfCutBridge(terrain) {
   concrete.bumpMap ??= noiseTex();
   const group = new THREE.Group();
@@ -94,9 +76,26 @@ export function buildGulfCutBridge(terrain) {
       pavedStrip(road, x, Math.min(east, x + 4.4), 0.1, side * 0.095, 0xb19c56, p => bridgeDeckAt(p) + 0.027);
     }
   }
-  // The dirt shoulders disappear into the wooded bank on both sides of the crossing.
-  for (const [from, to] of [[west - 19, west], [east - 6, east + 20]]) {
-    pavedStrip(road, from, to, 7.5, 0, 0x696862, (x, z) => Math.max(roadY(x), terrain.hf.compute(x, z) + 0.075));
+  // Continuous blacktop and expansion joints carry traffic onto the approaches.
+  for (const [from, to] of [[west - 10, west], [east, east + 17]]) {
+    pavedStrip(road, from, to, 8.22, 0, 0x78786d, (x, z) => Math.max(roadY(x) - 0.025, terrain.hf.compute(x, z) + 0.025));
+    pavedStrip(road, from, to, 7.48, 0, 0x555b57, roadY);
+    for (const side of [-1, 1]) {
+      pavedStrip(road, from, to, 0.085, side * 3.47, 0xb4b39d, x => roadY(x) + 0.013);
+      const nearDeck = from < west ? to : from;
+      const shoulder = from < west ? from + 1.2 : to - 3.2;
+      addBeam(metal, 0x868d88, deckPoint(nearDeck, 0.59, side * 4.07), deckPoint(shoulder, 0.59, side * 4.07), 0.105, 0.19);
+      for (let x = from + 2; x < to - 1; x += 3.1) {
+        addBox(metal, 0x93968f, 0.11, 0.70, 0.11, x, bridgeDeckAt(x) + 0.32, bridgeZAt(x) + side * 4.08);
+      }
+    }
+  }
+  for (const x of [west, -58, -22, 19, 57, 95, east]) {
+    pavedStrip(road, x - 0.059, x + 0.059, 7.83, 0, 0x343936, p => roadY(p) + 0.009);
+    // Black elastomer pads are visible between the cap and the steel girders.
+    if (piers.includes(x)) for (const lateral of [-3, 0, 3]) {
+      addBox(structure, 0x424542, 0.79, 0.12, 0.83, x, bridgeDeckAt(x) - 1.07, bridgeZAt(x) + lateral);
+    }
   }
   for (const x of piers) addBent(structure, x);
   for (const x of [west, east - 5]) {
@@ -146,30 +145,14 @@ export function buildGulfCutBridge(terrain) {
   fenderGeometry.name = 'Pilot channel fender fallback';
   group.add(waterfrontMesh(structure, concrete), waterfrontMesh(road, asphalt, false), waterfrontMesh(metal, galvanized),
     fenderGeometry, waterfrontMesh(lights, lamp, false), waterfrontMesh(red, signalRed, false), waterfrontMesh(green, signalGreen, false));
-  const vehicles = [
-    { model: buildCar(0xb6b9a5, true), speed: 10.5, start: 0, direction: 1 },
-    { model: buildCar(0x657c7a, false), speed: 13.2, start: 108, direction: 1 },
-    { model: buildCar(0x8a4e3e, false), speed: 12.6, start: 64, direction: -1 },
-    { model: buildCar(0x444b4a, false), speed: 12.6, start: 153, direction: -1 },
-  ];
-  for (const car of vehicles) group.add(car.model);
-  return { group, vehicles };
+  return { group, vehicles: buildBridgeTraffic(group) };
 }
 
-export function updateGulfCutBridge(bridge, time, night) {
+export function updateGulfCutBridge(bridge, time, night, environment = {}) {
   lamp.emissiveIntensity = night * 1.7;
   signalRed.emissiveIntensity = 0.25 + night * 1.9;
   signalGreen.emissiveIntensity = signalRed.emissiveIntensity;
-  for (const { model, speed, start, direction } of bridge.vehicles) {
-    // Each car clears the end of the raised span before the next one enters.
-    const distance = (time * speed + start) % 264;
-    const x = direction > 0 ? west + distance : east - distance;
-    model.visible = x > -89 && x < 129;
-    model.position.set(x, bridgeDeckAt(x) + 0.02, bridgeZAt(x) + direction * 1.89);
-    const slope = (bridgeDeckAt(x + 0.4) - bridgeDeckAt(x - 0.4)) / 0.8;
-    const bend = (bridgeZAt(x + 0.4) - bridgeZAt(x - 0.4)) / 0.8;
-    model.rotation.set(0, -Math.atan(bend) + (direction < 0 ? Math.PI : 0), direction * Math.atan(slope), 'YXZ');
-  }
+  moveBridgeTraffic(bridge, time, night, environment);
 }
 
 export function placeFabFenders(group, source) {

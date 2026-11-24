@@ -1,3 +1,4 @@
+import { buildTidalWrack, onGulfCutFlat } from './tidalflat.js';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as TEX from './textures.js';
@@ -587,7 +588,7 @@ export class Vegetation {
   }
   excluded(x, z) {
     for (const e of this.exclusions) if (Math.hypot(x - e.x, z - e.z) < e.r) return true;
-    if (this.blocked && this.blocked(x, z)) return true; // camps, houses, ramps out in the wild (set by main once the world exists)
+    if (onGulfCutFlat(x, z) || (this.blocked && this.blocked(x, z))) return true; // camps, houses, ramps out in the wild (set by main once the world exists)
     return false;
   }
 
@@ -618,6 +619,7 @@ export class Vegetation {
       yield;
     }
     for (const mesh of this.buildSolidMeshes(chunk, bounds)) g.add(mesh);
+    for (const mesh of buildTidalWrack(chunk, originX, originZ)) g.add(mesh);
     chunk.solidGrassRevision = this.solidRevision;
     chunk.veg = g;
   }

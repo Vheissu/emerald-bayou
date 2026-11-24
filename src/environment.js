@@ -920,7 +920,9 @@ export class Environment {
     const daylight = smooth(-0.08, 0.16, sunY), night = 1 - smooth(-0.04, 0.18, sunY);
     this.daylight = daylight; this.night = night;
     this.surfaceWetness = surfaceWetnessStep(this.surfaceWetness, V.rain, V.hail, V.fog, daylight, V.wind * this.gust, V.storm, step);
-    setGlobalSurfaceWetness(this.surfaceWetness); this.terrain.setSurfaceWetness(this.surfaceWetness, this.waterLevel);
+    const soilDrying = (0.78 * daylight + 0.22 * clamp(V.wind * this.gust / 18)) * (1 - 0.9 * this.surfaceWetness);
+    setGlobalSurfaceWetness(this.surfaceWetness);
+    this.terrain.setSurfaceWetness(this.surfaceWetness, this.waterLevel, step, soilDrying);
     const horizon = 1 - smooth(0.04, 0.52, Math.max(0, sunY));
     // Under a dense rain core the cloud deck becomes the light source. Away from
     // it, sun can still reach the hull and pick out the dry side of the channel.

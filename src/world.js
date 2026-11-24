@@ -284,8 +284,13 @@ export class World {
       if (this.waterfront) {
         this.waterfront.group.visible = nearWaterfront;
         if (this.phys) {
-          if (nearWaterfront && !this.phys.dyn.has('waterfront')) this.phys.addObs('waterfront', waterfrontColliders);
-          else if (!nearWaterfront) this.phys.removeObs('waterfront');
+          if (nearWaterfront && !this.phys.dyn.has('waterfront')) {
+            this.phys.addObs('waterfront', waterfrontColliders);
+            this.phys.addObs('waterfront-moorings', this.waterfront.mooringColliders);
+          } else if (!nearWaterfront) {
+            this.phys.removeObs('waterfront');
+            this.phys.removeObs('waterfront-moorings');
+          }
         }
       }
       const camps = this.campsNear(bx, bz, 1500);

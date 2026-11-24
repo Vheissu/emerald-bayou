@@ -19,6 +19,18 @@ export const FISHING_PIERS = [
   { x: -23.5, head: -9.4, z: -0.9, deck: 0.82 },
 ];
 
+// Keep the tied boats on the outside of the two piers, away from the swim cove.
+export const MOORING_TRAVEL = Object.freeze({ end: 0.38, inward: 0.16, outward: 0.36, yaw: 0.09 });
+export const COVE_MOORINGS = FISHING_PIERS.map((pier, i) => {
+  const side = i === 0 ? 1 : -1;
+  return { pier, side, x: pier.head - 2.11, z: pier.z + side * 2.8, tint: i === 0 ? 0x4f766f : 0x96a09a };
+});
+
+// The chart and NPC placement reserve the full sweep. Player physics follows each live hull.
+export const mooringClearance = COVE_MOORINGS.map(({ x, z }) => ({
+  ax: x - 1.65 - MOORING_TRAVEL.end, az: z, bx: x + 1.62 + MOORING_TRAVEL.end, bz: z, r: 1.27, tag: 'tied skiff',
+}));
+
 export function bridgeZAt(x) { return GULF_CUT.z + 0.00036 * (x - GULF_CUT.x) ** 2; }
 
 export function bridgeDeckAt(x) {
@@ -56,12 +68,16 @@ export function waterfrontGroundOccupied(x, z) {
 }
 
 export function waterfrontWaterOccupied(x, z) {
-  if (x < -105 || x > 139 || z < -69 || z > 34) return false;
+  if (x < -105 || x > 139 || z < -69 || z > 35) return false;
   if (x > -25 && x < -9 && z > 4 && z < 20) return true;
   for (const { ax, az, bx, bz, r } of waterfrontColliders) {
     const dx = bx - ax, dz = bz - az;
     const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
     if ((x - ax - t * dx) ** 2 + (z - az - t * dz) ** 2 < (r + 1.4) ** 2) return true;
+  }
+  for (const { ax, bx, az, r } of mooringClearance) {
+    const dx = x - Math.max(ax, Math.min(bx, x));
+    if (dx * dx + (z - az) ** 2 < (r + 1.4) ** 2) return true;
   }
   return false;
 }

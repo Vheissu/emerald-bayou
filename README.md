@@ -28,6 +28,20 @@ The highway crosses the home channel just south of the starting berth. Red and g
 <td width="50%"><img src="docs/screenshots/19-swim-cove.jpg" alt="Swimmers off the fishing piers in Gulf Cut"></td>
 </tr></table>
 
+Two skiffs lie tied outside the fishing piers. Idle past and the lines hang slack. A close wake rolls the hulls against their fenders and pulls the lines tight. Up on the bridge, a delivery van, a pickup and two sedans slow in rain and switch on their lights as visibility drops.
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/23-cove-mooring.jpg" alt="A skiff tied bow and stern at the fishing pier"></td>
+<td width="50%"><img src="docs/screenshots/24-gulf-cut-dusk.jpg" alt="Traffic crosses Gulf Cut above the airboat at dusk"></td>
+</tr></table>
+
+On the east bank, look for shells and broken reeds along the high-water line. The falling tide leaves a dark strip of mud that dries in sun and wind. Willets follow the water downhill to feed. Sound the horn nearby and the first bird calls as it lifts, with the others following it along the bank.
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/25-tidal-bank.jpg" alt="The wet band below the stilt houses as the tide recedes"></td>
+<td width="50%"><img src="docs/screenshots/26-shorebirds.jpg" alt="Willets foraging on the exposed mud below Gulf Cut Bridge"></td>
+</tr></table>
+
 ## Races and boat parts
 
 Open **M → Races** to enter the North Reach Sprint, the two-lap Tower Circuit or the solo Red Bend Time Trial. The two head-to-head courses pay for second place as well as first. After a finish, **Return to dock** takes you back to the tower to spend your purse. There’s enough in a $155 second-place sprint finish to fit the $145 deep rudder blades.

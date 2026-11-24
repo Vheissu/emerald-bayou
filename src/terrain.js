@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { cacheStaticWorldTransforms } from './scenetransforms.js';
 import { WorldHeight, WORLD_HALF, HOME_X, HOME_Z } from './heightfield.js';
+import { tidalBankStep } from './surfacewetness.js';
 
 export { WORLD_HALF, HOME_X, HOME_Z };
 export const MAP_SIZE = WORLD_HALF * 2;
@@ -78,6 +79,11 @@ class Chunk {
     if (j < 0) j = 0; else if (j > n - 1) j = n - 1;
     const tx = Math.max(0, Math.min(1, fx - i)), tz = Math.max(0, Math.min(1, fz - j));
     const w = n + 1, a = arr[j * w + i], b = arr[j * w + i + 1], c = arr[(j + 1) * w + i], d = arr[(j + 1) * w + i + 1];
+    // Follow the rendered diagonal between b and c so small feet and shells
+    // meet the drawn bank even on the warped cells at the waterline.
+    if (arr === this.h) return tx + tz <= 1
+      ? a + (b - a) * tx + (c - a) * tz
+      : d + (c - d) * (1 - tx) + (b - d) * (1 - tz);
     return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz;
   }
 }
@@ -103,7 +109,7 @@ export class Terrain {
     this.stats = { chunks: 0, visible: 0, inFlight: 0 };
     this.finalizerTiming = { steps: 0, totalStepMs: 0, maxStepMs: 0, longSteps: 0, lastStepMs: 0 };
     this.indices = new Map();
-    this.surfaceWetness = 0; this.surfaceWaterLevel = 0;
+    this.surfaceWetness = 0; this.surfaceWaterLevel = 0; this.recentWaterLevel = undefined;
   }
   // ---- queries ----
   heightAt(x, z) {
@@ -161,6 +167,7 @@ export class Terrain {
       shader.uniforms.uTime = { value: 0 };
       shader.uniforms.uSurfaceWetness = { value: this.surfaceWetness };
       shader.uniforms.uWaterLevel = { value: this.surfaceWaterLevel };
+      shader.uniforms.uRecentWaterLevel = { value: this.recentWaterLevel ?? this.surfaceWaterLevel };
       this.uniforms = shader.uniforms;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying float vWorldUp;')
@@ -168,7 +175,8 @@ export class Terrain {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>
           varying vec3 vWPos; varying float vWorldUp;
-          uniform sampler2D tGrass, tMud, tSand, tNoise; uniform float uTime, uSurfaceWetness, uWaterLevel;
+          uniform sampler2D tGrass, tMud, tSand, tNoise;
+          uniform float uTime, uSurfaceWetness, uWaterLevel, uRecentWaterLevel;
           float caustic(vec2 p, float t) {
             float a = texture2D(tNoise, p * 0.55 + vec2(t * 0.021, t * 0.017)).g;
             float b = texture2D(tNoise, p * 0.62 - vec2(t * 0.019, -t * 0.023) + 0.37).b;
@@ -203,38 +211,56 @@ export class Terrain {
           // On steep dry faces the soil cover breaks and pale limestone shows through.
           float exposed = smoothstep(0.065, 0.28, slope) * smoothstep(0.7, 2.4, h);
           float mineral = smoothstep(0.32, 0.72, bankGrain * 0.72 + macro2 * 0.28);
-          exposed *= 0.38 + mineral * 0.5;
+          exposed *= 0.26 + mineral * 0.59;
           vec3 bankFace = mix(mud * vec3(1.2, 1.08, 0.94), sand * vec3(0.72, 0.70, 0.62), 0.16 + 0.32 * mineral);
           if (exposed > 0.025) {
-            // Project through the exposed face so soil detail stays visible where a top-down UV stretches.
-            // Narrow, discontinuous darker seams follow the sediment layers laid down by older floods.
+            // Project through steep faces so the grain survives a grazing
+            // angle. Downhill streaks run through the lighter mineral patches.
             vec2 wallUv = vec2(dot(tuv, vec2(0.79, 0.61)), h);
             float grain = texture2D(tNoise, wallUv * vec2(0.18, 0.47)).g;
-            float seam = abs(fract(h * 0.92 + 1.35 * macro2 + 0.42 * bankGrain + 0.12 * grain) - 0.5);
-            float silt = (1.0 - smoothstep(0.025, 0.14, seam)) * smoothstep(0.30, 0.57, bankGrain);
-            bankFace *= (0.72 + 0.56 * grain) * (1.0 - 0.32 * silt);
+            float runoff = texture2D(tNoise, wallUv * vec2(0.22, 0.052) + vec2(0.18 * macro2, 0.31)).b;
+            float furrow = smoothstep(0.51, 0.75, runoff) * smoothstep(0.31, 0.63, grain + bankGrain * 0.18);
+            bankFace *= (0.74 + 0.53 * grain) * (1.0 - 0.24 * furrow);
           }
           col = mix(col, bankFace, exposed);
           col *= mix(0.45, 1.0, smoothstep(-0.25, 1.2, h));
-          float shorelineDamp = 1.0 - smoothstep(uWaterLevel + 0.1, uWaterLevel + 1.1, h);
-          float wetFilm = clamp((uSurfaceWetness + shorelineDamp * 0.38) * smoothstep(0.2, 0.82, vWorldUp), 0.0, 1.0);
-          col *= mix(1.0, 0.72, wetFilm);
-          if (h < 0.05) {
+          float upward = smoothstep(0.2, 0.82, vWorldUp);
+          float shoreGrain = clamp(bankGrain * 0.54 + macro2 * 0.36 + 0.1 * macro, 0.0, 1.0);
+          float jitter = (shoreGrain - 0.5) * (0.10 + 0.11 * upward);
+          float shore = 1.0 - smoothstep(uWaterLevel - 0.06, uWaterLevel + 0.14 + 0.22 * upward, h + jitter * 0.45);
+          float recentReach = smoothstep(0.015, 0.21, uRecentWaterLevel - uWaterLevel);
+          float retained = (1.0 - smoothstep(uRecentWaterLevel - 0.12, uRecentWaterLevel + 0.05, h + jitter)) * recentReach;
+          float wetFilm = max(uSurfaceWetness * upward, (0.74 * shore + 0.62 * retained * (1.0 - shore)) * upward);
+          // The ebb leaves patchy pale silt and darker organic matter on the
+          // newly exposed bank. The same textures carry the detail at both LODs.
+          float exposedBank = smoothstep(0.015, 0.16, h - uWaterLevel);
+          float wash = retained * exposedBank * upward;
+          float deposit = wash * smoothstep(0.36, 0.72, shoreGrain + (litter - 0.5) * 0.18);
+          vec3 sediment = mix(mud * vec3(0.76, 0.73, 0.65), sand * vec3(0.80, 0.75, 0.64), 0.23 + shoreGrain * 0.37);
+          col = mix(col, sediment, 0.48 * deposit);
+          col *= mix(1.0, 0.57, wetFilm);
+          float relativeHeight = h - uWaterLevel;
+          if (relativeHeight < 0.05) {
             float c = caustic(tuv, uTime);
-            col *= 1.0 + c * 0.75 * smoothstep(-6.0, -0.3, h) * smoothstep(0.05, -0.15, h);
+            col *= 1.0 + c * 0.75 * smoothstep(-6.0, -0.3, relativeHeight) * (1.0 - smoothstep(-0.15, 0.05, relativeHeight));
           }
           diffuseColor.rgb *= col;`)
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.2, wetFilm * wetFilm);');
     };
-    mat.customProgramCacheKey = () => 'terrain-wet-v1';
+    mat.customProgramCacheKey = () => 'terrain-tidal-bank';
     this.material = mat;
     return this.group;
   }
 
-  setSurfaceWetness(wetness = 0, waterLevel = 0) {
+  setSurfaceWetness(wetness = 0, waterLevel = 0, dt = 0, drying) {
     this.surfaceWetness = Math.max(0, Math.min(1, Number(wetness) || 0));
     this.surfaceWaterLevel = Number.isFinite(Number(waterLevel)) ? Number(waterLevel) : 0;
-    if (this.uniforms) { this.uniforms.uSurfaceWetness.value = this.surfaceWetness; this.uniforms.uWaterLevel.value = this.surfaceWaterLevel; }
+    this.recentWaterLevel = tidalBankStep(this.recentWaterLevel, this.surfaceWaterLevel, dt, drying);
+    if (this.uniforms) {
+      this.uniforms.uSurfaceWetness.value = this.surfaceWetness;
+      this.uniforms.uWaterLevel.value = this.surfaceWaterLevel;
+      this.uniforms.uRecentWaterLevel.value = this.recentWaterLevel;
+    }
   }
   makeGeometry(c) {
     const n = c.segs, w = n + 1, step = c.size / n, shared = this.indexFor(n), count = w * w + shared.skirtCount;

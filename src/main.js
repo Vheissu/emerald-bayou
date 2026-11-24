@@ -6,6 +6,7 @@ import { Vegetation } from './vegetation.js';
 import { buildTower, buildDock } from './tower.js';
 import { airboatSprayExposure, buildAirboat, AirboatPhysics, installDriver, updateAirboatWetness, updateSeatedDriverPose } from './airboat.js';
 import { Birds, Waders, Manatees, Gators } from './wildlife.js';
+import { ShorebirdFlock } from './shorebirds.js';
 import { SkiffAI } from './npc.js';
 import { Spray, Plume } from './particles.js';
 import { createParticleLighting, shareSpotlightUniforms, updateParticleLighting } from './particlelighting.js';
@@ -310,7 +311,13 @@ async function init() {
   life.traffic.setWildlife({ manatees, gators, waders });
   const physicalWakeFields = [life.traffic];
   const playerWater = (x, z, t) => water.waveHeight(x, z, t) + sampleWakeFields(physicalWakeFields, x, z, t);
-  world.fx = { plume, spray, audio, fish: life.fish, playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) }; world.onShot = (x, z) => { waders.flushNear(x, z, 140, 'gunshot'); };
+  const shorebirds = new ShorebirdFlock(terrain, renderProfile.id === 'fallback' ? 4 : 8, (x, z) => world.vegetationBlockedAt(x, z));
+  scene.add(shorebirds.mesh);
+  world.fx = { plume, spray, audio, fish: life.fish, playerWakeAt: (x, z, t) => life.traffic.playerWakeAt(x, z, t) };
+  world.onShot = (x, z) => {
+    waders.flushNear(x, z, 140, 'gunshot');
+    shorebirds.startleNear(x, z, 140);
+  };
   birds.audio = audio; gators.audio = audio;
   gators.onCharge = (g) => game.gatorCharge(g);
   gators.onSlide = (g, d, source = 'player') => { if (source === 'player') game.bounties.event('spook', 1); };
@@ -327,7 +334,10 @@ async function init() {
   life.traffic.reputation = reputation; life.traffic.law = law;
   const encounters = new EncounterDirector({ scene, terrain, world, water, phys, boat: boat.group, game, audio, environment, currents, regions, plume, spray, law, reputation });
   game.encounters = encounters;
-  environment.onPlayerHorn = prolonged => encounters.notePlayerHorn(prolonged);
+  environment.onPlayerHorn = prolonged => {
+    encounters.notePlayerHorn(prolonged);
+    shorebirds.startleNear(phys.pos.x, phys.pos.y, prolonged ? 76 : 53);
+  };
   law.onAttention = attention => { encounters.requestPatrol(attention); };
   const condition = new BoatCondition({ game, phys, water, environment, audio, boat: boat.group, hullDamage: boat.hullDamage, wrapVisual: boat.propWrap, plume, spray, startX, startZ }); condition.traffic = life.traffic; encounters.condition = condition; game.condition = condition;
   const anchor = new BoatAnchor({ scene, terrain, water, phys, game, audio, environment, currents }); condition.anchor = anchor; game.anchor = anchor;
@@ -464,7 +474,7 @@ async function init() {
   const sceneTransforms = new SceneTransformCache(scene);
   let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, retainedObjects: 0, retainedCompleted: 0, retainedFailures: 0, durationMs: 0 };
   let controller = null, cameraView = BOAT_CAMERA_CHASE, setCameraView = () => false;
-  window.__dbg = { renderer, camera, scene, sceneLightPool, sceneTransforms, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { renderer, camera, scene, sceneLightPool, sceneTransforms, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, shorebirds, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderPixelRatio, displayPixelRatio: renderer.getPixelRatio(), displayPixels: renderer.domElement.width * renderer.domElement.height, maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }), controllerStats: () => controller?.snapshot?.() || { connected: false }, cameraStats: () => ({ mode: cameraView, fov: camera.fov, driverVisible: playerDriver?.visible !== false }) };
@@ -1010,6 +1020,7 @@ async function init() {
     gators.update(dt, time, phys.pos.x, phys.pos.y, phys.speed, phys.heading, environment.spotOn, environment.night, environment.restrictedVisibility, environment.values.storm, environment.waterLevel);
     waders.update(started && !game.paused ? dt : 0, time, phys.pos.x, phys.pos.y, phys.speed, environment.waterLevel);
     world.update(dt, time, phys.pos.x, phys.pos.y);
+    shorebirds.update(started && !game.paused ? dt : 0, time, phys, water.level, world.context, environment);
     // Do not start resident shifts or write their first-seen state while the title card is still open.
     if (started && !game.paused) life.update(dt, time);
     encounters.updateOutboardAudio(started && !game.paused);

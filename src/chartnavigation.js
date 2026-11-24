@@ -1,5 +1,5 @@
 import { measureRoute, routeProgress } from './waterroute.js';
-import { waterfrontColliders } from './waterfrontlayout.js';
+import { waterfrontColliders, mooringClearance } from './waterfrontlayout.js';
 
 export const ROUTE_COLOR = '#ff9489';
 const point = p => ({ x: p.x, z: p.z });
@@ -16,6 +16,7 @@ function fixedObstacles(boat, world, target) {
   };
   append(boat.obstacles || []);
   append(waterfrontColliders);
+  append(mooringClearance);
   for (const [key, list] of boat.dyn || []) {
     if (key.startsWith('camp:') || key.startsWith('site:')) append(list);
   }

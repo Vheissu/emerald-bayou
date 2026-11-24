@@ -29,11 +29,26 @@ export function surfaceWetnessStep(current, rain, hail, fog, daylight, wind, sto
   return clamp(target + (from - target) * Math.exp(-seconds * rate));
 }
 
-// Mirrors the terrain shader's slope and shoreline mask so the visual rule stays deterministic and testable.
-export function terrainWetFilm(wetness, worldUp, height, waterLevel = 0) {
-  const upward = smooth(0.2, 0.82, worldUp);
-  const shoreline = 1 - smooth(finite(waterLevel) + 0.1, finite(waterLevel) + 1.1, height);
-  return clamp((normalizeSurfaceWetness(wetness) + shoreline * 0.38) * upward);
+// Flooding soaks the bank immediately. After the tide turns, the upper edge
+// of the damp soil recedes as it drains and dries.
+export function tidalBankStep(recent, level, dt, drying = 0.65) {
+  const water = finite(level);
+  const retained = Math.max(water, finite(recent, water));
+  const elapsed = Math.max(0, finite(dt));
+  if (!elapsed || retained === water) return retained;
+  const rate = 0.0035 + 0.006 * clamp(finite(drying, 0.65));
+  return water + (retained - water) * Math.exp(-elapsed * rate);
+}
+
+// The rain film and flooded soil are separate. Rough ground holds less of
+// either, and the current edge has its own capillary fringe on gentle banks.
+export function terrainWetFilm(wetness, worldUp, height, waterLevel = 0, recent = waterLevel, grain = 0.5) {
+  const level = finite(waterLevel), ground = finite(height);
+  const upward = smooth(0.2, 0.82, worldUp), soak = Math.max(level, finite(recent, level));
+  const jitter = (clamp(finite(grain, 0.5)) - 0.5) * (0.10 + 0.11 * upward);
+  const shore = 1 - smooth(level - 0.06, level + 0.14 + 0.22 * upward, ground + jitter * 0.45);
+  const retained = (1 - smooth(soak - 0.12, soak + 0.05, ground + jitter)) * smooth(0.015, 0.21, soak - level);
+  return clamp(Math.max(normalizeSurfaceWetness(wetness) * upward, (0.74 * shore + 0.62 * retained * (1 - shore)) * upward));
 }
 
 function wetMaterialDefaults(material, options) {
