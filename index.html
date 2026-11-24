@@ -121,6 +121,7 @@
   /* the chart */
   #bigmap { position:fixed; inset:0; z-index:5; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background:#182329; }
   #bigmap.hidden { display:none; }
+  #chartBody { min-height:0; display:grid; grid-template-columns:minmax(0,1fr) auto; }
   #bigmapView { position:relative; min-width:0; overflow:hidden; }
   #bigmap canvas { display:block; width:100%; height:100%; cursor:crosshair; touch-action:none; }
   #bigmap canvas:active { cursor:grabbing; }
@@ -137,6 +138,29 @@
   #bigmap button { cursor:pointer; border:1px solid rgba(243,237,224,.32); border-radius:3px; background:#26363e; color:var(--foam); padding:4px 10px; min-height:34px; }
   #bigmap button:hover, #bigmap button:focus-visible { border-color:var(--foam); }
   #bigmap button:disabled { opacity:.42; cursor:default; }
+  #chartHeadTools { display:flex; gap:6px; }
+  #bigmap [aria-pressed="true"], #bigmap [aria-expanded="true"] { border-color:var(--gold); color:var(--gold); }
+  #chartMarket { box-sizing:border-box; width:320px; overflow:auto; padding:18px 17px; border-left:1px solid rgba(243,237,224,.23); }
+  #chartMarket h3 { margin:0; font-size:20px; line-height:1.1; }
+  #chartMarket p { margin:5px 0 12px; color:#c5cecc; font-size:14px; line-height:1.3; }
+  #chartMarket .market-tally { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  #chartMarket .market-tally b, #chartMarket td { font-variant-numeric:tabular-nums; }
+  #chartMarket table { width:100%; border-collapse:collapse; font-size:14px; line-height:1.25; }
+  #chartMarket th, #chartMarket td { padding:8px 0 7px 8px; text-align:right; border-bottom:1px solid rgba(243,237,224,.16); }
+  #chartMarket th:first-child { padding-left:0; text-align:left; }
+  #chartMarket thead th { vertical-align:bottom; border-bottom-color:rgba(243,237,224,.36); }
+  #chartMarket tbody th { font-weight:500; }
+  #chartMarket td strong { color:var(--gold); }
+  #chartMarket td small { display:block; color:#c5cecc; font-size:11px; }
+  #chartMarket .market-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; margin:12px 0 17px; }
+  #chartMarket .market-actions span { display:block; font-size:12px; }
+  #chartMarket dl { margin:7px 0; font-size:14px; }
+  #chartMarket dl div { display:flex; align-items:baseline; justify-content:space-between; gap:8px; border-bottom:1px solid rgba(243,237,224,.16); padding:5px 0; }
+  #chartMarket dd { margin:0; color:#c5cecc; text-align:right; }
+  @media (max-width:760px) {
+    #chartBody { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr) auto; }
+    #chartMarket { width:auto; max-height:43dvh; padding:11px 14px; border-left:0; border-top:1px solid rgba(243,237,224,.23); }
+  }
   @media (max-width:600px) {
     #bigmap header, #bigmap footer { flex-wrap:wrap; gap:6px 12px; }
     #bigmapRoute { order:2; flex-basis:100%; }
@@ -336,9 +360,15 @@
   <header>
     <div><h2 id="chartTitle">Chart</h2><div id="bigmapLegend"></div></div>
     <div id="bigmapRoute"><strong id="bigmapRouteName"></strong><span id="bigmapRouteDetail"></span></div>
-    <button id="chartClose" type="button">Close</button>
+    <div id="chartHeadTools">
+      <button id="chartMarketToggle" type="button" aria-expanded="false" aria-controls="chartMarket" aria-keyshortcuts="F" title="Fish prices (F)">Fish prices</button>
+      <button id="chartClose" type="button">Close</button>
+    </div>
   </header>
-  <div id="bigmapView"><canvas id="bigmapCanvas" tabindex="-1" aria-label="Waterway chart. Arrow keys pan. Enter places a pin at the centre. Delete clears the pin."></canvas></div>
+  <div id="chartBody">
+    <div id="bigmapView"><canvas id="bigmapCanvas" tabindex="-1" aria-label="Waterway chart. Arrow keys pan. Enter places a pin at the centre. Delete clears the pin. F opens fish prices."></canvas></div>
+    <aside id="chartMarket" aria-labelledby="fishPricesHeading" hidden></aside>
+  </div>
   <footer>
     <p>Click to pin · Drag to pan · Scroll to zoom</p>
     <div>

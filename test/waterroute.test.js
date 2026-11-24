@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WorldHeight } from '../src/heightfield.js';
 import { World } from '../src/world.js';
+import { CatchTrade, CATCH_SELLERS } from '../src/catchtrade.js';
+import { mooringClearance, waterfrontColliders } from '../src/waterfrontlayout.js';
 import { measureRoute, planWaterRoute, routeProgress } from '../src/waterroute.js';
 
 const pathLength = p => measureRoute(p.points).length;
@@ -75,4 +77,16 @@ test('a trip from the starting river to Mullet Bend crosses the channels instead
   assert.ok(Math.hypot(result.points.at(-1).x - camp.tie.x, result.points.at(-1).z - camp.tie.z) < 25);
   assert.ok(pathLength(result) > 1800 && pathLength(result) < 3000);
   assert.ok(measureRoute(result.points).turns.length > 2);
+});
+
+test('both Gulf Cut piers have a charted route all the way to the Mullet Bend fish buyer', () => {
+  const hf = new WorldHeight(7), world = new World({ hf }, null, null);
+  const trade = new CatchTrade({ game: { save: {} }, world, dockTie: { x: 42.74, z: -218.90 } });
+  const berth = trade.findBuyer('mullet-bend');
+  const obstacles = [...waterfrontColliders, ...mooringClearance, ...world.campColliders(world.campAt(-1, 0))];
+  for (const pier of CATCH_SELLERS) {
+    const route = planWaterRoute({ start: pier, target: berth, heightAt: (x, z) => hf.compute(x, z), obstacles });
+    assert.equal(route.status, 'ready');
+    assert.deepEqual(route.points.at(-1), { x: berth.x, z: berth.z });
+  }
 });

@@ -4,6 +4,7 @@ import { Game } from '../src/game.js';
 import { CatchTrade, CATCH_SELLERS } from '../src/catchtrade.js';
 import { EncounterDirector } from '../src/encounters.js';
 import { StoryDirector } from '../src/story.js';
+import { WorldMap } from '../src/worldmap.js';
 
 const [pier] = CATCH_SELLERS;
 const tower = { x: 60, z: -210 };
@@ -20,10 +21,14 @@ function fixture() {
   });
   const shift = { landedCount: 0, unloading: true, sorting: true };
   const trip = { trips: 1, secured: true, catchCount: 3 };
-  const world = { waterfront: { mooredSkiffs: [{ dockShift: shift, trip }] } };
+  const world = {
+    waterfront: { mooredSkiffs: [{ dockShift: shift, trip }] },
+    campAt: () => ({ name: 'Mullet Bend', bank: { x: 110, z: -320 }, tie: { x: 110, z: -329 } }),
+  };
   game.catchTrade = new CatchTrade({ game, world, phys: game.phys, dockTie: tower });
   game.navigation = {
     pin: pier,
+    setPin(x, z, label) { this.pin = { x, z, label }; },
     clearPin() { this.pin = null; },
   };
   const press = (repeat = false) => {
@@ -50,7 +55,7 @@ test('the same dock action pays a new player once and requires a fresh press to 
   shift.landedCount = 3;
   game.updateCatchTrade(3);
   assert.equal(game.save.cash, 14);
-  assert.match(game.catchPrompt(trade.interaction()), /Buy 1 mullet.*\$14.*Tower Dock pays \$44/);
+  assert.match(game.catchPrompt(trade.interaction()), /Buy 1 mullet.*\$14.*1 \/ 4 in cooler/);
   press(true);
   assert.equal(trade.cargo, null);
   press();
@@ -77,7 +82,7 @@ test('a suggested waypoint yields to a delivery and a real mission retains its o
   const { game, shift, press } = fixture();
   shift.unloading = shift.sorting = false;
   shift.landedCount = 3;
-  game.save.cash = 42;
+  game.save.cash = 50;
   const pin = game.navigation.pin = { x: 58, z: -205, label: 'My pin' };
   press();
   assert.equal(game.navigation.pin, pin);
@@ -103,12 +108,12 @@ test('automatic radio search and a distant offer leave buying, the delivery rout
   });
   game.wpTarget = { x: 1, z: 4, label: 'Leon’s last radio fix', story: true };
   game.condition = { serviceLocation: () => ({ home: true }) };
-  game.save.cash = 42;
+  game.save.cash = 50;
   shift.unloading = shift.sorting = false;
   shift.landedCount = 3;
   assert.equal(game.story.blocking(), true);
   game.updateDockPrompt(false, true);
-  assert.match(game.el.prompt.innerHTML, /Buy 3 mullet.*\$42.*Tower Dock pays \$132/);
+  assert.match(game.el.prompt.innerHTML, /Buy 2 mullet, 1 redfish.*\$50.*3 \/ 4 in cooler/);
   press();
   assert.equal(game.navigationTarget(), game.catchTrade.destination);
   game.renderHud();
@@ -120,10 +125,10 @@ test('automatic radio search and a distant offer leave buying, the delivery rout
   assert.equal(game.el.wp.innerHTML, undefined);
   game.phys.pos = { x: tower.x, y: tower.z };
   game.updateDockPrompt(false, true);
-  assert.match(game.el.prompt.innerHTML, /Unload 3 mullet.*\$132/);
+  assert.match(game.el.prompt.innerHTML, /Unload 2 mullet, 1 redfish.*\$160/);
   press();
   assert.equal(game.catchTrade.cargo, null);
-  assert.equal(game.save.cash, 132);
+  assert.equal(game.save.cash, 160);
   assert.equal(game.navigationTarget(), game.wpTarget);
   game.renderHud();
   assert.match(game.el.mission.innerHTML, /Running Dark/);
@@ -133,6 +138,32 @@ test('automatic radio search and a distant offer leave buying, the delivery rout
   game.openMenu = value => { tab = value; };
   press();
   assert.equal(tab, 'boat');
+});
+
+test('a route selected from the chart becomes a trade destination and shows the chosen offer', () => {
+  const { game, shift, press } = fixture();
+  const trade = game.catchTrade;
+  const [, bend] = trade.buyers;
+  const chart = Object.assign(Object.create(WorldMap.prototype), {
+    G: game, market: { hidden: true }, render() {},
+  });
+  shift.unloading = shift.sorting = false;
+  shift.landedCount = 3;
+  game.save.cash = 50;
+  chart.routeToBuyer(bend.id);
+  assert.deepEqual(game.navigation.pin, { x: bend.x, z: bend.z, label: bend.label });
+  press();
+  assert.equal(game.navigation.pin, null);
+  assert.equal(trade.destination, bend);
+  game.renderHud();
+  assert.match(game.el.mission.innerHTML, /Deliver to Mullet Bend.*\$122 on delivery/);
+  chart.routeToBuyer('tower');
+  assert.equal(trade.destination, trade.saleTarget);
+  game.phys.pos = { x: bend.x, y: bend.z };
+  game.updateDockPrompt(true, true);
+  assert.match(game.el.prompt.innerHTML, /Unload 2 mullet, 1 redfish.*\$122/);
+  press();
+  assert.equal(trade.receiptAt(bend.id).payout, 122);
 });
 
 test('committed story work and encounters keep priority over cargo', () => {

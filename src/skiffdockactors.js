@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { animatePerson } from './folk.js';
-import { PAIL_HANDLE, TOTE_HANDLES } from './skiffdockgear.js';
+import { PAIL_HANDLE, TOTE_HANDLES, setCreelFish } from './skiffdockgear.js';
 
 const { clamp, lerp, smoothstep } = THREE.MathUtils;
 const up = new THREE.Vector3(0, 1, 0);
@@ -286,6 +286,7 @@ function sortCatch(boat, shift, helm, engaged, pose) {
   if (pose) solveLimb(upper, fore, fishGrip, .30, .28, handSide ? 1 : -1, -.35, atWork);
   if (fish && progress >= .28 && progress < .78) {
     fish.visible = true;
+    setCreelFish(fish, shift.sortSpecies);
     hand.getWorldPosition(restingHand);
     fishRotation.setFromAxisAngle(up, helm.yaw + .26)
       .multiply(propRotation.setFromAxisAngle(fishSide, -1.12 - transfer * .42));

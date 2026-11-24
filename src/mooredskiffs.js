@@ -407,8 +407,8 @@ export function updateMooredSkiffs(boats, time, waveAt, ctx, environment) {
     if (!updateDockActors(boat, boat.dockShift, dt, time, ctx)) {
       updateFishingCrew(boat.crew, boat, trip, dt, time, ctx, field);
     }
-    const creel = boat.dockShift.gear.cooler;
-    setDockCatch(boat.dockGear, creel.count, creel.open ?? 0, boat.dockShift.landedCount);
+    const shift = boat.dockShift, creel = shift.gear.cooler;
+    setDockCatch(boat.dockGear, creel.count, creel.open ?? 0, shift.landedCount, shift.marketSpecies, shift.creelSpecies);
     for (const line of boat.lines) {
       line.mesh.visible = trip.secured; line.coil.visible = !trip.secured;
       line.end.copy(line.eye).applyMatrix4(mesh.matrix);

@@ -19,8 +19,14 @@ const fishFinish = new THREE.MeshStandardMaterial({
 const iceFinish = new THREE.MeshStandardMaterial({
   color: 0xffffff, vertexColors: true, roughness: 0.26, metalness: 0.02,
 });
-const maxFish = 4;
 const models = [];
+const fishVariants = [
+  { id: 'mullet', name: 'Mullet', body: 0xb6cbc4, fin: 0x7d8d7e, scale: [1, 1, 1] },
+  { id: 'redfish', name: 'Redfish', body: 0xcb996d, fin: 0xa46541, scale: [1.07, 1.19, 1.13] },
+  { id: 'trout', name: 'Speckled trout', body: 0x89a29e, fin: 0x576c68, scale: [1.06, 0.83, 0.90] },
+];
+const fishGeometries = [];
+const fishBeds = new WeakMap();
 
 function rounded(batch, tint, width, height, depth, x, y, z, radius = 0.012, shade) {
   // waterfrontMesh merges indexed parts. RoundedBoxGeometry comes expanded.
@@ -100,10 +106,10 @@ function buildCooler(index) {
   return waterfrontMesh(batch, shellFinish).geometry;
 }
 
-function buildIce(index) {
+function buildIce(index, chest = false) {
   const batch = [], rnd = mulberry32(6227 + index);
-  for (let i = 0; i < 35; i++) {
-    const x = (rnd() - 0.5) * 0.445, z = (rnd() - 0.5) * 0.249;
+  for (let i = 0, cubes = chest ? 88 : 35; i < cubes; i++) {
+    const x = (rnd() - 0.5) * (chest ? 0.55 : 0.445), z = (rnd() - 0.5) * (chest ? 0.515 : 0.249);
     const size = 0.022 + rnd() * 0.027;
     const ice = new THREE.IcosahedronGeometry(1, 0).scale(size * 1.24, size * 0.66, size)
       .rotateY(rnd() * Math.PI * 2).rotateX(rnd()).translate(x, 0.071 + rnd() * 0.029, z);
@@ -114,7 +120,46 @@ function buildIce(index) {
   return waterfrontMesh(batch, iceFinish, false).geometry;
 }
 
-function makeFish() {
+function buildIceChest() {
+  const batch = [], paint = 0x426d68;
+  const scuffedWall = (x, y, z) => 0.76 + 0.21 * (y / 0.29) + 0.09 * Math.sin(28 * x + 34 * z);
+  rounded(batch, 0x373f39, 0.634, 0.034, 0.572, 0, 0.018, 0, 0.014);
+  rounded(batch, 0x8b9383, 0.627, 0.034, 0.564, 0, 0.050, 0, 0.015);
+  for (const side of [-1, 1]) {
+    rounded(batch, paint, 0.644, 0.233, 0.043, 0, 0.150, side * 0.28, 0.017, scuffedWall);
+    rounded(batch, paint, 0.042, 0.233, 0.559, side * 0.307, 0.150, 0, 0.018, scuffedWall);
+    rounded(batch, 0xc3c9b3, 0.584, 0.215, 0.014, 0, 0.152, side * 0.263, 0.007);
+    rounded(batch, 0xc3c9b3, 0.014, 0.215, 0.526, side * 0.285, 0.152, 0, 0.007);
+    rounded(batch, 0x778b7e, 0.682, 0.047, 0.041, 0, 0.286, side * 0.284, 0.015);
+    rounded(batch, 0x778b7e, 0.043, 0.047, 0.554, side * 0.315, 0.286, 0, 0.015);
+    for (const x of [-0.235, -0.19, 0.19, 0.235]) {
+      rounded(batch, 0x4f7770, 0.023, 0.151, 0.013, x, 0.149, side * 0.302, 0.005);
+    }
+    handle(batch, side * 0.337, 0.225, 0.02);
+  }
+  for (const x of [-0.21, 0.21]) {
+    rounded(batch, 0x5d6457, 0.073, 0.092, 0.028, x, 0.235, -0.310, 0.008);
+    rounded(batch, 0x303931, 0.048, 0.066, 0.021, x, 0.254, -0.325, 0.008);
+  }
+  tintGeometry(batch, new THREE.CylinderGeometry(0.021, 0.021, 0.019, 12)
+    .rotateZ(Math.PI / 2).translate(0.332, 0.075, 0.186), 0xa6a38b);
+  return waterfrontMesh(batch, shellFinish).geometry;
+}
+
+function buildChestLid() {
+  const batch = [];
+  rounded(batch, 0xd4d1ae, 0.688, 0.061, 0.623, 0, 0.018, -0.298, 0.021);
+  rounded(batch, 0x646f5f, 0.626, 0.014, 0.560, 0, -0.009, -0.298, 0.006);
+  rounded(batch, 0xb8ba9f, 0.591, 0.018, 0.529, 0, -0.016, -0.298, 0.009);
+  for (const x of [-0.212, 0.212]) {
+    rounded(batch, 0xb0ad95, 0.082, 0.018, 0.052, x, 0.023, -0.591, 0.006);
+    rounded(batch, 0x4e675d, 0.084, 0.036, 0.046, x, 0.003, -0.008, 0.006);
+    rounded(batch, 0xb6b497, 0.061, 0.009, 0.399, x, 0.052, -0.298, 0.004);
+  }
+  return waterfrontMesh(batch, shellFinish).geometry;
+}
+
+function makeFish(variant) {
   // Nine tapered cross-sections keep the small heads and split tails distinct
   // at dock distance. The side carries bands laid into the scales themselves.
   const stations = [
@@ -139,12 +184,22 @@ function makeFish() {
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
-  tintGeometry(batch, geometry, 0xb6cbc4, (x, y, z) => {
+  tintGeometry(batch, geometry, variant.body, (x, y, z) => {
     const flank = Math.min(1, Math.abs(z) / 0.033);
     const scales = 0.042 * Math.sin(140 * x + 715 * y);
-    const bands = 0.095 * Math.sin((Math.abs(y) + x * 0.01) * 430) * flank;
-    return y > 0 ? 0.85 - y * 12 + scales + bands : 1.04 + scales + bands;
+    const bands = variant.id === 'mullet' ? 0.095 * Math.sin((Math.abs(y) + x * 0.01) * 430) * flank : 0;
+    const back = variant.id === 'trout' ? 16 : 12;
+    return y > 0 ? 0.85 - y * back + scales + bands : 1.04 + scales + bands;
   });
+  if (variant.id !== 'mullet') {
+    // Pearl belly on the copper drum and silver trout, fading into the flanks.
+    const colors = geometry.attributes.color, pearl = new THREE.Color(0xd9dcbd), flank = new THREE.Color();
+    for (let i = 0; i < positions.length / 3; i++) {
+      const weight = THREE.MathUtils.smoothstep(-positions[i * 3 + 1], 0.006, 0.033);
+      flank.fromBufferAttribute(colors, i).lerp(pearl, weight);
+      colors.setXYZ(i, flank.r, flank.g, flank.b);
+    }
+  }
   const fin = (name, color) => {
     const pts = name.map(p => new THREE.Vector3(...p));
     const triangles = new THREE.BufferGeometry().setFromPoints(pts);
@@ -153,10 +208,11 @@ function makeFish() {
     triangles.computeVertexNormals();
     tintGeometry(batch, triangles, color);
   };
-  fin([[0.139, 0.009, 0], [0.235, 0.061, 0], [0.196, 0, 0], [0.145, -0.01, 0]], 0x7d8d7e);
-  fin([[0.145, -0.01, 0], [0.196, 0, 0], [0.229, -0.056, 0], [0.15, -0.017, 0]], 0x748b83);
-  fin([[-0.054, 0.032, 0], [-0.013, 0.067, 0], [0.033, 0.028, 0], [-0.021, 0.028, 0]], 0x75877b);
-  fin([[0.060, 0.024, 0], [0.100, 0.048, 0], [0.132, 0.014, 0], [0.080, 0.019, 0]], 0x839083);
+  const fork = variant.id === 'redfish' ? 0.228 : variant.id === 'trout' ? 0.220 : 0.196;
+  fin([[0.139, 0.009, 0], [0.235, 0.061, 0], [fork, 0, 0], [0.145, -0.01, 0]], variant.fin);
+  fin([[0.145, -0.01, 0], [fork, 0, 0], [0.229, -0.056, 0], [0.15, -0.017, 0]], variant.fin);
+  fin([[-0.054, 0.032, 0], [-0.013, 0.067, 0], [0.033, 0.028, 0], [-0.021, 0.028, 0]], variant.fin);
+  fin([[0.060, 0.024, 0], [0.100, 0.048, 0], [0.132, 0.014, 0], [0.080, 0.019, 0]], variant.fin);
   for (const side of [-1, 1]) {
     fin([[-0.081, -0.011, side * 0.024], [-0.052, -0.031, side * 0.064],
       [0.007, -0.029, side * 0.041], [-0.059, -0.013, side * 0.028]], 0x96a89b);
@@ -168,11 +224,35 @@ function makeFish() {
       [-0.094, -0.023, 0.021], [-0.085, -0.01, 0.030], [-0.085, 0.008, 0.030], [-0.091, 0.025, 0.020],
     ].map(([x, y, z]) => new THREE.Vector3(x, y, side * z)));
     tintGeometry(batch, new THREE.TubeGeometry(gill, 7, 0.0018, 4, false), 0x777859);
+    if (variant.id === 'redfish') {
+      tintGeometry(batch, new THREE.SphereGeometry(1, 10, 6).scale(0.012, 0.008, 0.003)
+        .rotateY(side * 0.19).translate(0.123, 0.005, side * 0.0137), 0x332d26);
+    }
+    if (variant.id === 'trout') {
+      // Irregular freckles follow the contour of the back and thin out behind the gill.
+      const random = mulberry32(4672);
+      for (const [x, height, beam] of stations.slice(2, -1)) for (let row = 0; row < 4; row++) {
+        const angle = 0.48 + row * 0.36 + random() * 0.18;
+        const radius = 0.0024 + random() * 0.0024;
+        const spot = new THREE.SphereGeometry(radius, 6, 4).scale(1.18, 0.89, 0.47)
+          .rotateX(side * (angle - Math.PI / 2))
+          .translate(x + (random() - 0.5) * 0.018, 1.02 * height * Math.cos(angle), 1.02 * side * beam * Math.sin(angle));
+        tintGeometry(batch, spot, 0x243534);
+      }
+    }
   }
-  return waterfrontMesh(batch, fishFinish, false).geometry;
+  return waterfrontMesh(batch, fishFinish, false).geometry.scale(...variant.scale);
 }
 
-let fish;
+function fishGeometry(index) {
+  return fishGeometries[index] ??= makeFish(fishVariants[index]);
+}
+
+function fishIndex(species) {
+  if (!species) return 0;
+  const index = fishVariants.findIndex(fish => fish.id === species);
+  return index < 0 ? 0 : index;
+}
 const fishPoses = [
   [-0.020, 0.126, -0.050, 0.03, 1.12, 0.91],
   [0.050, 0.126, 0.052, Math.PI - 0.18, -1.52, 0.85],
@@ -187,23 +267,44 @@ const panFishPoses = [
   [0.054, 0.072, 0.012, Math.PI * 1.36, -1.72, 0.60],
 ];
 
+const chestFishPoses = [
+  [-0.067, 0.127, -0.192, 0.12, 1.5, 0.99],
+  [0.077, 0.126, -0.060, Math.PI - 0.20, -1.5, 0.91],
+  [-0.045, 0.125, 0.057, 0.09, 1.3, 0.99],
+  [0.070, 0.131, 0.195, Math.PI + 0.10, -1.6, 0.88],
+  [-0.043, 0.181, -0.145, 0.31, 1.48, 1.03],
+  [0.066, 0.185, -0.011, Math.PI - 0.16, -1.60, 0.96],
+  [-0.051, 0.186, 0.118, 0.16, 1.60, 0.94],
+  [0.047, 0.183, 0.230, Math.PI + 0.15, -1.39, 0.88],
+];
+
 function addFish(parent, poses) {
-  const contents = new THREE.InstancedMesh(fish ??= makeFish(), fishFinish, maxFish);
-  contents.name = 'Mullet on ice';
-  contents.receiveShadow = true;
+  const bed = new THREE.Group();
+  bed.name = 'Catch on ice';
   const pose = new THREE.Object3D();
-  poses.forEach(([x, y, z, yaw, roll, size], index) => {
+  const matrices = poses.map(([x, y, z, yaw, roll, size]) => {
     pose.position.set(x, y, z);
     pose.rotation.set(roll, yaw, 0, 'YXZ');
     pose.scale.setScalar(size);
     pose.updateMatrix();
-    contents.setMatrixAt(index, pose.matrix);
+    return pose.matrix.clone();
   });
-  contents.computeBoundingSphere();
-  contents.count = 0;
-  contents.visible = false;
-  parent.add(contents);
-  return contents;
+  const layers = fishVariants.map(({ name }, index) => {
+    const layer = new THREE.InstancedMesh(fishGeometry(index), fishFinish, matrices.length);
+    layer.name = `${name} on ice`;
+    layer.receiveShadow = true;
+    layer.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    matrices.forEach((matrix, at) => layer.setMatrixAt(at, matrix));
+    layer.computeBoundingSphere();
+    layer.count = 0;
+    layer.visible = false;
+    bed.add(layer);
+    return layer;
+  });
+  fishBeds.set(bed, { layers, matrices, signature: 0 });
+  bed.visible = false;
+  parent.add(bed);
+  return bed;
 }
 
 function makeBench(berth, parent) {
@@ -239,8 +340,8 @@ function makeBench(berth, parent) {
 
 export function createCreelFish() {
   const carrier = new THREE.Group();
-  carrier.name = 'Mullet on the line';
-  const mesh = new THREE.Mesh(fish ??= makeFish(), fishFinish);
+  carrier.name = 'Fish on the line';
+  const mesh = new THREE.Mesh(fishGeometry(0), fishFinish);
   mesh.position.y = -0.153;
   mesh.rotation.z = -Math.PI / 2;
   mesh.castShadow = mesh.receiveShadow = true;
@@ -248,21 +349,28 @@ export function createCreelFish() {
   return carrier;
 }
 
-export function buildCatchCooler(index = 0) {
+export function setCreelFish(carrier, species) {
+  carrier.children[0].geometry = fishGeometry(fishIndex(species));
+}
+
+export function buildCatchCooler(index = 0, chest = false) {
+  if (chest) index = 2;
   const geometry = models[index] ??= {
-    cooler: buildCooler(index), lid: buildLid(index).rotateY(index === 0 ? Math.PI : 0), ice: buildIce(index),
+    cooler: chest ? buildIceChest() : buildCooler(index),
+    lid: chest ? buildChestLid() : buildLid(index).rotateY(index === 0 ? Math.PI : 0),
+    ice: buildIce(index, chest),
   };
   const cooler = new THREE.Mesh(geometry.cooler, shellFinish);
   const lid = new THREE.Mesh(geometry.lid, shellFinish);
   const ice = new THREE.Mesh(geometry.ice, iceFinish);
-  cooler.name = 'Insulated catch cooler';
+  cooler.name = chest ? 'Insulated ice chest' : 'Insulated catch cooler';
   lid.name = 'Cooler lid';
   ice.name = 'Ice bed';
-  const hingeSide = index === 0 ? 1 : -1;
-  lid.position.set(0, 0.238, hingeSide * 0.164);
+  const hingeSide = index === 1 ? -1 : 1;
+  lid.position.set(0, chest ? 0.302 : 0.238, chest ? 0.299 : hingeSide * 0.164);
   ice.receiveShadow = true;
   cooler.add(ice, lid);
-  const contents = addFish(cooler, fishPoses);
+  const contents = addFish(cooler, chest ? chestFishPoses : fishPoses);
   for (const prop of [cooler, lid]) prop.castShadow = prop.receiveShadow = true;
   return { cooler, lid, hingeSide, contents };
 }
@@ -282,17 +390,45 @@ export function buildDockGear(boat, index, parent) {
   return { ...container, tackle, ...makeBench(boat.berth, parent) };
 }
 
-function showFish(mesh, count) {
-  mesh.count = Number.isFinite(count) ? Math.min(maxFish, Math.max(0, Math.floor(count))) : 0;
-  mesh.visible = mesh.count > 0;
+function showFish(bed, count, species) {
+  const record = fishBeds.get(bed), { matrices, layers } = record;
+  const shown = Number.isFinite(count) ? Math.min(matrices.length, Math.max(0, Math.floor(count))) : 0;
+  let remaining = shown;
+  // Two bits per fish make a short layout key. Only rewrite the GPU buffers
+  // when the contents change, even while a dock crew is sorting on screen.
+  let signature = 0;
+  const ordered = Array.isArray(species);
+  if (species && typeof species === 'object' && !ordered) {
+    for (let slot = 0; slot < fishVariants.length; slot++) {
+      const quantity = Math.min(remaining, Math.max(0, Math.floor(species[fishVariants[slot].id]) || 0));
+      for (let i = 0; i < quantity; i++) signature = (signature << 2) | (slot + 1);
+      remaining -= quantity;
+    }
+  }
+  for (let i = 0; i < remaining; i++) {
+    signature = (signature << 2) | (fishIndex(ordered ? species[i] : species) + 1);
+  }
+  if (record.signature === signature) return;
+  record.signature = signature;
+  bed.visible = signature > 0;
+  for (const layer of layers) layer.count = 0;
+  let seat = shown;
+  for (let layout = signature; layout > 0; layout >>>= 2) {
+    const layer = layers[(layout & 3) - 1];
+    layer.setMatrixAt(layer.count++, matrices[--seat]);
+  }
+  for (const layer of layers) {
+    layer.visible = layer.count > 0;
+    if (layer.visible) layer.instanceMatrix.needsUpdate = true;
+  }
 }
 
-export function setCatchCooler(gear, count, open = 0) {
-  showFish(gear.contents, count);
+export function setCatchCooler(gear, count, open = 0, species) {
+  showFish(gear.contents, count, species);
   gear.lid.rotation.x = gear.hingeSide * THREE.MathUtils.clamp(open, 0, 1) * 1.64;
 }
 
-export function setDockCatch(gear, count, open = 0, landedCount = 0) {
-  setCatchCooler(gear, count, open);
-  showFish(gear.landedFish, landedCount);
+export function setDockCatch(gear, count, open = 0, landedCount = 0, landedSpecies, creelSpecies) {
+  setCatchCooler(gear, count, open, creelSpecies);
+  showFish(gear.landedFish, landedCount, landedSpecies);
 }

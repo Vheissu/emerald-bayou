@@ -70,25 +70,27 @@ When a squall is due, the fishing crews head for their own piers. They slow in t
 
 ### Catch deliveries
 
-Look for the gold **$** marks at Gulf Cut on the chart. When a crew brings in mullet, idle beside its skiff and press **E** (or **A / Cross** on a controller) to help unload. Stay until the crew packs the last fish to earn $14. That pays for your first mullet, even if you arrived broke.
+Look for the gold **$** marks at Gulf Cut. The north crew usually brings in mullet and redfish. The south crew often has speckled trout. Idle beside a skiff and press **E** (or **A / Cross** on a controller) to help unload. Stay until the crew finishes packing and the pay will cover at least one fish from that haul.
 
-Press the same button to buy the fish you can afford at $14 each. You can carry up to four. Look beside the driver's seat to see your catch on ice. The chart plots a water route to Tower Dock, and your load stays aboard if you quit along the way.
+Mullet cost $14 at the pier, speckled trout $18 and redfish $22. You can buy from both crews on the same run. The standard cooler holds four fish. Fit the **$175 ice chest** at Tower Dock to carry eight. [Ice chest at the parts counter](docs/screenshots/39-ice-chest-shop.jpg)
 
-Slow down by the **FISH BOUGHT** sign at Tower Dock and unload for $44 per fish. That's $30 profit on each mullet. Press the dock interaction again to spend your earnings at the parts counter.
+Open **Fish prices** on the chart to see what each crew has landed and what both docks will pay for your load. On the first day, Tower Dock offers $72 each for its first four redfish. Mullet Bend wants four speckled trout at $73 each. Once a dock fills its order, it pays its regular rate for any extras. Both docks post new orders each game day.
+
+Choose a buyer on the chart to plot the run. At the dock, idle alongside the price board and press the dock interaction to sell. Your catch and chosen destination stay with the boat if you quit mid-delivery.
 
 <table><tr>
 <td width="50%"><img src="docs/screenshots/35-catch-unloading.jpg" alt="The player's airboat holds a line alongside the crew unloading at Gulf Cut"></td>
-<td width="50%"><img src="docs/screenshots/36-fish-freight.jpg" alt="Three purchased mullet on ice in the cooler beside the driver's seat"></td>
+<td width="50%"><img src="docs/screenshots/36-fish-freight.jpg" alt="Redfish, mullet and speckled trout packed together in the eight-fish ice chest"></td>
 </tr><tr>
-<td><img src="docs/screenshots/37-catch-route.jpg" alt="The chart plots the delivery from Gulf Cut through the bridge to Tower Dock"></td>
-<td><img src="docs/screenshots/38-fish-buyer.jpg" alt="The Tower Dock buyer weighs a three-mullet delivery after paying $132"></td>
+<td><img src="docs/screenshots/37-catch-route.jpg" alt="The chart compares both dock offers for the load and plots the route to Mullet Bend"></td>
+<td><img src="docs/screenshots/38-fish-buyer.jpg" alt="The Mullet Bend fish buyer at the scale beneath the posted dock prices"></td>
 </tr></table>
 
 ## Races and boat parts
 
 Open **M → Races** to enter the North Reach Sprint, the two-lap Tower Circuit or the solo Red Bend Time Trial. The two head-to-head courses pay for second place as well as first. After a finish, **Return to dock** takes you back to the tower to spend your purse. There’s enough in a $155 second-place sprint finish to fit the $145 deep rudder blades.
 
-Open **Boat** to compare parts. Fit them at the tower dock. A torque cam trades fuel economy for thrust, larger tanks add weight, and a narrow searchlight reaches farther at night. Three $110 hull stripes are available alongside the fourteen hardware upgrades. Owned parts and the factory finish can be refitted for free. [Copper Reef livery](docs/screenshots/22-hull-livery.jpg) The boat keeps its setup between visits.
+Open **Boat** to compare parts. Fit them at the tower dock. A torque cam trades fuel economy for thrust, larger tanks add weight, and a narrow searchlight reaches farther at night. Three $110 hull stripes are available alongside the fifteen hardware upgrades. Owned parts and the factory finish can be refitted for free. [Copper Reef livery](docs/screenshots/22-hull-livery.jpg) The boat keeps its setup between visits.
 
 <table><tr>
 <td width="50%"><img src="docs/screenshots/21-regatta.jpg" alt="Tin Lizzie alongside the player approaching the first Tower Circuit gate"></td>

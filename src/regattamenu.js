@@ -25,7 +25,7 @@ export function boatPartsMenu(parts, docked, message, cash) {
       </button>`;
     };
     return `<section class="parts-category"><h2>${group.label}</h2>
-      ${item('stock', group.stock, '')}${group.parts.map(p => item(p.id, p.name, p.detail, p.price, p.paint)).join('')}
+      ${item('stock', group.stock, group.stockDetail)}${group.parts.map(p => item(p.id, p.name, p.detail, p.price, p.paint)).join('')}
     </section>`;
   }).join('');
   const prompt = docked ? 'Tower dock' : 'Idle at the tower dock to fit parts.';

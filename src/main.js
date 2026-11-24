@@ -894,9 +894,11 @@ async function init() {
     game.update(dt, time);
     const freightDt = started && !game.paused ? dt : 0;
     freightState.speed = phys.speed;
-    freightState.inspect = !!game.catchTrade.cargo && game.dist(dockTie.x, dockTie.z) < 14;
+    freightState.capacity = phys.tuning.coolerCapacity;
+    freightState.inspect = !!game.catchTrade.cargo && game.catchTrade.buyers.some(at => game.dist(at.x, at.z) < 14);
     updateCatchFreight(catchFreight, game.catchTrade.cargo, freightDt, freightState);
     updateFishReceiver(fishReceiver, game.catchTrade, phys, environment, freightDt, time);
+    if (world.bendReceiver) updateFishReceiver(world.bendReceiver, game.catchTrade, phys, environment, freightDt, time);
     story.update(dt, time, started && !game.paused && !fishing.blocking() && !life.traffic.activeCollision());
     encounters.update(dt, time, started && !fishing.blocking() && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
     condition.update(dt, time, started);

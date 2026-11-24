@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { STOCK_COOLER_CAPACITY } from './boatmods.js';
 import { buildCatchCooler, setCatchCooler } from './skiffdockgear.js';
 import { addBox, addBeam, waterfrontMesh, waterfrontSurface } from './waterfrontgeometry.js';
 
@@ -33,15 +34,19 @@ function tradeLabel() {
   return labelMaterial;
 }
 
-export function buildTradeTote({ style = 0 } = {}) {
-  const gear = buildCatchCooler(style);
+export function buildTradeTote({ style = 0, capacity = STOCK_COOLER_CAPACITY } = {}) {
+  const extended = capacity > STOCK_COOLER_CAPACITY;
+  const gear = buildCatchCooler(style, extended);
   const { cooler } = gear;
-  cooler.name = 'Gulf Cut freight cooler';
+  cooler.name = extended ? 'Gulf Cut ice chest' : 'Gulf Cut freight cooler';
   const label = tradeLabel();
   if (label) {
     const tag = new THREE.Mesh(labelGeometry, label);
     tag.name = 'Gulf Cut freight label';
-    tag.position.set(0.266, 0.137, -0.034);
+    if (extended) {
+      tag.position.set(0.330, 0.147, -0.151);
+      tag.scale.setScalar(1.13);
+    } else tag.position.set(0.266, 0.137, -0.034);
     tag.rotation.y = Math.PI / 2;
     tag.receiveShadow = true;
     cooler.add(tag);
@@ -50,8 +55,8 @@ export function buildTradeTote({ style = 0 } = {}) {
   return cooler;
 }
 
-export function setTradeTote(tote, count, open = 1) {
-  setCatchCooler(totes.get(tote), count, open);
+export function setTradeTote(tote, count, open = 1, items) {
+  setCatchCooler(totes.get(tote), count, open, items);
 }
 
 // An anti-slip tray sits against the starboard gunwale beside the seat. It
@@ -99,17 +104,32 @@ export function buildCatchFreight(boat) {
   group.add(bed, straps, tote);
   group.visible = false;
   boat.add(group);
-  return { group, tote, count: 0, latched: false, opening: 0 };
+  return { group, bed, straps, tote, iceChest: null, active: tote, cargo: null, latched: false, opening: 0 };
 }
 
-export function updateCatchFreight(freight, cargo, dt, { speed = 0, inspect = false, present = true } = {}) {
-  freight.group.visible = Boolean(cargo) && present;
+export function updateCatchFreight(freight, cargo, dt, { speed = 0, inspect = false, present = true, capacity = STOCK_COOLER_CAPACITY } = {}) {
+  const upgraded = capacity > STOCK_COOLER_CAPACITY;
+  freight.group.visible = (upgraded || Boolean(cargo)) && present;
+  if (upgraded && !freight.iceChest) {
+    freight.iceChest = buildTradeTote({ capacity });
+    freight.iceChest.position.y = 0.033;
+    freight.group.add(freight.iceChest);
+  }
+  const active = upgraded ? freight.iceChest : freight.tote;
+  const changed = active !== freight.active || cargo !== freight.cargo;
+  if (active !== freight.active) {
+    freight.active.visible = false;
+    active.visible = true;
+    freight.bed.scale.set(upgraded ? 1.22 : 1, upgraded ? 1.24 : 1, upgraded ? 1.57 : 1);
+    freight.straps.scale.copy(freight.bed.scale);
+    freight.active = active;
+  }
+  if ((cargo?.count || 0) > (freight.cargo?.count || 0)) freight.latched = false;
+  freight.cargo = cargo;
   if (!cargo) {
-    if (!freight.count) return;
-    freight.count = 0;
     freight.latched = false;
     freight.opening = 0;
-    setTradeTote(freight.tote, 0, 0);
+    if (changed) setTradeTote(active, 0, 0);
     return;
   }
   const moving = Math.abs(speed) >= 0.85;
@@ -117,9 +137,8 @@ export function updateCatchFreight(freight, cargo, dt, { speed = 0, inspect = fa
   const open = !moving && (inspect || !freight.latched) ? 1 : 0;
   const rate = 1 - Math.exp(-Math.max(0, dt) * 8);
   const movement = (open - freight.opening) * rate;
-  if (freight.count !== cargo.count || Math.abs(movement) > 0.00001) {
-    freight.count = cargo.count;
+  if (changed || Math.abs(movement) > 0.00001) {
     freight.opening += movement;
-    setTradeTote(freight.tote, freight.count, freight.opening);
+    setTradeTote(active, cargo.count, freight.opening, cargo.items);
   }
 }

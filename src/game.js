@@ -9,10 +9,11 @@ import { setAirboatLivery } from './airboatlivery.js';
 import { buildRegatta, recordRegattaFinish } from './regatta.js';
 import { boatPartsMenu, raceMenu } from './regattamenu.js';
 import { CatchTrade, CATCH_SELLERS } from './catchtrade.js';
+import { describeFish } from './fishmarket.js';
 
 const SAVE_KEY = 'emeraldBayou.save.v2';
 const fmtT = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60), r = s - m * 60; return `${m}:${r < 10 ? '0' : ''}${r.toFixed(1)}`; };
-const fmtCash = (c) => '$' + Math.round(c).toLocaleString('en-US');
+export const fmtCash = (c) => '$' + Math.round(c).toLocaleString('en-US');
 const missionGoal = m => m?.gold ? `Gold ${fmtT(m.gold)}` : m?.scoreMedal ? `Gold ${m.scoreMedal[0].toLocaleString()}` : m?.timeLimit ? `${fmtT(m.timeLimit)} limit` : '';
 const MPH = 2.23694;
 const FT = 3.28084, MI = 1 / 1609.344;
@@ -195,16 +196,20 @@ export class Game {
   catchPrompt(quote) {
     if (!quote) return '';
     switch (quote.kind) {
-      case 'buy':
-        return `${TRADE_KEY} Buy ${quote.count} mullet · ${fmtCash(quote.cost)} <i>· Tower Dock pays ${fmtCash(quote.payout)}</i>`;
+      case 'buy': {
+        const filled = (this.catchTrade.cargo?.count || 0) + quote.count;
+        return `${TRADE_KEY} Buy ${describeFish(quote.items)} · ${fmtCash(quote.cost)} <i>· ${filled} / ${this.catchTrade.capacity} in cooler</i>`;
+      }
       case 'sell':
-        return `${TRADE_KEY} Unload ${quote.count} mullet · ${fmtCash(quote.payout)}`;
+        return `${TRADE_KEY} Unload ${describeFish(quote.items)} · ${fmtCash(quote.payout)}`;
       case 'help':
         return `${TRADE_KEY} ${quote.late ? 'Pack the catch' : 'Help unload the catch'} · ${fmtCash(quote.wage)}`;
       case 'helping':
         return 'Stay alongside until the catch is packed';
       case 'empty':
-        return 'Gulf Cut fish sales · Waiting for a catch';
+        return 'Waiting for a catch · Check fish prices on the chart';
+      case 'full':
+        return `Cooler full · ${this.catchTrade.capacity} / ${this.catchTrade.capacity} aboard`;
       case 'insufficient':
         return `Need ${fmtCash(quote.cost)} for this catch`;
       case 'slow':
@@ -221,14 +226,18 @@ export class Game {
     if (event.repeat || quote.kind === 'helping') return true;
     const result = this.catchTrade.interact();
     if (result?.kind === 'bought') {
-      // A pinned pickup has served its purpose. Other chart pins remain until the player clears them.
       const pin = this.navigation?.pin;
-      if (pin && Math.hypot(pin.x - result.at.x, pin.z - result.at.z) < 3) this.navigation.clearPin();
+      if (pin) {
+        const pinnedBuyer = this.catchTrade.buyers.find(buyer => Math.hypot(pin.x - buyer.x, pin.z - buyer.z) < 3);
+        if (pinnedBuyer && this.catchTrade.selectBuyer(pinnedBuyer.id)) this.navigation.clearPin();
+        else if (Math.hypot(pin.x - result.at.x, pin.z - result.at.z) < 3) this.navigation.clearPin();
+      }
       this.audio.pickup();
-      this.toast('Catch aboard', `-${fmtCash(result.cost)} · Sell at Tower Dock for ${fmtCash(result.payout)}`, 3.2);
+      this.toast('Catch aboard', `${describeFish(result.items)} · Paid ${fmtCash(result.cost)} · Fish prices on the chart`, 3.2);
     } else if (result?.kind === 'sold') {
       this.audio.complete();
-      this.toast(`Catch sold · +${fmtCash(result.payout)}`, `${fmtCash(result.profit)} profit · Boat parts at this dock`, 3.4);
+      const dock = result.at.id === 'tower' ? 'Boat parts at this dock' : result.at.name;
+      this.toast(`Catch sold · +${fmtCash(result.payout)}`, `${fmtCash(result.profit)} profit · ${dock}`, 3.4);
     }
     return true;
   }
@@ -236,7 +245,7 @@ export class Game {
     const result = this.catchTrade?.update(dt);
     if (result?.kind === 'helped') {
       this.audio.pickup();
-      this.toast(`Catch packed · +${fmtCash(result.wage)}`, 'Buy mullet from the crew while the catch is still at the pier', 3.1);
+      this.toast(`Catch packed · +${fmtCash(result.wage)}`, 'Buy the crew’s fish while the catch is still at the pier', 3.1);
     } else if (result?.kind === 'cancelled') {
       this.toast('Unloading paused', 'Head back and idle alongside to help', 2.3);
     }
@@ -283,6 +292,7 @@ export class Game {
       this.audio.checkpoint();
     } else if (result.status === 'funds') this.partsMessage = `Need ${fmtCash(result.needed)} more.`;
     else if (result.status === 'fuel') this.partsMessage = `Use the fuel above ${result.capacity} gal before fitting these tanks.`;
+    else if (result.status === 'cargo') this.partsMessage = `Sell your catch before fitting the ${result.capacity}-fish cooler.`;
     else if (result.status === 'away') this.partsMessage = 'Idle at the tower dock to fit parts.';
     else return;
     this.renderMenu();
@@ -704,6 +714,11 @@ export class Game {
     }
     if (this.mapOpen) {
       if (e.code === 'Escape' || e.code === 'KeyM' || (e.code === 'Tab' && !e.isTrusted)) this.closeMap();
+      else if (e.code === 'KeyF' && e.isTrusted && !e.repeat) {
+        this.map.marketToggle.click();
+        this.map.marketToggle.focus();
+        e.preventDefault();
+      } else if (!e.isTrusted && !e.repeat && this.map?.onControllerKey(e.code)) e.preventDefault();
       return;
     }
     if (e.code === 'Tab') { e.preventDefault(); this.openMap(); return; }
@@ -980,7 +995,8 @@ export class Game {
     }
     if (this.state) for (const j of this.jobs) j.beacon.hide();
     emitMapMarker(this, this.dockTie.x, this.dockTie.z, 'home');
-    if (!this.state && !this.catchTrade?.cargo) for (const seller of CATCH_SELLERS) {
+    const trade = this.catchTrade;
+    if (!this.state && trade && (!trade.cargo || trade.cargo.count < trade.capacity)) for (const seller of CATCH_SELLERS) {
       if (Math.hypot(seller.x - px, seller.z - pz) < 700) emitMapMarker(this, seller.x, seller.z, 'job', CATCH_MARK_COLOR, 0, false, '$');
     }
     if (this.world) {
@@ -1003,6 +1019,7 @@ export class Game {
   }
   renderHud(light = false) {
     const s = this.state, e = this.el;
+    const buyer = this.catchRouteTarget();
     if (s) {
       const h = s.m.hud(s, this);
       e.mission.innerHTML = `<div class="title">${s.m.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
@@ -1013,9 +1030,9 @@ export class Game {
       else { tm = `${fmtT(s.t)}<small>elapsed</small>`; e.timer.classList.remove('warn'); }
       e.timer.innerHTML = tm;
       e.wp.textContent = this.navigation?.target?.label || this.wpTarget?.label || '';
-    } else if (this.catchRouteTarget()) {
-      const cargo = this.catchTrade.cargo;
-      e.mission.innerHTML = `<div class="title">Fish delivery</div><div class="obj">Deliver to Tower Dock</div><div class="sub">${cargo.count} mullet aboard · ${fmtCash(cargo.payout)} on delivery</div>`;
+    } else if (buyer) {
+      const { cargo, capacity } = this.catchTrade;
+      e.mission.innerHTML = `<div class="title">Fish delivery</div><div class="obj">Deliver to ${buyer.name}</div><div class="sub">${describeFish(cargo.items)} · ${cargo.count} / ${capacity} aboard · ${fmtCash(cargo.payout)} on delivery</div>`;
       e.timer.innerHTML = ''; e.timer.classList.remove('warn'); e.wp.textContent = '';
     } else if (this.fishing?.hud()) {
       const h = this.fishing.hud();

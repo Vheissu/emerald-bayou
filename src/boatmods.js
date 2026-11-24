@@ -1,3 +1,6 @@
+export const STOCK_COOLER_CAPACITY = 4;
+export const ICE_CHEST_CAPACITY = 8;
+
 const part = (id, name, price, detail, tuning, paint) => Object.freeze({
   id, name, price, detail, tuning: Object.freeze(tuning), paint: paint && Object.freeze(paint),
 });
@@ -14,6 +17,9 @@ export const BOAT_PART_GROUPS = Object.freeze([
   { id: 'steering', label: 'Steering', stock: 'Factory blades', parts: [
     part('deep-rudders', 'Deep rudder blades', 145, '+18% rudder response', { steer: 1.18, rudderWidth: 1.14 }),
     part('chined-rudders', 'Race rudder set', 340, '+30% rudder response, +12% side grip', { steer: 1.30, sideGrip: 1.12, rudderWidth: 1.29 }),
+  ] },
+  { id: 'cooler', label: 'Fish storage', stock: 'Standard cooler', stockDetail: 'Holds 4 fish', parts: [
+    part('ice-chest', 'Ice chest', 175, 'Holds 8 fish', { coolerCapacity: ICE_CHEST_CAPACITY }),
   ] },
   { id: 'hull', label: 'Hull', stock: 'Utility hull', parts: [
     part('poly-shoes', 'Polymer runners', 275, '−21% bottom-strike severity and less drag', { bottomStrike: 0.79, drag: 0.94 }),
@@ -41,6 +47,7 @@ export const BOAT_PART_GROUPS = Object.freeze([
 export const STOCK_BOAT_TUNING = Object.freeze({
   thrust: 1, steer: 1, sideGrip: 1, drag: 1, mass: 1, damage: 1, bottomStrike: 1,
   fuelBurn: 1, capacity: 18, pump: 1, beamAngle: 1, beamRange: 1, beamPower: 1, rudderWidth: 1, propScale: 1,
+  coolerCapacity: STOCK_COOLER_CAPACITY,
 });
 
 const partById = new Map(BOAT_PART_GROUPS.flatMap(group => group.parts.map(item => [item.id, item])));
@@ -62,7 +69,7 @@ export function boatTuning(parts) {
     const item = partById.get(parts?.installed?.[group.id]);
     if (!item) continue;
     for (const [key, value] of Object.entries(item.tuning)) {
-      if (key === 'capacity') tuning.capacity = value;
+      if (key === 'capacity' || key === 'coolerCapacity') tuning[key] = value;
       else tuning[key] *= value;
     }
   }
@@ -85,6 +92,10 @@ export function fitBoatPart(save, { slot, id, docked, fuel = 0 }) {
   if (slot === 'tank') {
     const capacity = choice?.tuning.capacity || STOCK_BOAT_TUNING.capacity;
     if (fuel - capacity > 0.001) return { status: 'fuel', capacity };
+  }
+  if (slot === 'cooler') {
+    const capacity = choice?.tuning.coolerCapacity || STOCK_COOLER_CAPACITY;
+    if (save.catchTrade?.cargo?.count > capacity) return { status: 'cargo', capacity };
   }
   if (price) parts.owned.push(id);
   if (choice) parts.installed[slot] = id;

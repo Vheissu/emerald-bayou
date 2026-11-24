@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createCreelFish } from './skiffdockgear.js';
+import { createCreelFish, setCreelFish } from './skiffdockgear.js';
 import { animatePerson, cast, fishingLine, person, rodTip, setLine } from './folk.js';
 import { mulberry32 } from './noise.js';
 import { registerWetMaterial } from './surfacewetness.js';
@@ -262,6 +262,7 @@ function updateFishingLine(crew, boat, trip, dt, time, ctx, waveAt, visible) {
     lure.y = lerp(surface + settling, tip.y, progress ** 4);
     crew.hookedFish.visible = visible && crew.hasBite && progress > .56;
     if (crew.hookedFish.visible) {
+      setCreelFish(crew.hookedFish, boat.dockShift?.haulSpecies?.[trip.catchCount || 0]);
       boat.mesh.worldToLocal(crew.hookedFish.position.copy(lure));
       crew.hookedFish.rotation.set(.15 * Math.cos(time * 13), time * 2.1, .27 * Math.sin(time * 16));
       crew.float.visible = false;

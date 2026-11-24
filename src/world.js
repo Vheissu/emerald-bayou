@@ -16,6 +16,7 @@ import { attachLandingResident, updateDockResidents } from './dockresidents.js';
 import { buildWaterfront, updateWaterfront } from './waterfront.js';
 import { COVE, GULF_CUT, waterfrontColliders, waterfrontGroundOccupied, waterfrontWaterOccupied } from './waterfrontlayout.js';
 import { buildMulletFuelLanding, mulletFuelColliders, MULLET_BEND_KEY } from './mulletlanding.js';
+import { buildFishReceiver } from './fishreceiving.js';
 
 // The things scattered through the endless bayou: fish camps on the channel banks (one per ~1.6 km cell, seeded, so
 // they are the same for everyone every time) and lost crab-trap floats drifting in the back pools. Everything is
@@ -129,6 +130,11 @@ export class World {
     const dock = buildDock(14, 1.8, { weather: true, shelter: true, loadingGate: mulletBend });
     const dx = c.tie.x - c.bank.x, dz = c.tie.z - c.bank.z; const l = Math.hypot(dx, dz);
     dock.position.set(c.bank.x, 0, c.bank.z); dock.rotation.y = Math.atan2(dx / l, dz / l) + Math.PI; g.add(dock);
+    if (mulletBend && !this.bendReceiver) {
+      this.bendReceiver = buildFishReceiver(dock, 'mullet-bend');
+      // Keep the buyer and its posted prices when the camp streams out and back in.
+      this.scene.attach(this.bendReceiver.group);
+    }
     const dockShelter = positionDockShelter(dock, T);
     const rr = mulberry32(c.seed);
     // moored johnboat alongside, drums and traps on the bank

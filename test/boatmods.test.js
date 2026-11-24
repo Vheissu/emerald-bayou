@@ -38,7 +38,7 @@ test('migrates old balances and preserves only valid owned, correctly slotted in
 test('the berth charges once, keeps ownership across fittings and prevents lost fuel when downsizing', () => {
   const save = { cash: 500 };
   const fit = (slot, id, docked = true, fuel = 12) => fitBoatPart(save, { slot, id, docked, fuel });
-  assert.equal(BOAT_PART_GROUPS.filter(slot => slot.id !== 'livery').flatMap(slot => slot.parts).length, 14);
+  assert.equal(BOAT_PART_GROUPS.filter(slot => slot.id !== 'livery').flatMap(slot => slot.parts).length, 15);
   assert.equal(fit('engine', 'torque-cam', false).status, 'away');
   assert.equal(fit('engine', 'range-tank').status, 'invalid');
   assert.deepEqual(fit('engine', 'blueprinted'), { status: 'funds', needed: 190 });
@@ -52,6 +52,21 @@ test('the berth charges once, keeps ownership across fittings and prevents lost 
   assert.equal(boatTuning(save.boatParts).capacity, 18);
   assert.equal(fit('tank', 'range-tank').price, 0);
   assert.equal(save.cash, 295);
+});
+
+test('the ice chest doubles capacity and requires room before refitting the standard cooler', () => {
+  const save = { cash: 200, catchTrade: { cargo: { count: 5 } } };
+  const install = { slot: 'cooler', id: 'ice-chest', docked: true };
+  assert.equal(boatTuning().coolerCapacity, 4);
+  assert.equal(fitBoatPart(save, { ...install, docked: false }).status, 'away');
+  assert.equal(fitBoatPart(save, install).price, 175);
+  assert.deepEqual(fitBoatPart(save, { ...install, id: 'stock' }), { status: 'cargo', capacity: 4 });
+  assert.equal(boatTuning(normalizeBoatParts(JSON.parse(JSON.stringify(save.boatParts)))).coolerCapacity, 8);
+  save.catchTrade.cargo.count = 4;
+  assert.equal(fitBoatPart(save, { ...install, id: 'stock' }).price, 0);
+  assert.equal(boatTuning(save.boatParts).coolerCapacity, 4);
+  assert.equal(fitBoatPart(save, install).price, 0);
+  assert.equal(save.cash, 25);
 });
 
 test('purchased livery fits both sides through the damage shader and survives serialization', () => {

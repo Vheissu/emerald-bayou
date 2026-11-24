@@ -1,11 +1,12 @@
-import { WORLD_HALF, HOME_X, HOME_Z } from './heightfield.js';
-import { fmtDist } from './game.js';
+import { WORLD_HALF } from './heightfield.js';
+import { fmtCash, fmtDist } from './game.js';
 import { REGIONS, regionAt } from './regions.js';
 import { MAX_DRAW_PIXELS, pixelRatioFor } from './renderquality.js';
 import { drawRoutePin, minimapTileColumn, minimapTileRow } from './hud.js';
 import { ROUTE_COLOR } from './chartnavigation.js';
 import { bridgeZAt, GULF_CUT, COVE } from './waterfrontlayout.js';
 import { CATCH_SELLERS } from './catchtrade.js';
+import { MARKET_FISH, describeFish } from './fishmarket.js';
 
 const MILE = 1609.344;
 const REGION_LABEL_OFFSET = {
@@ -30,6 +31,8 @@ export class WorldMap {
     this.routeDetail = document.getElementById('bigmapRouteDetail');
     this.clearButton = document.getElementById('chartClear');
     this.frameButton = document.getElementById('chartFrame');
+    this.market = document.getElementById('chartMarket');
+    this.marketToggle = document.getElementById('chartMarketToggle');
     this.pickTargets = [];
     this.tiles = new Map(); this.inFlight = 0; this.tileGeneration = 0; this.tileReleases = 0; this.releasedBackingBytes = 0;
     this.open = false; this.scale = 0.3; this.cx = 0; this.cz = 0; this.follow = true;
@@ -79,6 +82,11 @@ export class WorldMap {
     });
     this.clearButton.addEventListener('click', () => this.clearPin());
     this.frameButton.addEventListener('click', () => this.frameRoute());
+    this.marketToggle.addEventListener('click', () => this.showMarket(this.market.hidden));
+    this.market.addEventListener('click', e => {
+      const id = e.target.closest('button[data-buyer]')?.dataset.buyer;
+      if (id) this.routeToBuyer(id);
+    });
     document.getElementById('chartPin').addEventListener('click', () => this.pinAt(this.viewWidth / 2, this.viewHeight / 2));
     document.getElementById('chartZoomIn').addEventListener('click', () => this.zoomAt(this.viewWidth / 2, this.viewHeight / 2, 1.6));
     document.getElementById('chartZoomOut').addEventListener('click', () => this.zoomAt(this.viewWidth / 2, this.viewHeight / 2, 1 / 1.6));
@@ -97,14 +105,91 @@ export class WorldMap {
     }
     const x = this.cx + (px - this.viewWidth / 2) / this.scale;
     const z = this.cz + (py - this.viewHeight / 2) / this.scale;
+    if (nearest?.buyer && this.G.catchRouteTarget()) {
+      this.routeToBuyer(nearest.buyer);
+      return;
+    }
     if (nearest) this.G.navigation.setPin(nearest.x, nearest.z, nearest.label);
     else if (Math.abs(x) < WORLD_HALF - 60 && Math.abs(z) < WORLD_HALF - 60) this.G.navigation.setPin(x, z);
+    this.updateMarketRoutes();
     this.render();
   }
   clearPin() {
     this.G.navigation.clearPin();
     if (document.activeElement === this.clearButton) this.canvas.focus({ preventScroll: true });
+    this.updateMarketRoutes();
     this.render();
+  }
+  showMarket(open, fit = true) {
+    this.market.hidden = !open;
+    this.marketToggle.setAttribute('aria-expanded', String(open));
+    if (open) this.renderMarket();
+    if (fit) this.fit();
+  }
+  renderMarket() {
+    const trade = this.G.catchTrade;
+    const { buyers, cargo, capacity } = trade;
+    const demand = buyers.map(buyer => trade.demand(buyer.id));
+    const rows = Object.entries(MARKET_FISH).map(([species, fish]) => {
+      const rates = demand.map(orders => {
+        const rate = orders.find(order => order.species === species);
+        if (!rate) return '<td></td>';
+        return rate.remaining > 0
+          ? `<td>${rate.remaining} at <strong>${fmtCash(rate.price)}</strong><small>${fmtCash(rate.base)} after</small></td>`
+          : `<td>${fmtCash(rate.base)}</td>`;
+      });
+      const name = fish.name[0].toUpperCase() + fish.name.slice(1);
+      return `<tr><th scope="row">${name}</th><td>${fmtCash(fish.buy)}</td>${rates.join('')}</tr>`;
+    });
+    const quotes = trade.quotes();
+    const actions = buyers.map(buyer => {
+      const quote = quotes.find(q => q.at.id === buyer.id);
+      const payout = cargo && quote ? `<span>${fmtCash(quote.payout)} for your load</span>` : '';
+      return `<button type="button" data-buyer="${buyer.id}" aria-pressed="false">Route to ${buyer.name}${payout}</button>`;
+    });
+    const landings = CATCH_SELLERS.map(seller => {
+      const fish = describeFish(trade.stockAt(seller.id));
+      const name = seller.index === 0 ? 'North Pier' : 'South Pier';
+      return `<div><dt>${name}</dt><dd>${fish || 'Waiting for catch'}</dd></div>`;
+    });
+    this.market.innerHTML = `<h3 id="fishPricesHeading">Fish prices</h3>
+      <p class="market-tally">${cargo ? describeFish(cargo.items) : 'Cooler empty'} <b>${cargo?.count || 0} / ${capacity} aboard</b></p>
+      <table aria-label="Prices per fish"><thead><tr><th scope="col">Per fish</th><th scope="col">At pier</th>${buyers.map(buyer => `<th scope="col">${buyer.name}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>
+      <div class="market-actions">${actions.join('')}</div>
+      <h3>Gulf Cut landings</h3><dl>${landings.join('')}</dl>
+      <p>Dock orders reset daily.</p>`;
+    this.updateMarketRoutes();
+  }
+  updateMarketRoutes() {
+    if (this.market.hidden) return;
+    const pin = this.G.navigation?.pin;
+    const trade = this.G.catchTrade;
+    const current = pin ? trade.buyers.find(buyer => buyer.x === pin.x && buyer.z === pin.z) : this.G.catchRouteTarget();
+    for (const button of this.market.querySelectorAll('[data-buyer]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.buyer === current?.id));
+    }
+  }
+  routeToBuyer(id) {
+    const trade = this.G.catchTrade;
+    const buyer = trade.buyers.find(at => at.id === id);
+    if (!buyer) return;
+    if (this.G.catchRouteTarget() && trade.selectBuyer(id)) this.G.navigation.clearPin();
+    else this.G.navigation.setPin(buyer.x, buyer.z, buyer.label);
+    this.updateMarketRoutes();
+    this.render();
+  }
+  onControllerKey(code) {
+    if (code === 'Enter') {
+      const focused = document.activeElement;
+      (focused?.matches('#bigmap button:not(:disabled)') ? focused : this.marketToggle).click();
+      return true;
+    }
+    const direction = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[code];
+    if (!direction) return false;
+    const controls = [...this.el.querySelectorAll('button:not(:disabled)')].filter(button => !button.closest('[hidden]'));
+    const index = controls.indexOf(document.activeElement);
+    controls[index < 0 ? 0 : (index + direction + controls.length) % controls.length]?.focus();
+    return true;
   }
   frameRoute() {
     const nav = this.G.navigation, route = nav.plan;
@@ -136,7 +221,9 @@ export class WorldMap {
   }
   show() {
     this.open = true; this.follow = true;
-    this.el.classList.remove('hidden'); this.fit();
+    this.el.classList.remove('hidden');
+    this.showMarket(Boolean(this.G.catchTrade.cargo), false);
+    this.fit();
     this.canvas.focus({ preventScroll: true });
   }
   hide() {
@@ -247,7 +334,7 @@ export class WorldMap {
     // markers in screen space
     const toS = (x, z) => [W / 2 + (x - this.cx) * k, H / 2 + (z - this.cz) * k];
     this.pickTargets.length = 0;
-    const pick = (px, py, x, z, label) => this.pickTargets.push({ px, py, x, z, label });
+    const pick = (px, py, x, z, label, buyer) => this.pickTargets.push({ px, py, x, z, label, buyer });
     const font = (px, w = 500) => `${w} ${px * dpr}px "Avenir Next Condensed", "Avenir Next", sans-serif`;
     const label = (x, y, text, col = '#f3ede0', px = 13, dy = 0) => { c.font = font(px, 600); c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillStyle = 'rgba(8,20,15,0.8)'; c.fillText(text, x + 9 * dpr + 1, y + dy + 1); c.fillStyle = col; c.fillText(text, x + 9 * dpr, y + dy); };
     if (pursuitSearch) { const [x, y] = toS(pursuitSearch.x, pursuitSearch.z); if (x > -80 && y > -40 && x < W + 40 && y < H + 40) label(x, y, 'FWC LAST-FIX AREA', '#69afff', 10, -14 * dpr); }
@@ -260,12 +347,12 @@ export class WorldMap {
       c.moveTo(x, y - 4 * dpr); c.lineTo(x, y + 4 * dpr); c.lineWidth = 1.5 * dpr; c.strokeStyle = '#e9e3d4'; c.stroke();
       if (this.scale > 0.42) label(x, y, landmark.name, '#e9e3d4', 11, landmark === GULF_CUT ? -10 * dpr : 0);
     }
-    // home
-    {
-      const [x, y] = toS(HOME_X + 65, HOME_Z - 115), berth = this.G.dockTie;
-      pick(x, y, berth.x, berth.z, 'Tower dock');
+    for (const buyer of this.G.catchTrade.buyers) {
+      const [x, y] = toS(buyer.x, buyer.z);
+      if (x < -70 || y < -35 || x > W + 35 || y > H + 35) continue;
+      pick(x, y, buyer.x, buyer.z, buyer.label, buyer.id);
       c.fillStyle = '#e5c063'; c.beginPath(); c.moveTo(x, y - 7 * dpr); c.lineTo(x + 5 * dpr, y + 5 * dpr); c.lineTo(x - 5 * dpr, y + 5 * dpr); c.closePath(); c.fill();
-      label(x, y, 'Tower dock', '#e5c063');
+      label(x, y, buyer.name, '#e5c063', 12, -9 * dpr);
     }
     if (this.scale > 0.08) {
       const closeDocks = this.scale > 0.72;
@@ -288,6 +375,7 @@ export class WorldMap {
     const seen = this.G.save.seen || [], known = this.G.save.camps || [];
     for (const key of seen) {
       const [ci, cj] = key.split(',').map(Number); const cp = this.W.campAt(ci, cj); if (!cp) continue;
+      if (this.G.catchTrade.buyers.some(buyer => Math.hypot(buyer.x - cp.tie.x, buyer.z - cp.tie.z) < 14)) continue;
       const [x, y] = toS(cp.x, cp.z); const isKnown = known.includes(key);
       if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
       pick(x, y, cp.tie.x, cp.tie.z, isKnown ? cp.name : 'Uncharted camp');
