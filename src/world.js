@@ -15,7 +15,7 @@ import { buildRoofDrain, updateRoofDrain } from './roofdrain.js';
 import { attachLandingResident, updateDockResidents } from './dockresidents.js';
 import { buildWaterfront, updateWaterfront } from './waterfront.js';
 import { COVE, GULF_CUT, waterfrontColliders, waterfrontGroundOccupied, waterfrontWaterOccupied } from './waterfrontlayout.js';
-import { buildMulletFuelLanding, mulletFuelColliders, MULLET_BEND_KEY } from './mulletlanding.js';
+import { buildMulletFuelLanding, mulletFuelColliders, MULLET_BEND_KEY, MULLET_DOCK_LENGTH } from './mulletlanding.js';
 import { buildFishReceiver } from './fishreceiving.js';
 
 // The things scattered through the endless bayou: fish camps on the channel banks (one per ~1.6 km cell, seeded, so
@@ -241,7 +241,8 @@ export class World {
   }
   campColliders(c) {
     const dx = c.tie.x - c.bank.x, dz = c.tie.z - c.bank.z, l = Math.hypot(dx, dz) || 1;
-    const colliders = [{ ax: c.bank.x, az: c.bank.z, bx: c.bank.x + dx / l * 14, bz: c.bank.z + dz / l * 14, r: 1.1, tag: 'dock' }, { x: c.x, z: c.z, r: 2.6, tag: 'house' }];
+    const length = c.key === MULLET_BEND_KEY ? MULLET_DOCK_LENGTH : 14;
+    const colliders = [{ ax: c.bank.x, az: c.bank.z, bx: c.bank.x + dx / l * length, bz: c.bank.z + dz / l * length, r: 1.1, tag: 'dock' }, { x: c.x, z: c.z, r: 2.6, tag: 'house' }];
     if (c.key === MULLET_BEND_KEY) colliders.push(...mulletFuelColliders(c));
     return colliders;
   }

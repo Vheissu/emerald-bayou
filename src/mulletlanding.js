@@ -6,6 +6,7 @@ import { registerWetMaterial } from './surfacewetness.js';
 import { plank } from './textures.js';
 
 export const MULLET_BEND_KEY = '-1,0';
+export const MULLET_DOCK_LENGTH = 17.25; // includes the receiving platform beyond the original 14 m pier
 const landing = { x: -2.06, z: -4.91, deck: 0.81, width: 2.30, depth: 2.56 };
 const drums = [
   { x: -0.49, z: 0.53, yaw: 0 },

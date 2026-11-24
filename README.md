@@ -76,7 +76,7 @@ Mullet cost $14 at the pier, speckled trout $18 and redfish $22. You can buy fro
 
 Open **Fish prices** on the chart to see what each crew has landed and what both docks will pay for your load. On the first day, Tower Dock offers $72 each for its first four redfish. Mullet Bend wants four speckled trout at $73 each. Once a dock fills its order, it pays its regular rate for any extras. Both docks post new orders each game day.
 
-Choose a buyer on the chart to plot the run. At the dock, idle alongside the price board and press the dock interaction to sell. Your catch and chosen destination stay with the boat if you quit mid-delivery.
+Choose a buyer on the chart to plot the run. At the dock, look for the fish plates beside the scale. The price slip on each plate shows what the buyer will pay and how many fish still earn the premium. Idle alongside and press the dock interaction to sell. The buyer weighs the fish and writes up the delivery. Your catch and chosen destination stay with the boat if you quit mid-run.
 
 <table><tr>
 <td width="50%"><img src="docs/screenshots/35-catch-unloading.jpg" alt="The player's airboat holds a line alongside the crew unloading at Gulf Cut"></td>
@@ -84,6 +84,9 @@ Choose a buyer on the chart to plot the run. At the dock, idle alongside the pri
 </tr><tr>
 <td><img src="docs/screenshots/37-catch-route.jpg" alt="The chart compares both dock offers for the load and plots the route to Mullet Bend"></td>
 <td><img src="docs/screenshots/38-fish-buyer.jpg" alt="The Mullet Bend fish buyer at the scale beneath the posted dock prices"></td>
+</tr><tr>
+<td><img src="docs/screenshots/40-fish-house-buyer.jpg" alt="A closer look at the fish buyer behind the counter"></td>
+<td><img src="docs/screenshots/41-dock-scale.jpg" alt="A mixed catch on ice in the scale pan beside the delivery ledger"></td>
 </tr></table>
 
 ## Races and boat parts
@@ -124,6 +127,8 @@ The game runs without them. `src/models.js` catches the failed loads and falls b
 The GitHub Pages workflow downloads and verifies this archive before it builds the public game.
 
 The authored [brown pelican](assets/wildlife/README.md) and [great egret](assets/wildlife/great-egret.md) ship with the repository, separately from that archive. Their editable Blender scenes, source images and rebuild scripts are included.
+
+The fish-house signs and buyer also ship with the game. The sign assembly includes the original fish illustration, both dock names and three removable price slips. Both Blender files have their textures packed. [Fish-house signs](assets/environment/fish-house-signs.blend) · [Rigged buyer](assets/people/fish-buyer.blend) · [Character assets](assets/people/fish-buyer.md)
 
 The Mullet Bend landing uses timber from Dekogon's Laguna Dock and two barrels from Meshingun Studio's Decay: Oil Drums District. The third-party artwork in the assembled landing retains its Fab license. The MIT license covers the game code. [Laguna Dock](https://www.fab.com/listings/479edb95-e334-4528-b082-d2ecc2255692) · [Oil Drums District](https://www.fab.com/listings/1ba1866e-ed8b-49b6-86c4-811f8e1fa9ce) · [Fab license](https://www.fab.com/eula)
 

@@ -159,6 +159,45 @@ function buildChestLid() {
   return waterfrontMesh(batch, shellFinish).geometry;
 }
 
+function fishScales() {
+  const canvas = document.createElement('canvas'), random = mulberry32(5602);
+  canvas.width = 512;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, 512, 256);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 26, 512, 189);
+  ctx.clip();
+  const skin = ctx.createLinearGradient(0, 0, 512, 0);
+  skin.addColorStop(0, '#d6dad5');
+  skin.addColorStop(0.26, '#f7f7ed');
+  skin.addColorStop(0.72, '#fafaf2');
+  skin.addColorStop(1, '#cacfc9');
+  ctx.fillStyle = skin;
+  ctx.fillRect(0, 26, 512, 189);
+  for (let row = 0; row < 24; row++) for (let col = 0; col < 49; col++) {
+    const x = 56 + 9.4 * col + (row % 2) * 4.7, y = 24 + row * 8.2;
+    const fade = Math.min(0.8, (x - 48) / 120, (517 - x) / 68);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x + 7.7, y + 4.3, x, y + 8.6);
+    ctx.strokeStyle = `rgba(84,94,77,${Math.max(0, fade * (0.08 + random() * 0.23))})`;
+    ctx.lineWidth = 0.82;
+    ctx.stroke();
+  }
+  for (let i = 0; i < 5000; i++) {
+    ctx.fillStyle = random() < 0.5 ? 'rgba(65,68,56,.09)' : 'rgba(255,255,249,.38)';
+    ctx.fillRect(random() * 512, 25 + random() * 192, 0.3 + random() * 2, 0.45 + random() * 1.2);
+  }
+  ctx.restore();
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
 function makeFish(variant) {
   // Nine tapered cross-sections keep the small heads and split tails distinct
   // at dock distance. The side carries bands laid into the scales themselves.
@@ -167,16 +206,16 @@ function makeFish(variant) {
     [-0.051, 0.037, 0.033], [0.013, 0.033, 0.029], [0.066, 0.026, 0.023],
     [0.115, 0.015, 0.015], [0.151, 0.011, 0.01], [0.164, 0.004, 0.004],
   ];
-  const radial = 14, positions = [], uvs = [], indices = [], batch = [];
+  const radial = 24, stride = radial + 1, positions = [], uvs = [], indices = [], batch = [];
   for (let j = 0; j < stations.length; j++) {
     const [x, height, beam] = stations[j];
-    for (let k = 0; k < radial; k++) {
+    for (let k = 0; k <= radial; k++) {
       const angle = k * Math.PI * 2 / radial;
       positions.push(x, Math.cos(angle) * height, Math.sin(angle) * beam);
-      uvs.push(j / (stations.length - 1), k / radial);
-      if (j === stations.length - 1) continue;
-      const a = j * radial + k, b = j * radial + (k + 1) % radial;
-      indices.push(a, b, a + radial, b, b + radial, a + radial);
+      uvs.push(j / (stations.length - 1), 0.18 + k / radial * 0.70);
+      if (j === stations.length - 1 || k === radial) continue;
+      const a = j * stride + k, b = a + 1;
+      indices.push(a, b, a + stride, b, b + stride, a + stride);
     }
   }
   const geometry = new THREE.BufferGeometry();
@@ -184,6 +223,14 @@ function makeFish(variant) {
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
+  // Share the computed normal across the texture seam on the fish's back.
+  const normals = geometry.attributes.normal, normal = new THREE.Vector3(), edgeNormal = new THREE.Vector3();
+  for (let row = 0; row < stations.length; row++) {
+    const start = row * stride, end = start + radial;
+    normal.fromBufferAttribute(normals, start).add(edgeNormal.fromBufferAttribute(normals, end)).normalize();
+    normals.setXYZ(start, normal.x, normal.y, normal.z);
+    normals.setXYZ(end, normal.x, normal.y, normal.z);
+  }
   tintGeometry(batch, geometry, variant.body, (x, y, z) => {
     const flank = Math.min(1, Math.abs(z) / 0.033);
     const scales = 0.042 * Math.sin(140 * x + 715 * y);
@@ -200,13 +247,24 @@ function makeFish(variant) {
       colors.setXYZ(i, flank.r, flank.g, flank.b);
     }
   }
-  const fin = (name, color) => {
-    const pts = name.map(p => new THREE.Vector3(...p));
-    const triangles = new THREE.BufferGeometry().setFromPoints(pts);
-    triangles.setIndex([0, 1, 2, 0, 2, 3]);
-    triangles.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+  const fin = (silhouette, color) => {
+    const corners = silhouette.map(p => new THREE.Vector3(...p));
+    const center = corners.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(0.25);
+    center.z += 0.003;
+    const outline = corners.flatMap((point, i) => [
+      point.clone().lerp(corners[(i + 3) % 4], 0.12),
+      point.clone().lerp(corners[(i + 1) % 4], 0.12),
+    ]);
+    const triangles = new THREE.BufferGeometry().setFromPoints([center, ...outline]);
+    const faces = [], texels = [0.5, 0.5];
+    for (let i = 0; i < outline.length; i++) {
+      faces.push(0, i + 1, (i + 1) % outline.length + 1);
+      texels.push(i / outline.length, 0);
+    }
+    triangles.setIndex(faces);
+    triangles.setAttribute('uv', new THREE.Float32BufferAttribute(texels, 2));
     triangles.computeVertexNormals();
-    tintGeometry(batch, triangles, color);
+    tintGeometry(batch, triangles, color, (x, y, z) => 0.79 + 0.23 * Math.sin(106 * x - 91 * y + 54 * z) ** 2);
   };
   const fork = variant.id === 'redfish' ? 0.228 : variant.id === 'trout' ? 0.220 : 0.196;
   fin([[0.139, 0.009, 0], [0.235, 0.061, 0], [fork, 0, 0], [0.145, -0.01, 0]], variant.fin);
@@ -241,10 +299,19 @@ function makeFish(variant) {
       }
     }
   }
+  for (const detail of batch.slice(1)) {
+    // Eyes, gills, spots and fins use vertex colours and sample the blank edge of the atlas.
+    const texels = detail.attributes.uv;
+    for (let i = 0; i < texels.count; i++) texels.setY(i, 0.98);
+  }
   return waterfrontMesh(batch, fishFinish, false).geometry.scale(...variant.scale);
 }
 
 function fishGeometry(index) {
+  if (!fishFinish.map && typeof document !== 'undefined') {
+    fishFinish.map = fishScales();
+    fishFinish.needsUpdate = true;
+  }
   return fishGeometries[index] ??= makeFish(fishVariants[index]);
 }
 
@@ -278,7 +345,7 @@ const chestFishPoses = [
   [0.047, 0.183, 0.230, Math.PI + 0.15, -1.39, 0.88],
 ];
 
-function addFish(parent, poses) {
+export function buildCatchDisplay(parent, poses) {
   const bed = new THREE.Group();
   bed.name = 'Catch on ice';
   const pose = new THREE.Object3D();
@@ -331,7 +398,7 @@ function makeBench(berth, parent) {
   bench.name = 'Catch bench';
   bench.position.set(benchX, pier.deck, benchZ);
 
-  const landedFish = addFish(bench, panFishPoses);
+  const landedFish = buildCatchDisplay(bench, panFishPoses);
   landedFish.name = 'Catch on the bench';
   landedFish.position.set(panX, 0.853, 0);
   parent.add(bench);
@@ -370,7 +437,7 @@ export function buildCatchCooler(index = 0, chest = false) {
   lid.position.set(0, chest ? 0.302 : 0.238, chest ? 0.299 : hingeSide * 0.164);
   ice.receiveShadow = true;
   cooler.add(ice, lid);
-  const contents = addFish(cooler, chest ? chestFishPoses : fishPoses);
+  const contents = buildCatchDisplay(cooler, chest ? chestFishPoses : fishPoses);
   for (const prop of [cooler, lid]) prop.castShadow = prop.receiveShadow = true;
   return { cooler, lid, hingeSide, contents };
 }
@@ -390,7 +457,7 @@ export function buildDockGear(boat, index, parent) {
   return { ...container, tackle, ...makeBench(boat.berth, parent) };
 }
 
-function showFish(bed, count, species) {
+export function setCatchDisplay(bed, count, species) {
   const record = fishBeds.get(bed), { matrices, layers } = record;
   const shown = Number.isFinite(count) ? Math.min(matrices.length, Math.max(0, Math.floor(count))) : 0;
   let remaining = shown;
@@ -424,11 +491,11 @@ function showFish(bed, count, species) {
 }
 
 export function setCatchCooler(gear, count, open = 0, species) {
-  showFish(gear.contents, count, species);
+  setCatchDisplay(gear.contents, count, species);
   gear.lid.rotation.x = gear.hingeSide * THREE.MathUtils.clamp(open, 0, 1) * 1.64;
 }
 
 export function setDockCatch(gear, count, open = 0, landedCount = 0, landedSpecies, creelSpecies) {
   setCatchCooler(gear, count, open, creelSpecies);
-  showFish(gear.landedFish, landedCount, landedSpecies);
+  setCatchDisplay(gear.landedFish, landedCount, landedSpecies);
 }
