@@ -12,6 +12,8 @@ import { buildCampWork, poseCampWorker, updateCampWork } from './campwork.js';
 import { updateDockWeather } from './dockweather.js';
 import { buildRoofDrain, updateRoofDrain } from './roofdrain.js';
 import { attachLandingResident, updateDockResidents } from './dockresidents.js';
+import { buildWaterfront, updateWaterfront } from './waterfront.js';
+import { COVE, GULF_CUT, waterfrontColliders, waterfrontGroundOccupied, waterfrontWaterOccupied } from './waterfrontlayout.js';
 import { buildMulletFuelLanding, mulletFuelColliders, MULLET_BEND_KEY } from './mulletlanding.js';
 
 // The things scattered through the endless bayou: fish camps on the channel banks (one per ~1.6 km cell, seeded, so
@@ -50,6 +52,8 @@ export class World {
     this.cellCacheEvictions = { camps: 0, sites: 0, traps: 0 };
     this.checkT = 0; this.collected = new Set(); this.phys = null; this.wind = null;
     this.homeWeather = null; this.environment = null;
+    this.waterfront = null;
+    this.swimCove = COVE;
     this.fx = null; // { plume, spray, audio, fish, playerWakeAt } from main
     this.stampPool = new WakeStampPool(24); this.obLevel = 0; this.obPitch = 1; this.obX = 0; this.obZ = 0; this.truckLevel = 0; this.onShot = null;
     this.emitStamp = (x, z, radius, height, foam, foamRadius) => this.stampPool.emit(x, z, radius, height, foam, foamRadius);
@@ -193,8 +197,10 @@ export class World {
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const st = this.siteAt(i, j); if (st && Math.hypot(st.x - x, st.z - z) <= r) out.push(st); }
     return out;
   }
-  // ground the vegetation must leave alone: around every camp and homestead
+  vegetationBlockedAt(x, z) { return waterfrontGroundOccupied(x, z) || this.blockedAt(x, z); }
+  // Keep spawns clear of docks and obstacles, including supports beneath the crossing.
   blockedAt(x, z) {
+    if (this.swimCove && waterfrontWaterOccupied(x, z)) return true;
     // This predicate is used by placement and navigation loops, so walk the cells directly and stop at the first hit.
     const siteI0 = Math.floor((x - BLOCK_RADIUS) / SITE_CELL), siteI1 = Math.floor((x + BLOCK_RADIUS) / SITE_CELL);
     const siteJ0 = Math.floor((z - BLOCK_RADIUS) / SITE_CELL), siteJ1 = Math.floor((z + BLOCK_RADIUS) / SITE_CELL);
@@ -270,6 +276,18 @@ export class World {
     this.checkT -= dt;
     if (this.checkT <= 0) {
       this.checkT = 0.5;
+      const nearWaterfront = (bx - GULF_CUT.x) ** 2 + (bz - GULF_CUT.z) ** 2 < 1200 ** 2;
+      if (nearWaterfront && !this.waterfront) {
+        this.waterfront = buildWaterfront(this.T, this.vegetation);
+        this.scene.add(this.waterfront.group);
+      }
+      if (this.waterfront) {
+        this.waterfront.group.visible = nearWaterfront;
+        if (this.phys) {
+          if (nearWaterfront && !this.phys.dyn.has('waterfront')) this.phys.addObs('waterfront', waterfrontColliders);
+          else if (!nearWaterfront) this.phys.removeObs('waterfront');
+        }
+      }
       const camps = this.campsNear(bx, bz, 1500);
       for (const c of camps) if (!this.liveCamps.has(c.key)) { const g = this.buildCamp(c); this.scene.add(g); this.liveCamps.set(c.key, g); if (this.phys) this.phys.addObs('camp:' + c.key, this.campColliders(c)); }
       for (const [key, g] of this.liveCamps) { const c = this.campCells.get(key); if (Math.hypot(c.x - bx, c.z - bz) > 1800) { this.scene.remove(g); this.releaseGeometry(g); this.liveCamps.delete(key); if (this.phys) this.phys.removeObs('camp:' + key); } }
@@ -286,6 +304,7 @@ export class World {
     ctx.vx = P?.vel?.x ?? 0; ctx.vz = P?.vel?.y ?? 0;
     ctx.residentDt = this.environment?.game?.playing && !this.environment.game.paused ? dt : 0;
     updateDockWeather(this.homeWeather, dt, bx, bz, this.environment);
+    if (this.waterfront) updateWaterfront(this.waterfront, this.T, t, this.waveFn, this.wind, ctx, this.environment);
     for (const g of this.liveCamps.values()) {
       const drain = g.userData.roofDrain;
       if (drain && this.environment) {

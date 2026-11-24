@@ -147,10 +147,10 @@ const CHANNELS = Object.keys(ZERO);
 
 // pose: 'stand' | 'sit' (on a 0.45 m seat) | 'sitEdge' (on the ground/deck, legs over the edge) | 'crouch'
 // rod: a rod in the right hand; gun: a shotgun; drive: a hand on a wheel; waders: chest waders; vest: a life jacket
-export function person(rr, { pose = 'stand', rod = false, hat = true, gun = false, drive = false, waders = false, vest = false, work = false } = {}) {
+export function person(rr, { pose = 'stand', rod = false, hat = true, gun = false, drive = false, waders = false, vest = false, work = false, swimming = false } = {}) {
   const g = new THREE.Group();
   const skin = pick(rr, SKIN), shirt = pick(rr, SHIRT), pants = waders ? WADER : pick(rr, PANTS), hair = pick(rr, HAIR);
-  const shorts = !waders && pose !== 'crouch' && rr() < 0.3 && !work;
+  const shorts = swimming || (!waders && pose !== 'crouch' && rr() < 0.3 && !work);
   const hips = new THREE.Group(); hips.position.y = HIP_Y[pose]; g.add(hips);
   hips.add(figureMesh('waist', beltlineGeometry, pants));
   const spine = new THREE.Group(); spine.position.y = 0.1; hips.add(spine);
@@ -176,11 +176,11 @@ export function person(rr, { pose = 'stand', rod = false, hat = true, gun = fals
   for (const sx of [-1, 1]) {
     const upper = new THREE.Group();
     upper.position.set(sx * 0.215, 0.5, 0);
-    upper.add(work ? figureMesh('rolled work sleeve', rolledSleeveGeometry, shirt)
+    upper.add(work || swimming ? figureMesh('rolled work sleeve', rolledSleeveGeometry, shirt)
       : figureMesh('upper sleeve', () => sleeveGeometry(false), shirt));
     const fore = new THREE.Group();
     fore.position.y = -0.3;
-    fore.add(work ? figureMesh(sx < 0 ? 'left forearm' : 'right forearm', () => forearmGeometry(sx), skin)
+    fore.add(work || swimming ? figureMesh(sx < 0 ? 'left forearm' : 'right forearm', () => forearmGeometry(sx), skin)
       : figureMesh('lower sleeve', () => sleeveGeometry(true), shirt));
     upper.add(fore);
     const hand = figureMesh(sx < 0 ? 'left hand' : 'right hand', () => handGeometry(sx), skin, false);
@@ -198,8 +198,10 @@ export function person(rr, { pose = 'stand', rod = false, hat = true, gun = fals
     shin.position.y = -0.42;
     shin.add(figureMesh(shorts ? 'bare calf' : 'lower pants leg', () => pantsGeometry(true, shorts), shorts ? skin : pants));
     thigh.add(shin);
-    const boot = figureMesh('work boot', bootGeometry, waders ? WADER : SHOE);
-    boot.position.set(0, -0.415, 0.06);
+    const boot = swimming
+      ? figureMesh('bare foot', () => new THREE.SphereGeometry(1, 10, 8).scale(0.047, 0.043, 0.10), skin, false)
+      : figureMesh('work boot', bootGeometry, waders ? WADER : SHOE);
+    boot.position.set(0, -0.415, swimming ? 0.044 : 0.06);
     shin.add(boot);
     hips.add(thigh); legs.push({ thigh, shin, boot });
   }
@@ -219,7 +221,7 @@ export function person(rr, { pose = 'stand', rod = false, hat = true, gun = fals
     const stock = new THREE.Mesh(personGeometry('gun-stock', () => new THREE.BoxGeometry(0.05, 0.4, 0.09)), WOOD); stock.position.set(0, -0.15, 0.02); gunG.add(stock);
     gunG.rotation.x = Math.PI + 0.1;
   }
-  if (!rod && !gun && !drive && !work && rr() < 0.4) { can = new THREE.Mesh(personGeometry('can', () => new THREE.CylinderGeometry(0.033, 0.033, 0.12, 10)), pick(rr, CAN)); can.position.y = -0.3; can.rotation.x = 0.25; arms[0].fore.add(can); }
+  if (!swimming && !rod && !gun && !drive && !work && rr() < 0.4) { can = new THREE.Mesh(personGeometry('can', () => new THREE.CylinderGeometry(0.033, 0.033, 0.12, 10)), pick(rr, CAN)); can.position.y = -0.3; can.rotation.x = 0.25; arms[0].fore.add(can); }
   const base = { ...ZERO, ...BASE[pose] };
   if (rod) { base.rf = 1.0; base.ro = 0.12; base.re = 0.75; if (pose === 'stand') { base.lf = 0.6; base.lo = -0.3; base.le = 1.0; } base.hdx = 0.15; }
   if (gun) { base.rf = 0.6; base.re = 0.9; base.ro = 0.05; base.lf = 0.9; base.lo = 0.45; base.le = 1.0; }
@@ -424,6 +426,33 @@ export function animatePerson(g, t, dt, boat, envIn) {
   u.castT = u.act === 'cast' ? u.actT : -1;
 }
 export function wave(g) { if (g.userData.waveT <= 0) g.userData.waveT = 2.4; }
+
+export function poseSwimmer(g, time, submerged, effort, headTurn = 0) {
+  const u = g.userData, stroke = time * (2.9 + 1.5 * effort) + u.ph;
+  const pull = (1 - Math.cos(stroke)) * 0.5, kick = Math.sin(stroke - 1.7);
+  const stride = Math.sin(time * 6.6 + u.ph) * effort;
+  const hipsHeight = BASE.stand.hy - 0.028 * Math.abs(stride);
+  const tilt = submerged * (1.52 - pull * 0.16);
+  const pose = u.cur;
+  Object.assign(pose, u.base, {
+    hy: hipsHeight, sx: lerp(0.08, -0.11 - 0.09 * pull, submerged),
+    sz: submerged * 0.06 * Math.cos(stroke), hdx: submerged * (-1 - pull * 0.12),
+    hdy: headTurn,
+    lf: lerp(0.27 - stride * 0.27, 2.55 - pull * 0.78, submerged),
+    rf: lerp(0.27 + stride * 0.27, 2.55 - pull * 0.78, submerged),
+    lo: lerp(0.24, 0.15 + pull * 1.02, submerged), ro: lerp(0.24, 0.15 + pull * 1.02, submerged),
+    le: lerp(0.5, 0.22 + pull * 1.12, submerged), re: lerp(0.5, 0.22 + pull * 1.12, submerged),
+    ltf: lerp(stride * 0.4, 0.13 + kick * 0.2, submerged),
+    rtf: lerp(-stride * 0.4, 0.13 + kick * 0.2, submerged),
+    lk: lerp(0.08 + Math.max(0, stride) * 0.48, 0.35 + kick * 0.26, submerged),
+    rk: lerp(0.08 + Math.max(0, -stride) * 0.48, 0.35 + kick * 0.26, submerged),
+    lto: lerp(0.08, 0.15 + pull * 0.24, submerged), rto: lerp(0.08, 0.15 + pull * 0.24, submerged),
+  });
+  const submersion = -0.12 + pull * 0.049;
+  g.rotation.x = tilt;
+  g.position.set(0, (hipsHeight * (1 - Math.cos(tilt)) + submersion * submerged), -hipsHeight * Math.sin(tilt));
+  applyPose(u);
+}
 export function setWranglePose(g, strength = 0) { if (g?.userData) g.userData.wrangle = Math.max(0, Math.min(1, Number(strength) || 0)); }
 // start a cast; false if the figure is busy walking (try again next frame)
 export function cast(g) { const u = g.userData; if (u.act === 'walk' || u.act === 'cast' || u.act === 'reel') return false; startAct(u, 'cast', 1.65); return true; }

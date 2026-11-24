@@ -3,6 +3,8 @@ import { anchorConstraintForce } from './anchor.js';
 import * as TEX from './textures.js';
 import { WORLD_HALF } from './heightfield.js';
 import { loadModel } from './models.js';
+import { STOCK_BOAT_TUNING } from './boatmods.js';
+import { installAirboatLivery } from './airboatlivery.js';
 import { HullDamageMaterial } from './hulldamage.js';
 import { person } from './folk.js';
 import { mulberry32 } from './noise.js';
@@ -277,11 +279,13 @@ function createAirboatTemplate() {
   stackParts.traverse(o => { if (o.isMesh && o.geometry.type === 'TubeGeometry') o.geometry.dispose(); });
 
   // fuel tanks: bare welded aluminium with filler caps and a fuel line toward the engine
+  const tanks = new THREE.Group(); tanks.name = 'airboat fuel tanks'; tanks.position.set(0, 0.645, 1.9);
   for (const sx of [-1, 1]) {
-    const tank = new THREE.Mesh(boxGeo(0.6, 0.35, 0.6), bareAlu); tank.position.set(sx * 0.7, 0.82, 1.9); tank.castShadow = true; g.add(tank);
-    const cap = new THREE.Mesh(cylinderGeo(0.055, 0.055, 0.05, 12), steel); cap.position.set(sx * 0.84, 1.02, 1.74); g.add(cap);
-    const strap = new THREE.Mesh(boxGeo(0.64, 0.02, 0.05), rubber); strap.position.set(sx * 0.7, 1.0, 2.05); g.add(strap);
+    const tank = new THREE.Mesh(boxGeo(0.6, 0.35, 0.6), bareAlu); tank.position.set(sx * 0.7, 0.175, 0); tank.castShadow = true; tanks.add(tank);
+    const cap = new THREE.Mesh(cylinderGeo(0.055, 0.055, 0.05, 12), steel); cap.position.set(sx * 0.84, 0.375, -0.16); tanks.add(cap);
+    const strap = new THREE.Mesh(boxGeo(0.64, 0.02, 0.05), rubber); strap.position.set(sx * 0.7, 0.355, 0.15); tanks.add(strap);
   }
+  g.add(tanks);
 
   // ---- cage: short drum at the front, deep spherical dome at the back ----
   const cage = new THREE.Group(); cage.name = 'airboat cage'; cage.position.set(0, 1.8, 2.35);
@@ -392,7 +396,10 @@ export function buildAirboat({ dynamicWetness = false, initialWetness = 0.06, pr
   if (dynamicWetness) {
     boat.wetSurfaceMaterials = prepareAirboatWetSurfaces(group);
     const damageSurface = boat.wetSurfaceMaterials.find(surface => surface.damageSurface);
-    if (damageSurface) boat.hullDamage = new HullDamageMaterial(damageSurface.material, profile);
+    if (damageSurface) {
+      boat.hullDamage = new HullDamageMaterial(damageSurface.material, profile);
+      installAirboatLivery(damageSurface.material);
+    }
     boat.propWrap = makePropWrapVisual(); prop.add(boat.propWrap);
     setAirboatWetness(boat, initialWetness);
   }
@@ -600,6 +607,7 @@ export class AirboatPhysics {
     this.lastFloat = new THREE.Vector2(x, z);
     this.loaded = 0; // passenger / cargo mass factor
     this.towDrag = 0; // extra quadratic drag from something on a rope behind the boat
+    this.tuning = STOCK_BOAT_TUNING;
     this.powerScale = 1; this.steerScale = 1; this.damageLoad = 0; this.damageList = 0; this.damageTrim = 0; this.damageSink = 0;
     this.landedFrame = false; this.takeoffFrame = false;
     this.landQuality = ''; // '', 'clean', 'hard', 'stuffed', 'wipeout' on the landing frame
@@ -674,9 +682,11 @@ export class AirboatPhysics {
     if (this.anchorConstraint) this.anchorConstraint.resetRequested = true;
     this.anchorConstraint = null;
     this.pos.set(x, z); this.vel.set(0, 0); this.heading = heading; this.angVel = 0; this.y = 0; this.vy = 0;
+    this.speed = 0; this.throttle = 0; this.steer = 0;
     this.pitch = this.roll = this.pitchVel = this.rollVel = 0; this.prevFloor = null; this.lastSurfVel = 0;
     this.airTime = 0; this.airPeak = 0; this.lastFloat.set(x, z);
     this.airborne = false; this.landedFrame = false; this.takeoffFrame = false; this.landQuality = ''; this.wipeT = 0; this.stuffT = 0; this.impact = 0; this.bottomStrike = 0; this.hit = 0;
+    this.wet = 1; this.landFac = 0; this.grounded = 0; this.contact = true;
     this.windHeel = 0; this.apparentWind = 0; this.crosswind = 0;
     this.current.set(0, 0); this.waterSpeed = 0;
   }
@@ -725,7 +735,8 @@ export class AirboatPhysics {
     this.rpm += (rpmTarget - this.rpm) * (1 - Math.exp(-dt * 2.5));
 
     const fwd = this.forward(this._f), rgt = this.right(this._r);
-    const massF = 1 + this.loaded * 0.18 + (this.damageLoad || 0), previousGrounded = this.grounded;
+    const tune = this.tuning;
+    const massF = tune.mass + this.loaded * 0.18 + (this.damageLoad || 0), previousGrounded = this.grounded;
     this.hit = 0; this.hitTag = ''; this.hitObj = null; this.bottomStrike = 0;
 
     // ---- support surfaces under the hull ----
@@ -794,7 +805,7 @@ export class AirboatPhysics {
     const rvx = this.vel.x - cx, rvz = this.vel.y - cz;
     const vf = rvx * fwd.x + rvz * fwd.y, vl = rvx * rgt.x + rvz * rgt.y;
     this.waterSpeed = Math.hypot(rvx, rvz);
-    this.bottomStrike = bottomStrikeSeverity(this.waterSpeed, previousGrounded, this.landFac, waterC - Math.max(hC, hMean), hBow - Math.max(hC, hStern));
+    this.bottomStrike = tune.bottomStrike * bottomStrikeSeverity(this.waterSpeed, previousGrounded, this.landFac, waterC - Math.max(hC, hMean), hBow - Math.max(hC, hStern));
     const anchor = this.anchorConstraint, anchorForce = this._anchorForce;
     if (anchor?.active && anchor.engaged && this.wet > 0.2 && !this.airborne) {
       anchorConstraintForce(anchor, px + fwd.x * 2.2, pz + fwd.y * 2.2, this.vel.x, this.vel.y, anchorForce);
@@ -806,7 +817,7 @@ export class AirboatPhysics {
     // ---- yaw ----
     const wash = (0.25 + Math.max(this.throttle, 0) * 0.75) * powerScale;
     const wet = this.wet, land = this.landFac;
-    const steer = wiped ? 0 : this.steer * (this.steerScale ?? 1);
+    const steer = wiped ? 0 : this.steer * (this.steerScale ?? 1) * tune.steer;
     // the rudders sit in the prop wash, so an airboat can still yaw with the hull clear of the water (that is how spins work)
     let torque = this.airborne ? steer * 6.0 * wash : steer * (0.8 * wash + Math.abs(vf) * 0.045 * wet);
     torque -= this.angVel * ((this.airborne ? 1.0 : 0.55) + (1.35 + Math.abs(vf) * 0.08) * wet + land * 1.2);
@@ -816,9 +827,9 @@ export class AirboatPhysics {
     this.heading += this.angVel * dt;
 
     // ---- horizontal forces ----
-    const thrust = (wiped ? 0 : (this.throttle > 0 ? this.throttle * 6.6 : this.throttle * 2.5)) * powerScale / massF * (this.airborne ? 0.45 : 1);
-    const df = (-vf * Math.abs(vf) * (0.012 + this.towDrag) - vf * 0.12) * wet;
-    const dl = (-vl * Math.abs(vl) * 0.22 - vl * 0.9) * wet;
+    const thrust = (wiped ? 0 : (this.throttle > 0 ? this.throttle * 6.6 : this.throttle * 2.5)) * powerScale * tune.thrust / massF * (this.airborne ? 0.45 : 1);
+    const df = (-vf * Math.abs(vf) * (0.012 * tune.drag + this.towDrag) - vf * 0.12 * tune.drag) * wet;
+    const dl = (-vl * Math.abs(vl) * 0.22 - vl * 0.9) * wet * tune.sideGrip;
     let ax = fwd.x * (thrust + df) + rgt.x * dl;
     let az = fwd.y * (thrust + df) + rgt.y * dl;
     ax += anchorForce.x / massF; az += anchorForce.z / massF;

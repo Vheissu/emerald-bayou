@@ -166,6 +166,7 @@ export class BoatSpotlightVolume {
     this.mesh.position.set(0, 1.15, -1.45); this.mesh.rotation.x = -Math.atan2(1.05, 53.55);
     this.mesh.visible = false; this.mesh.renderOrder = 39; this.mesh.layers.set(1);
     this.state = { visible: false, strength: 0, range: 0 }; this.transformWrites = 0; this.uniformWrites = 0;
+    this.rangeScale = 1; this.widthScale = 1;
     this.setQuality(profile);
   }
 
@@ -180,7 +181,11 @@ export class BoatSpotlightVolume {
     spotlightVolumeState(this.state, on, night, restrictedVisibility, rain, storm, this.quality);
     this.mesh.visible = this.state.visible;
     if (!this.state.visible) return this.state;
-    if (Math.abs(this.mesh.scale.x - this.state.range) > 0.001) { this.mesh.scale.setScalar(this.state.range); this.transformWrites++; }
+    this.state.range *= this.rangeScale;
+    const width = this.state.range * this.widthScale;
+    if (Math.abs(this.mesh.scale.x - width) > 0.001 || Math.abs(this.mesh.scale.z - this.state.range) > 0.001) {
+      this.mesh.scale.set(width, width, this.state.range); this.transformWrites++;
+    }
     const seconds = Number(time);
     this.uniforms.uStrength.value = this.state.strength; this.uniforms.uTime.value = Number.isFinite(seconds) ? seconds : 0; this.uniforms.uRain.value = clamp(Number(rain) || 0); this.uniformWrites += 3;
     return this.state;
@@ -480,7 +485,7 @@ export class Environment {
     this.surfaceWind = { x: 0, z: 0, speed: 0 };
     this.makeLightning(); this.makeBoatLights(); this.makeSettlementLights();
     setGlobalSurfaceWetness(this.surfaceWetness); this.terrain.setSurfaceWetness(this.surfaceWetness, this.waterLevel);
-    this.el = document.getElementById('worldState'); this.alertEl = document.getElementById('weatherAlert'); this.alertT = 0; this.hudT = 0;
+    this.alertEl = document.getElementById('weatherAlert'); this.alertT = 0;
     this.keyHandler = (e) => this.onKey(e); window.addEventListener('keydown', this.keyHandler);
     this.pagehideHandler = () => this.persistState(true); window.addEventListener('pagehide', this.pagehideHandler);
     this.persistState(false);
@@ -525,6 +530,15 @@ export class Environment {
     const target = new THREE.Object3D(); target.position.set(0, 0.1, -55); spot.target = target; g.add(spot, target); this.spotlight = spot; this.spotOn = false;
     this.spotlightVolume = new BoatSpotlightVolume(this.profile); g.add(this.spotlightVolume.mesh);
     this.boat.add(g); this.nav = g;
+    this.setBoatLightTuning(this.phys.tuning);
+  }
+
+  setBoatLightTuning(tuning) {
+    const angle = tuning?.beamAngle ?? 1, range = tuning?.beamRange ?? 1;
+    this.spotlight.angle = 0.31 * angle;
+    this.spotlight.distance = 110 * range;
+    this.spotlightVolume.rangeScale = range;
+    this.spotlightVolume.widthScale = angle === 1 ? 1 : Math.tan(this.spotlight.angle) / Math.tan(0.31);
   }
 
   setQuality(profile = {}) { return this.spotlightVolume?.setQuality(profile) ?? 0; }
@@ -1008,18 +1022,16 @@ export class Environment {
       const visible = navigationLightVisibility(dx * c - dz * s, dx * s + dz * c, this.navVisibility);
       this.port.visible = visible.port; this.starboard.visible = visible.starboard; this.stern.visible = visible.stern;
     }
-    this.cockpitLight.intensity = night * 15; this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) : 0;
+    this.cockpitLight.intensity = night * 15;
+    this.spotlight.intensity = this.spotOn ? lerp(350, 1250, night) * (this.phys.tuning?.beamPower ?? 1) : 0;
     this.spotlightVolume.update(realTime, this.spotOn, night, this.restrictedVisibility, V.rain, V.storm);
     this.updateSettlementLights(dt, realTime, night);
 
     if (this.alertT > 0) { this.alertT -= dt; if (this.alertT <= 0 && this.alertEl) this.alertEl.classList.remove('on'); }
     if (step) { this.persistT -= step; if (this.persistT <= 0) { this.persistT = 10; this.persistState(true); } }
-    this.hudT -= dt; if (this.hudT <= 0) { this.hudT = 0.18; this.renderHud(); }
   }
 
-  renderHud() {
-    if (!this.el) return;
-    const h = Math.floor(this.hour), m = Math.floor((this.hour - h) * 60), ap = h >= 12 ? 'PM' : 'AM', hh = h % 12 || 12;
+  marineReading() {
     const from = ((this.localWindAngle + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2), dirs = ['E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'];
     const dir = dirs[Math.round(from / (Math.PI * 2) * 8) % 8];
     const tide = this.tideLabel();
@@ -1027,6 +1039,7 @@ export class Environment {
     const pressure = this.key === 'hurricane' ? ` · ${this.hurricane.pressureHpa} hPa` : '';
     const surge = this.values.surge > 0.14 ? ` · surge +${(this.values.surge * FT).toFixed(1)} ft` : '';
     const current = this.currentField ? ` · ${this.currentField.hud()}` : '';
-    this.el.innerHTML = `<div class="world-clock">${hh}:${String(m).padStart(2, '0')} <small>${ap}</small></div><div class="world-weather">${this.weatherLabel()}</div><div class="world-detail">${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${pressure}${surge}${current}</div>`;
+    return `${tide}${lunarRange} · wind ${dir} ${Math.round(this.values.wind * this.gust * MPS_TO_MPH)} mph${pressure}${surge}${current}`;
   }
+
 }

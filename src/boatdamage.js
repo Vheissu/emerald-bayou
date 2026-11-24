@@ -33,11 +33,11 @@ export function bottomStrikeDamage(severity = 0, currentBreach = 0, out = {}) {
 
 // Positive values fill the bilge; negative values mean the pump is gaining. A deepening stern puts the tear farther
 // below the surface, so a serious breach accelerates instead of behaving like a flat hit-point countdown.
-export function boatFloodRate(hull = 100, breach = 0, bilge = 0, wet = 1, pumpPowered = true) {
+export function boatFloodRate(hull = 100, breach = 0, bilge = 0, wet = 1, pumpPowered = true, pumpCapacity = 1) {
   const hullHealth = clamp((Number(hull) || 0) / 100), tear = clamp(breach), water = clamp(bilge), immersion = smooth(0.18, 0.72, wet);
   const hullLeak = hullHealth < 0.55 ? (0.55 - hullHealth) / 0.55 * 0.0015 : 0;
   const breachLeak = (tear * 0.015 + tear * tear * 0.009) * (0.64 + water * 0.76);
-  const pump = pumpPowered ? (hullHealth > 0.7 ? 0.0012 : 0.00058) : 0.00005;
+  const pump = pumpPowered ? (hullHealth > 0.7 ? 0.0012 : 0.00058) * pumpCapacity : 0.00005;
   return (hullLeak + breachLeak) * immersion - pump;
 }
 

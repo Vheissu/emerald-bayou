@@ -14,7 +14,7 @@ const drums = [
 let sharedLanding;
 let authoredLanding;
 
-function loadAuthoredLanding() {
+export function loadAuthoredLanding() {
   if (authoredLanding) return authoredLanding;
   if (!import.meta.env || import.meta.env.SSR) return null;
 

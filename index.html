@@ -17,13 +17,16 @@
   #hud.dim { opacity:0.12; }
   body:has(#start:not(.hidden)) #hud { opacity:0; }
   #hud {  text-shadow:0 1px 0 rgba(0,0,0,0.6), 0 0 14px rgba(0,0,0,0.45); }
-  #minimap { position:absolute; left:28px; bottom:24px; width:240px; height:152px; border-radius:6px; overflow:hidden;
-    box-shadow: 0 0 0 1px rgba(0,0,0,0.45), 0 2px 10px rgba(0,0,0,0.35); }
+  #minimap { padding:0; border:0; cursor:pointer; pointer-events:auto; position:absolute; left:24px; bottom:22px; width:240px; height:152px; border-radius:8px; overflow:hidden;
+    outline:1px solid rgba(239,233,219,.32); background:#32434a; }
+  #minimap:focus-visible { outline:3px solid #f6d49b; }
+  #hud.dim #minimap { pointer-events:none; }
   #minimap canvas { width:100%; height:100%; display:block; }
-  #speed { position:absolute; right:32px; bottom:26px; text-align:right; font-size:14px; letter-spacing:0.14em; text-transform:uppercase; opacity:0.9; }
+  @media (max-width:600px) { #minimap { left:12px; bottom:14px; width:168px; height:106px; } }
+  #speed { position:absolute; right:32px; bottom:24px; text-align:right; font-size:14px; letter-spacing:0.14em; text-transform:uppercase; opacity:0.9; }
   #speed b { font-size:44px; line-height:1; letter-spacing:0; display:block; font-weight:600; font-variant-numeric: tabular-nums; }
   #speed .air { display:block; color:var(--gold); font-size:13px; height:16px; }
-  #boatState { position:absolute; right:32px; bottom:99px; width:154px; padding:9px 10px 8px; background:linear-gradient(90deg,transparent,rgba(5,14,11,0.42)); border-right:2px solid rgba(243,237,224,0.2); opacity:0.66; transition:opacity .25s,border-color .25s; }
+  #boatState { position:absolute; right:32px; bottom:99px; width:150px; padding:0; opacity:0.93; transition:opacity .25s,border-color .25s; }
   #boatState.warn { opacity:0.96; border-right-color:var(--marker); }
   #boatState .condition-row { display:grid; grid-template-columns:1fr auto; gap:7px; margin:0 0 5px; font-size:10px; letter-spacing:0.13em; text-transform:uppercase; }
   #boatState .condition-row:last-child { margin-bottom:0; }
@@ -41,26 +44,17 @@
   #servicePrompt.on { opacity:0.86; }
   #servicePrompt b { color:var(--gold); font-size:15px; margin-right:8px; }
   /* mission panel */
-  #mission { position:absolute; left:30px; top:26px; max-width:380px; }
-  #mission .title { font-size:22px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; }
-  #mission .obj { font-size:17px; margin-top:4px; opacity:0.95; }
-  #mission .sub { font-size:14px; margin-top:2px; opacity:0.8; }
-  #mission .hint { font-size:13px; margin-top:8px; opacity:0.65; letter-spacing:0.08em; text-transform:uppercase; }
+  #mission { position:absolute; bottom:26px; left:50%; transform:translateX(-50%); width:min(570px,52vw); text-align:center; }
+  #mission:empty, #boatState:empty { display:none; }
+  #mission .title { color:#efca88; font-size:13px; font-weight:650; letter-spacing:.09em; text-transform:uppercase; }
+  #mission .obj { margin-top:3px; font:600 clamp(16px,1.25vw,21px)/1.22 "Avenir Next",sans-serif; text-wrap:balance; }
+  #mission .sub { margin-top:3px; font:500 13px/1.25 "Avenir Next",sans-serif; color:#e4e4dc; }
   #timer { position:absolute; left:50%; top:22px; transform:translateX(-50%); text-align:center; font-size:38px; font-weight:600; font-variant-numeric: tabular-nums; letter-spacing:0.02em; }
   #timer.warn { color:var(--marker); }
   #timer small { display:block; font-size:13px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; opacity:0.8; }
   #wp { position:absolute; left:50%; top:100px; transform:translateX(-50%); font-size:15px; letter-spacing:0.1em; text-transform:uppercase; opacity:0.85; white-space:nowrap; }
   #wp b { color:var(--marker); font-weight:600; }
-  #cash { position:absolute; right:32px; top:26px; text-align:right; font-size:15px; letter-spacing:0.12em; text-transform:uppercase; }
-  #cash b { display:block; font-size:30px; letter-spacing:0; font-weight:600; font-variant-numeric: tabular-nums; }
-  /* world clock: small, factual and out of the mission's line of sight */
-  #worldState { position:absolute; right:25px; top:84px; padding:8px 7px 8px 34px; border-right:2px solid rgba(229,192,99,0.38);
-    background:linear-gradient(90deg,transparent,rgba(5,14,11,0.32)); text-align:right; text-transform:uppercase; letter-spacing:0.12em; font-variant-numeric:tabular-nums; }
-  #worldState .world-clock { font-size:21px; font-weight:600; line-height:1; }
-  #worldState .world-clock small { font-size:11px; opacity:0.72; }
-  #worldState .world-weather { margin-top:6px; color:var(--gold); font-size:13px; }
-  #worldState .world-detail { margin-top:2px; font-size:11px; opacity:0.68; }
-  #lawState { position:absolute; right:32px; top:165px; min-width:170px; text-align:right; text-transform:uppercase; letter-spacing:0.14em; opacity:0; transform:translateX(8px); transition:opacity .25s,transform .25s; }
+  #lawState { position:absolute; right:28px; top:24px; min-width:170px; text-align:right; text-transform:uppercase; letter-spacing:0.14em; opacity:0; transform:translateX(8px); transition:opacity .25s,transform .25s; }
   #lawState.on { opacity:0.92; transform:none; }
   #lawState > span { display:block; color:#8fb8d8; font-size:10px; font-weight:600; }
   #lawState > b { display:flex; justify-content:flex-end; gap:3px; margin-top:3px; }
@@ -70,11 +64,11 @@
   #lawState.pursuit > b i.lit { animation:wantedPulse .55s steps(2,end) infinite; text-shadow:0 0 12px rgba(70,145,255,0.95),0 0 4px rgba(255,55,45,0.72); }
   @keyframes wantedPulse { 50% { opacity:.58; } }
   #lawState small { display:block; margin-top:5px; max-width:240px; color:var(--foam); font-size:9px; opacity:0.68; letter-spacing:0.09em; }
-  #hazardState { position:absolute; right:32px; top:230px; min-width:190px; text-align:right; text-transform:uppercase; letter-spacing:0.14em; opacity:0; transform:translateX(8px); transition:opacity .2s,transform .2s; }
+  #hazardState { position:absolute; right:28px; top:100px; min-width:190px; text-align:right; text-transform:uppercase; letter-spacing:0.14em; opacity:0; transform:translateX(8px); transition:opacity .2s,transform .2s; }
   #hazardState.on { opacity:0.96; transform:none; }
   #hazardState span { display:block; color:#d7f1f4; font-size:11px; font-weight:650; text-shadow:0 0 12px rgba(190,240,255,0.45); }
   #hazardState small { display:block; margin-top:4px; color:var(--foam); font-size:9px; opacity:0.72; letter-spacing:0.08em; }
-  #fireState { position:absolute; right:32px; top:284px; min-width:220px; text-align:right; text-transform:uppercase; letter-spacing:0.14em; opacity:0; transform:translateX(8px); transition:opacity .2s,transform .2s; }
+  #fireState { position:absolute; right:28px; top:155px; min-width:220px; text-align:right; text-transform:uppercase; letter-spacing:0.14em; opacity:0; transform:translateX(8px); transition:opacity .2s,transform .2s; }
   #fireState.on { opacity:0.96; transform:none; }
   #fireState span { display:block; color:#ff8a4d; font-size:11px; font-weight:700; text-shadow:0 0 14px rgba(255,78,22,0.62); }
   #fireState small { display:block; margin-top:4px; color:var(--foam); font-size:9px; opacity:0.76; letter-spacing:0.08em; }
@@ -91,16 +85,13 @@
   #regionState.on { opacity:0.94; transform:translate(-50%,0); }
   #regionState span { display:block; font-size:29px; font-weight:600; letter-spacing:0.2em; line-height:1; text-shadow:0 2px 2px rgba(0,0,0,0.76),0 0 22px rgba(0,0,0,0.68); }
   #regionState small { display:block; width:max-content; max-width:70vw; margin:9px auto 0; padding:7px 14px 3px; border-top:1px solid rgba(243,237,224,0.42); background:linear-gradient(90deg,transparent,rgba(5,14,11,0.34) 18%,rgba(5,14,11,0.34) 82%,transparent); font-size:11px; letter-spacing:0.18em; opacity:0.84; text-shadow:0 1px 2px rgba(0,0,0,0.8),0 0 12px rgba(0,0,0,0.65); }
-  #radioState { position:absolute; left:30px; top:145px; width:min(390px,calc(100vw - 60px)); box-sizing:border-box; padding:9px 13px 10px 15px; border-left:2px solid rgba(229,192,99,0.58); background:linear-gradient(90deg,rgba(5,14,11,0.68),rgba(5,14,11,0.38) 80%,transparent); opacity:0; transform:translateX(-9px); transition:opacity .2s,transform .24s; }
-  #radioState.on { opacity:0.94; transform:none; }
-  #radioState.urgent { border-left-color:var(--marker); background:linear-gradient(90deg,rgba(24,16,10,0.76),rgba(10,14,11,0.4) 82%,transparent); }
-  #radioState.weather { border-left-color:#a7c9d3; }
-  #radioState .radio-meta { display:flex; align-items:center; gap:11px; margin-bottom:4px; color:var(--gold); font-size:9px; font-weight:650; letter-spacing:0.2em; text-transform:uppercase; }
-  #radioState .radio-meta i { display:flex; align-items:center; gap:6px; color:var(--foam); font-style:normal; font-weight:500; opacity:0.48; }
-  #radioState .radio-meta i::before { content:""; width:4px; height:4px; border-radius:50%; background:#8ec59d; box-shadow:0 0 6px rgba(142,197,157,0.6); }
-  #radioState.urgent .radio-meta i::before { background:var(--marker); box-shadow:0 0 7px rgba(240,122,46,0.7); }
-  #radioState > b { display:block; font-size:13px; font-weight:650; letter-spacing:0.13em; text-transform:uppercase; }
-  #radioState p { margin:3px 0 0; font-family:"Avenir Next","Futura",sans-serif; font-size:14px; line-height:1.35; letter-spacing:0.008em; text-shadow:0 1px 2px rgba(0,0,0,0.8); }
+  #radioState { position:absolute; top:28px; left:28px; max-width:min(350px,44vw); padding:9px 13px; background:rgba(13,26,24,.78); border-left:3px solid #b6ad83; opacity:0; transform:translateY(-6px); transition:opacity .18s,transform .18s; }
+  #radioState.on { opacity:1; transform:none; }
+  #radioState .radio-meta { font-size:11px; line-height:1.2; letter-spacing:.08em; color:#d8c897; }
+  #radioState .radio-meta i { display:none; }
+  #radioState > b { display:block; margin-top:3px; font-size:13px; letter-spacing:.04em; }
+  #radioState p { margin:3px 0 0; font:500 14px/1.35 "Avenir Next",sans-serif; }
+  #radioState.urgent { border-color:#ee9869; }
   /* trick feed */
   #tricks { position:absolute; right:32px; top:34%; text-align:right; }
   #tricks .ev { font-size:20px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; animation: pop .25s ease-out; }
@@ -115,25 +106,42 @@
   #arrow div::after { content:""; position:absolute; left:9px; top:-9px; border:6px solid transparent; border-bottom:9px solid var(--marker); border-top:none; }
   #arrow .dist { position:absolute; top:18px; left:-40px; width:80px; text-align:center; font-size:13px; letter-spacing:0.08em; }
   /* centre toasts */
-  #toast { position:absolute; left:50%; top:38%; transform:translateX(-50%); text-align:center; font-size:46px; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; opacity:0; transition:opacity .25s; white-space:nowrap; }
+  #toast { position:absolute; left:50%; top:16%; transform:translateX(-50%); text-align:center; width:min(560px,72vw); font-size:26px; line-height:1.05; font-weight:650; opacity:0; transition:opacity .25s; }
   #toast.on { opacity:1; }
-  #toast small { display:block; font-size:18px; letter-spacing:0.16em; font-weight:500; opacity:0.85; margin-top:4px; }
+  #toast small { display:block; font:500 15px/1.35 "Avenir Next",sans-serif; margin-top:5px; text-wrap:balance; }
   /* bounty completions: a quiet line above the minimap */
-  #bounty { position:absolute; left:50%; bottom:40px; transform:translateX(-50%); font-size:17px; letter-spacing:0.12em; text-transform:uppercase; color:var(--gold); opacity:0; transition:opacity .3s; white-space:nowrap; }
+  #bounty { position:absolute; right:28px; bottom:230px; text-align:right; font-size:16px; letter-spacing:0.12em; text-transform:uppercase; color:var(--gold); opacity:0; transition:opacity .3s; white-space:nowrap; }
   #bounty.on { opacity:1; }
   #bounty b { color:var(--foam); margin-left:8px; }
   /* dock prompt */
   #prompt { position:absolute; left:50%; bottom:78px; transform:translateX(-50%); font-size:17px; letter-spacing:0.12em; text-transform:uppercase; white-space:nowrap; opacity:0; transition:opacity .2s; }
   #prompt.on { opacity:1; }
-  #prompt b { color:var(--marker); font-weight:600; margin-right:10px; }
+  #prompt b, #servicePrompt b { display:inline-grid; place-items:center; padding:1px 5px; min-width:14px; color:#182824; background:#efece2; border-radius:2px; text-shadow:none; margin-right:5px; }
   #prompt i { font-style:normal; opacity:0.7; text-transform:none; letter-spacing:0.04em; }
   /* the chart */
-  #bigmap { position:fixed; inset:0; z-index:5; background:#0b1512; }
+  #bigmap { position:fixed; inset:0; z-index:5; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background:#182329; }
   #bigmap.hidden { display:none; }
-  #bigmap canvas { display:block; cursor:grab; }
-  #bigmapLegend { position:absolute; left:40px; top:34px; pointer-events:none; text-shadow:0 1px 0 rgba(0,0,0,0.6), 0 0 14px rgba(0,0,0,0.45); font-size:15px; line-height:1.6; letter-spacing:0.06em; }
-  #bigmapLegend .h { font-size:34px; font-weight:600; letter-spacing:0.16em; text-transform:uppercase; line-height:1.1; margin-bottom:6px; }
-  #bigmapLegend .keys { margin-top:10px; font-size:13px; letter-spacing:0.16em; text-transform:uppercase; opacity:0.65; }
+  #bigmapView { position:relative; min-width:0; overflow:hidden; }
+  #bigmap canvas { display:block; width:100%; height:100%; cursor:crosshair; touch-action:none; }
+  #bigmap canvas:active { cursor:grabbing; }
+  #bigmap canvas:focus-visible { outline:2px solid rgba(243,237,224,.5); outline-offset:-2px; }
+  #bigmap header, #bigmap footer { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px max(14px, env(safe-area-inset-left)); }
+  #bigmap header { border-bottom:1px solid rgba(243,237,224,.23); }
+  #bigmap footer { border-top:1px solid rgba(243,237,224,.23); padding-bottom:max(9px, env(safe-area-inset-bottom)); }
+  #bigmap h2 { margin:0; font-size:22px; line-height:1.1; font-weight:650; }
+  #bigmapLegend, #bigmap footer p { color:#c5cecc; font-size:14px; margin:0; }
+  #bigmapRoute { min-width:0; display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  #bigmapRouteName { font-size:17px; }
+  #bigmapRouteDetail { font-size:15px; color:#ff9489; font-variant-numeric:tabular-nums; }
+  #bigmap footer div { display:flex; gap:6px; flex-wrap:wrap; }
+  #bigmap button { cursor:pointer; border:1px solid rgba(243,237,224,.32); border-radius:3px; background:#26363e; color:var(--foam); padding:4px 10px; min-height:34px; }
+  #bigmap button:hover, #bigmap button:focus-visible { border-color:var(--foam); }
+  #bigmap button:disabled { opacity:.42; cursor:default; }
+  @media (max-width:600px) {
+    #bigmap header, #bigmap footer { flex-wrap:wrap; gap:6px 12px; }
+    #bigmapRoute { order:2; flex-basis:100%; }
+    #bigmap footer p { display:none; }
+  }
   #fade { position:fixed; inset:0; background:#000; opacity:0; pointer-events:none; transition:opacity .4s; z-index:4; }
   #fade.on { opacity:1; }
   /* overlays */
@@ -262,8 +270,6 @@
     #menu .kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
     #menu .menu-keybar { padding:0 16px; font-size:9px; }
     #menu .menu-keybar > span > span:last-child { display:none; }
-    #worldState { right:18px; top:84px; }
-    #worldState .world-detail { display:none; }
     #fireState { right:18px; }
     #waterRule { right:18px; bottom:200px; }
     #regionState { top:24%; min-width:280px; }
@@ -271,19 +277,45 @@
     #radioState { left:18px; top:142px; width:calc(100vw - 36px); }
     #radioState p { font-size:13px; }
   }
+  #hud { text-shadow:0 1px 3px #111e17, 0 1px 5px rgba(0,0,0,.6); }
+  #speed { display:flex; gap:4px; align-items:baseline; font-size:11px; }
+  #speed .air { position:absolute; bottom:100%; right:0; white-space:nowrap; }
+  #boatState { bottom:123px; }
+  #waterRule { bottom:75px; min-width:0; }
+  #waterRule small { display:none; }
+  #timer small, #prompt, #servicePrompt { letter-spacing:.035em; text-transform:none; }
+  #prompt, #servicePrompt { font-size:15px; max-width:calc(100vw - 32px); text-align:center; white-space:normal; }
+  #prompt { bottom:98px; }
+  #servicePrompt { bottom:127px; }
+  #wp { top:auto; left:24px; bottom:178px; transform:none; text-align:left; max-width:240px; overflow:hidden; text-overflow:ellipsis; text-transform:none; letter-spacing:.02em; font-size:15px; font-weight:600; }
+  #wp b { display:none; }
+  #hud:has(#wp:not(:empty)) #regionState { opacity:0; }
+  #regionState { left:28px; top:auto; bottom:185px; min-width:0; text-align:left; transform:translateY(4px); }
+  #regionState.on { transform:none; }
+  #regionState span { font-size:19px; letter-spacing:.035em; text-shadow:0 1px 4px #15251f; }
+  #regionState small { display:none; }
+  @media (max-width:600px) { #wp, #regionState { left:12px; bottom:125px; max-width:168px; } }
+  #hud:has(#memoryState.on) #regionState { opacity:0; }
+  #hud:has(#mission:not(:empty)) #toast { top:11%; }
+  @media (max-width:720px) {
+    #mission { bottom:155px; width:85vw; }
+    #prompt { bottom:215px; } #servicePrompt { bottom:241px; }
+    #speed { right:14px; bottom:16px; } #speed b { font-size:34px; }
+    #radioState { left:12px; top:12px; }
+    #bounty { right:14px; bottom:95px; max-width:44vw; white-space:normal; }
+  }
 </style>
 <link rel="stylesheet" href="/src/menu-screen.css">
+<link rel="stylesheet" href="/src/boat-shop.css">
 </head>
 <body>
 <div id="app"></div>
 <div id="hud">
-  <div id="minimap"><canvas id="minimapCanvas" width="480" height="304"></canvas></div>
+  <button type="button" id="minimap" aria-label="Open chart" title="Open chart (Tab)"><canvas id="minimapCanvas" width="480" height="304" aria-hidden="true"></canvas></button>
   <div id="speed"><span class="air" id="airVal"></span><b id="speedVal">0</b>mph</div>
   <div id="mission"></div>
   <div id="timer"></div>
   <div id="wp"></div>
-  <div id="cash"></div>
-  <div id="worldState"></div>
   <div id="lawState"></div>
   <div id="hazardState"></div>
   <div id="fireState" role="status" aria-live="polite"></div>
@@ -300,7 +332,24 @@
   <div id="regionState"></div>
   <div id="radioState" role="status" aria-live="polite"></div>
 </div>
-<div id="bigmap" class="hidden"><canvas id="bigmapCanvas"></canvas><div id="bigmapLegend"></div></div>
+<section id="bigmap" class="hidden" aria-labelledby="chartTitle">
+  <header>
+    <div><h2 id="chartTitle">Chart</h2><div id="bigmapLegend"></div></div>
+    <div id="bigmapRoute"><strong id="bigmapRouteName"></strong><span id="bigmapRouteDetail"></span></div>
+    <button id="chartClose" type="button">Close</button>
+  </header>
+  <div id="bigmapView"><canvas id="bigmapCanvas" tabindex="-1" aria-label="Waterway chart. Arrow keys pan. Enter places a pin at the centre. Delete clears the pin."></canvas></div>
+  <footer>
+    <p>Click to pin · Drag to pan · Scroll to zoom</p>
+    <div>
+      <button type="button" id="chartZoomOut" aria-label="Zoom out">−</button>
+      <button type="button" id="chartZoomIn" aria-label="Zoom in">+</button>
+      <button type="button" id="chartPin">Pin centre</button>
+      <button type="button" id="chartFrame" disabled>Show route</button>
+      <button type="button" id="chartClear" disabled>Clear pin</button>
+    </div>
+  </footer>
+</section>
 <div id="fade"></div>
 <div id="loading">
   <img class="loading-art loading-art-a" alt="" aria-hidden="true" decoding="async">

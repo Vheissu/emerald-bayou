@@ -1,3 +1,4 @@
+import { drawEncounter, isRiverCall, riverCallObjective, startRiverCall, updateRiverCall } from './rivercalls.js';
 import * as THREE from 'three';
 import { buildSkiff } from './npc.js';
 import { person, animatePerson, wave, aim, setWranglePose } from './folk.js';
@@ -35,7 +36,7 @@ const STEER_PROBES = [-0.65, -0.3, 0, 0.3, 0.65];
 const CHANNEL_CLOSURE_LATERAL_PROBES = [0, 8, -8, 16, -16];
 const CHANNEL_CLOSURE_CLEARANCE_PROBES = [[0, 0], [4.2, 0], [-4.2, 0], [0, 7], [0, -7]];
 const MANATEE_PROBES = [0, -0.42, 0.42, -0.86, 0.86, -1.32, 1.32];
-const DEBUG_ORDER = ['distress', 'airrescue', 'grounding', 'fire', 'wrangler', 'manatee', 'spotlight', 'race', 'patrol', 'smuggler', 'salvage', 'netline'];
+const DEBUG_ORDER = ['distress', 'airrescue', 'grounding', 'fire', 'wrangler', 'manatee', 'spotlight', 'race', 'patrol', 'smuggler', 'salvage', 'netline', 'photoboat', 'sounder'];
 const ENCOUNTER_MEMORY_LIMIT = 10;
 const SPILL_POOL_SIZE = 3;
 const SIGNAL_GEOMETRY = new THREE.SphereGeometry(0.075, 8, 6);
@@ -263,7 +264,7 @@ function boatAgent(mesh, searchRole = -1, navigationLights = searchRole >= 0) {
 export class EncounterDirector {
   constructor(o) {
     Object.assign(this, o); // scene, terrain, world, water, phys, boat, game, audio, environment, plume, spray, law, reputation
-    this.next = 48; this.active = null; this.seenT = 0; this.interact = false; this.alternate = false; this.enabled = false; this.debugIndex = 0;
+    this.next = 28 + Math.random() * 45; this.active = null; this.seenT = 0; this.interact = false; this.alternate = false; this.enabled = false; this.debugIndex = 0;
     this.obs = [];
     this.boatObs = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat', agent: null, onHit: (into, nx, nz) => this.hitMovingBoat(this.boatObs, into, nx, nz) };
     this.boatObs2 = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'boat', agent: null, onHit: (into, nx, nz) => this.hitMovingBoat(this.boatObs2, into, nx, nz) };
@@ -457,9 +458,9 @@ export class EncounterDirector {
       weights.distress *= 1.4; weights.airrescue *= 0.32; weights.grounding *= 0.55; weights.fire *= 1.2; weights.wrangler *= 0.035; weights.manatee *= 0.35; weights.spotlight *= 0.22; weights.race *= 0.12; weights.salvage *= 2; weights.patrol *= 0.55; weights.smuggler *= 0.45; weights.netline *= 0.62;
     }
     if (heat >= 3) weights.patrol *= 2.1;
-    let roll = Math.random() * Object.values(weights).reduce((a, n) => a + n, 0);
-    for (const type of ['distress', 'airrescue', 'grounding', 'fire', 'wrangler', 'manatee', 'spotlight', 'race', 'patrol', 'salvage', 'smuggler', 'netline']) { roll -= weights[type]; if (roll <= 0) return type; }
-    return 'distress';
+    weights.photoboat = night || this.environment.values.storm > 0.22 ? 0 : 0.19;
+    weights.sounder = 0.13 * (1 + Math.min(1, Math.abs(this.environment.tideRate || 0)));
+    return drawEncounter(weights, this.game.save.encounterRecent);
   }
 
   start(type = this.pickType(), nearby = false) {
@@ -467,6 +468,9 @@ export class EncounterDirector {
     const evacuationCamp = type === 'distress' ? this.stormEvacuationCamp() : null;
     const at = evacuationCamp ? this.stormEvacuationAt(evacuationCamp) : type === 'grounding' ? this.groundingSpot(nearby) : nearby ? this.spot(42, 62, 38) : this.spot(); if (!at) { this.next = 20; return false; }
     if (evacuationCamp) this.startStormEvacuation(evacuationCamp, at);
+    else if (isRiverCall(type)) {
+      if (!startRiverCall(this, type, at)) { this.next = 12; return false; }
+    }
     else if (type === 'distress') this.startDistress(at);
     else if (type === 'airrescue') this.startAirRescue(at);
     else if (type === 'grounding') this.startGrounding(at);
@@ -486,6 +490,8 @@ export class EncounterDirector {
     else if (type === 'smuggler') this.startSmuggler(at);
     else if (type === 'netline') this.startNetline(at);
     else this.startSalvage(at);
+    const recent = this.game.save.encounterRecent;
+    this.game.save.encounterRecent = [...(Array.isArray(recent) ? recent.slice(-2) : []), type];
     return true;
   }
 
@@ -1858,6 +1864,9 @@ export class EncounterDirector {
       if (!this.game.state) { this.game.beacon.hide(); this.game.beacon2.hide(); }
     }
     this.clearPrompt(); this.obs.length = 0;
+    if (isRiverCall(e.type) && this.rigs.riverCall) {
+      this.rigs.riverCall.skiff.visible = this.rigs.riverCall.sensor.visible = false;
+    }
     if (e.type === 'distress') { if (!(success && this.beginDistressEcho(e))) this.clearDistressEcho(); }
     else if (!this.distressEcho) this.rigs.distress.boat.visible = false;
     setWranglePose(this.rigs.distress.survivor, 0); this.rigs.distress.survivor.position.set(0, 0.5, -0.55); this.rigs.distress.survivor.rotation.y = Math.PI;
@@ -1878,7 +1887,7 @@ export class EncounterDirector {
     if (this.law) { this.law.setPursuit(false); this.law.responding = false; }
     if (this.game.wpTarget && this.game.wpTarget.encounter) this.game.wpTarget = null;
     this.active = null;
-    const normalDelay = success ? 100 + Math.random() * 110 : silent ? 60 : 75 + Math.random() * 90;
+    const normalDelay = silent ? 50 : (success ? 32 : 45) + Math.random() ** 1.5 * 122;
     this.next = this.patrolAlert > 0 ? Math.min(normalDelay, this.patrolAlert >= 3 ? 1.5 : this.patrolAlert >= 2 ? 3 : 8) : normalDelay;
   }
 
@@ -3206,6 +3215,8 @@ export class EncounterDirector {
     this.addBoatObstacle(A, e.choice === 'fwc' ? 'patrol' : 'net crew');
   }
 
+  callObjective() { return riverCallObjective(this.active); }
+
   canInteract() { return !this.game.dockCamp && !this.game.dockJob && !this.game.atBoard; }
 
   update(dt, t, enabled = true) {
@@ -3244,6 +3255,7 @@ export class EncounterDirector {
     else if (e.type === 'race') this.updateRace(e, dt, t);
     else if (e.type === 'patrol') this.updatePatrol(e, dt, t);
     else if (e.type === 'smuggler') this.updateSmuggler(e, dt, t);
+    else if (isRiverCall(e.type)) updateRiverCall(this, e, dt, t);
     else if (e.type === 'netline') this.updateNetline(e, dt, t);
     else this.updateSalvage(e, dt, t);
     const carryingDistress = e.type === 'distress' && e.state === 'aboard', carryingFire = e.type === 'fire' && e.aboard;

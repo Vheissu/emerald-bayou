@@ -19,6 +19,26 @@ The rivers, tree stands, fish camps and dock crews are seeded from world coordin
 </tr>
 </table>
 
+## Gulf Cut
+
+The highway crosses the home channel just south of the starting berth. Red and green lights mark the opening between its timber fenders. On the west bank, anglers work the piers beside three stilt houses. Swimmers head for the shallows when a fast boat comes close or a storm rolls in.
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/18-gulf-cut.jpg" alt="On the water approaching the marked span of Gulf Cut Bridge"></td>
+<td width="50%"><img src="docs/screenshots/19-swim-cove.jpg" alt="Swimmers off the fishing piers in Gulf Cut"></td>
+</tr></table>
+
+## Races and boat parts
+
+Open **M → Races** to enter the North Reach Sprint, the two-lap Tower Circuit or the solo Red Bend Time Trial. The two head-to-head courses pay for second place as well as first. After a finish, **Return to dock** takes you back to the tower to spend your purse. There’s enough in a $155 second-place sprint finish to fit the $145 deep rudder blades.
+
+Open **Boat** to compare parts. Fit them at the tower dock. A torque cam trades fuel economy for thrust, larger tanks add weight, and a narrow searchlight reaches farther at night. Three $110 hull stripes are available alongside the fourteen hardware upgrades. Owned parts and the factory finish can be refitted for free. [Copper Reef livery](docs/screenshots/22-hull-livery.jpg) The boat keeps its setup between visits.
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/21-regatta.jpg" alt="Tin Lizzie alongside the player approaching the first Tower Circuit gate"></td>
+<td width="50%"><img src="docs/screenshots/20-boat-parts.jpg" alt="The tower parts counter with deep rudder blades fitted"></td>
+</tr></table>
+
 ## Running it
 
 ```bash
@@ -63,7 +83,7 @@ The Mullet Bend landing uses timber from Dekogon's Laguna Dock and two barrels f
 | `X` | reel in, cut the fishing line, or cut cage debris after the prop settles |
 | `G` | set or weigh the anchor while nearly stopped |
 | `M` | jobs board |
-| `Tab` | chart |
+| `Tab` or click the minimap | open the chart; select a marker or a point on the water to plot a course |
 | `L` | spotlight |
 | `H` | horn; one prolonged blast in dense fog |
 | `R` | reset the boat |
@@ -100,6 +120,8 @@ Watch the striped windsock at a dock for the local wind. The staff beside it mar
 <img src="docs/screenshots/06-jobs.jpg" alt="The jobs board" width="100%">
 
 Sixteen jobs unlock in sequence, from a shakedown run through a manatee count, a poacher chase against an AI skiff, a night rescue and a creek gauntlet. The last three add split-gate racing, a ramp circuit and a pickup-route-dropoff relay where hard landings can throw the case back into the water. On top of that there are daily bounties, per-run records, three-way reputation between the locals, FWC and the backchannel, and a story that comes in over channel 68.
+
+A survey skiff sometimes loses its recorder downstream. Idle alongside the flashing drum, lift it aboard, then return it to collect the surveyor’s fee. In fair daylight a photographer may pay for a fast pass. Get out to the turnaround mark first and leave room abeam for the shot.
 
 Between jobs, you can come across dead motors, FWC stops, watched packages, storm wreckage, drifting fuel drums and illegal monofilament sets. A hard strike can split a drum and leave a sheen moving with the current. It can also stop one of the resident working boats: kill the prop and hold alongside while the crew checks everyone aboard, or leave and hear your hull reported over the radio.
 
@@ -239,7 +261,9 @@ People are jointed figures driven by a pose target system rather than baked anim
 
 ## How the world works
 
-<img src="docs/screenshots/04-chart.jpg" alt="The chart, 16 miles square across nine regions" width="100%">
+The coral line on the chart and minimap follows navigable water. Distance counts down along the bends, with a cue for the next turn. If a pin lands inland, the route ends at a reachable water approach. Clear the pin to follow the active mission again.
+
+<img src="docs/screenshots/04-chart.jpg" alt="A plotted water route around the banks to Mullet Bend" width="100%">
 
 `src/heightfield.js` is plain JavaScript with no three.js import, which lets the main thread and a pool of up to four web workers evaluate the same terrain function. The home bayou around the tower is hand shaped inside a 560 m radius, blending out to procedural noise by 780 m. Wooded ridges rise behind the low bank shelves. Outside bends climb more sharply, with limestone showing through the steeper faces. Farther out, tree islands break up the sawgrass prairie and the tide reaches into its shallow swales. Sandbars are seeded per 400 m cell.
 

@@ -4,6 +4,10 @@ import { mulberry32 } from './noise.js';
 import { WORLD_HALF } from './heightfield.js';
 import { cargoEjectionReason, raceCourseDistances, raceCourseProgress, racePositionLabel, rampPoint, splitRemaining } from './raceformats.js';
 import { emitMapMarker, MapMarkerPool } from './mapmarkers.js';
+import { boatPaint, boatTuning, fitBoatPart, normalizeBoatParts } from './boatmods.js';
+import { setAirboatLivery } from './airboatlivery.js';
+import { buildRegatta, recordRegattaFinish } from './regatta.js';
+import { boatPartsMenu, raceMenu } from './regattamenu.js';
 
 const SAVE_KEY = 'emeraldBayou.save.v2';
 const fmtT = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60), r = s - m * 60; return `${m}:${r < 10 ? '0' : ''}${r.toFixed(1)}`; };
@@ -12,7 +16,7 @@ const missionGoal = m => m?.gold ? `Gold ${fmtT(m.gold)}` : m?.scoreMedal ? `Gol
 const MPH = 2.23694;
 const FT = 3.28084, MI = 1 / 1609.344;
 const HULL_SAMPLES = [-2, 0, 1.6];
-const MENU_TABS = ['jobs', 'world', 'records', 'system'];
+const MENU_TABS = ['jobs', 'races', 'boat', 'world', 'records', 'system'];
 const FREE_RIDE_WEATHER = ['calm', 'lightRain', 'thunderstorm'];
 const esc = value => String(value ?? '').replace(/[&<>"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
 // Florida measures in feet and miles: under about a fifth of a mile in feet, then miles
@@ -26,6 +30,7 @@ export class Game {
   constructor(o) {
     Object.assign(this, o); // phys, T (terrain), scene, audio, tricks, manatees, gators, skiff, boat, dockTie, startX, startZ
     this.save = this.load();
+    this.applyBoatParts();
     this.positionSaveT = 8;
     this.positionRestored = this.restoreBoatPosition();
     this.state = null; // active mission runtime
@@ -37,7 +42,7 @@ export class Game {
     this.scene.add(this.beacon.group, this.beacon2.group);
     this.el = {
       mission: document.getElementById('mission'), timer: document.getElementById('timer'), wp: document.getElementById('wp'),
-      cash: document.getElementById('cash'), tricks: document.getElementById('tricks'), arrow: document.getElementById('arrow'),
+      tricks: document.getElementById('tricks'), arrow: document.getElementById('arrow'),
       toast: document.getElementById('toast'), menu: document.getElementById('menu'), result: document.getElementById('result'), fade: document.getElementById('fade'),
       air: document.getElementById('airVal'), bounty: document.getElementById('bounty'), prompt: document.getElementById('prompt'), waterRule: document.getElementById('waterRule'),
     };
@@ -51,6 +56,7 @@ export class Game {
     this.missionRivalObstacle = { ax: 0, az: 0, bx: 0, bz: 0, r: 1.05, tag: 'racing johnboat', onHit: (into, nx, nz) => this.hitMissionRival(into, nx, nz) };
     this.phys.addObs?.('mission-rival', this.missionRivalObstacles);
     this.missions = buildMissions(this);
+    this.regatta = buildRegatta(this);
     this.jobs = this.buildJobs();
     this.bounties = new Bounties(this);
     if (this.world) for (const k of this.save.traps) this.world.collected.add(k);
@@ -64,7 +70,13 @@ export class Game {
     this.renderHud();
   }
   load() {
-    const fill = (s) => { s.rec = s.rec || {}; s.bounties = s.bounties || {}; s.camps = s.camps || []; s.seen = s.seen || []; s.traps = s.traps || []; s.nature = s.nature || {}; s.runs = s.runs || 0; return s; };
+    const fill = (s) => {
+      s.rec = s.rec || {}; s.bounties = s.bounties || {}; s.camps = s.camps || []; s.seen = s.seen || []; s.traps = s.traps || []; s.nature = s.nature || {}; s.runs = s.runs || 0;
+      const cash = Number(s.cash);
+      s.cash = Number.isFinite(cash) ? Math.max(0, cash) : 0;
+      s.boatParts = normalizeBoatParts(s.boatParts);
+      return s;
+    };
     try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); if (s && s.best) return fill(s); } catch (e) { /* ignore */ }
     // migrate the pass-3 save if there is one
     try { const s = JSON.parse(localStorage.getItem('emeraldBayou.save.v1')); if (s && s.best) return fill({ cash: s.cash || 0, best: s.best, done: s.done || [] }); } catch (e) { /* ignore */ }
@@ -110,6 +122,7 @@ export class Game {
       || (s.navigationAids?.reports || []).length
       || Number(s.fishing?.total)
       || Number(s.marshFire?.stats?.contained)
+      || (s.boatParts?.owned || []).length || Object.keys(s.regatta || {}).length
       || (story.stage && story.stage !== 'dormant') || travelled
     );
   }
@@ -166,6 +179,37 @@ export class Game {
     return true;
   }
   addCash(n) { this.save.cash += n; this.persist(); }
+  applyBoatParts() {
+    const tuning = this.phys.tuning = boatTuning(this.save.boatParts);
+    setAirboatLivery(this.boat, boatPaint(this.save.boatParts));
+    const tanks = this.boat?.getObjectByName('airboat fuel tanks');
+    if (tanks) tanks.scale.y = tuning.capacity / 18;
+    const blades = this.boat?.getObjectByName('airboat prop blades');
+    if (blades) blades.scale.setScalar(tuning.propScale);
+    for (const side of ['port', 'starboard']) {
+      const rudder = this.boat?.getObjectByName(`airboat rudder ${side}`);
+      if (rudder) rudder.scale.z = tuning.rudderWidth;
+    }
+    if (this.condition) this.condition.maxFuel = tuning.capacity;
+    this.environment?.setBoatLightTuning?.(tuning);
+  }
+  canFitBoatPart() {
+    return this.condition?.serviceLocation?.()?.home === true && !this.condition.towPending;
+  }
+  selectBoatPart(slot, id) {
+    const result = fitBoatPart(this.save, { slot, id, docked: this.canFitBoatPart(), fuel: this.condition?.state?.fuel });
+    if (result.status === 'fitted') {
+      this.applyBoatParts();
+      this.persist();
+      this.partsMessage = result.price ? `${result.name} fitted · ${fmtCash(result.price)}` : `${result.name} fitted`;
+      this.audio.checkpoint();
+    } else if (result.status === 'funds') this.partsMessage = `Need ${fmtCash(result.needed)} more.`;
+    else if (result.status === 'fuel') this.partsMessage = `Use the fuel above ${result.capacity} gal before fitting these tanks.`;
+    else if (result.status === 'away') this.partsMessage = 'Idle at the tower dock to fit parts.';
+    else return;
+    this.renderMenu();
+    this.el.menu.querySelector(`[data-part-slot="${slot}"][data-fit-part="${id}"]`)?.focus({ preventScroll: true });
+  }
   unlocked(i) { return i === 0 || this.save.done.includes(this.missions[i - 1].id) || this.save.done.includes(this.missions[i].id) || this.debugUnlock; }
   unlockAll() { this.debugUnlock = true; this.renderMenu(); }
   record(kind, value) {
@@ -233,7 +277,9 @@ export class Game {
   // ---- mission lifecycle ----
   start(i) { this.startMission(this.missions[i]); }
   startMission(m) {
+    if (!m || this.traveling) return;
     this.closeMenu(); this.closeResult(); this.closeMap();
+    this.traveling = true; this.inputLock = true;
     this.fadeTo(() => {
       if (this.state) this.end(false, true);
       this.tricks.bust(''); this.tricks.session = 0;
@@ -242,7 +288,7 @@ export class Game {
       this.phys.loaded = 0; this.phys.towDrag = 0;
       this.state = { m, t: 0, phase: 0, score: 0, done: false, cd: m.countdown ? 3.999 : 0, strikes: 0 };
       m.setup(this.state, this);
-      this.inputLock = !!m.countdown;
+      this.traveling = false; this.inputLock = !!m.countdown;
       this.toast(m.title, m.desc, 3.2);
       this.renderHud();
     });
@@ -259,6 +305,24 @@ export class Game {
     this.state = null; this.inputLock = false;
     if (silent) return;
     const m = s.m; const lines = [];
+    this.lastMission = m;
+    if (m.isRegatta) {
+      const result = success ? recordRegattaFinish(this.save, m, s.t, s.place, s.rivalRams) : null;
+      if (result) {
+        const medal = this.medalFor(m, s);
+        const place = m.rival ? s.place === 1 ? 'First place' : 'Second place' : 'Time trial finished';
+        lines.push(`${fmtT(s.t)}${medal ? ` · <b>${medal}</b>` : ''}${result.newBest ? ' · Personal best' : ''}`);
+        lines.push(`Purse <b>${fmtCash(result.purse)}</b>${result.clean ? '' : ' · 20% contact penalty'}`);
+        this.addCash(result.purse);
+        this.audio.complete();
+        this.showResult(place, lines, false);
+      } else {
+        this.audio.fail();
+        this.showResult('Race ended', [s.failReason || 'No finish recorded.'], true);
+      }
+      this.renderHud();
+      return;
+    }
     if (success) {
       const time = s.t; const best = this.save.best[m.id] || {};
       const medal = this.medalFor(m, s);
@@ -287,8 +351,23 @@ export class Game {
     this.renderHud();
   }
   showResult(title, lines, fail) {
-    this.el.result.innerHTML = `<h2 class="${fail ? 'fail' : ''}">${fail ? title : 'Mission complete'}</h2>${fail ? '' : `<div class="lines" style="font-size:24px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase">${title}</div>`}<div class="lines">${lines.map(l => `<div>${l}</div>`).join('')}</div><div class="foot"><span class="input-keyboard">Enter · continue &nbsp;&nbsp; R · retry &nbsp;&nbsp; M · jobs board</span><span class="input-gamepad">A / Cross · continue &nbsp;&nbsp; Y / Triangle · retry &nbsp;&nbsp; B / Circle · jobs board</span></div>`;
-    this.el.result.classList.remove('hidden'); this.resultOpen = true; this.paused = true; document.getElementById('hud').classList.add('dim'); this.lastMission = this.state ? this.state.m : this.lastMission;
+    const race = this.lastMission?.isRegatta;
+    const dock = race ? '<button type="button" class="race-dock" data-race-dock>Return to tower dock <small><span class="input-keyboard">F</span><span class="input-gamepad">X / Square</span></small></button>' : '';
+    this.el.result.innerHTML = `<h2 class="${fail ? 'fail' : ''}">${fail || race ? title : 'Mission complete'}</h2>${fail || race ? '' : `<div class="lines" style="font-size:24px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase">${title}</div>`}<div class="lines">${lines.map(l => `<div>${l}</div>`).join('')}</div>${dock}<div class="foot"><span class="input-keyboard">Enter · continue &nbsp;&nbsp; R · retry &nbsp;&nbsp; M · ${race ? 'races' : 'jobs board'}</span><span class="input-gamepad">A / Cross · continue &nbsp;&nbsp; Y / Triangle · retry &nbsp;&nbsp; B / Circle · ${race ? 'races' : 'jobs board'}</span></div>`;
+    this.el.result.querySelector('[data-race-dock]')?.addEventListener('click', () => this.returnFromRace());
+    this.el.result.classList.remove('hidden'); this.resultOpen = true; this.paused = true; document.getElementById('hud').classList.add('dim');
+  }
+  returnFromRace() {
+    if (!this.resultOpen || !this.lastMission?.isRegatta || this.traveling) return;
+    this.traveling = true;
+    this.fadeTo(() => {
+      const { x, z } = this.dockTie;
+      this.phys.reset(x, z, this.headingTo(x, z, this.startX, this.startZ));
+      this.traveling = false;
+      this.closeResult();
+      this.openMenu('boat');
+      this.persist();
+    });
   }
   closeResult() { this.el.result.classList.add('hidden'); this.resultOpen = false; this.paused = this.menuOpen; if (!this.menuOpen) document.getElementById('hud').classList.remove('dim'); }
   fail(reason) { if (this.state) { this.state.failReason = reason; this.end(false); } }
@@ -328,6 +407,7 @@ export class Game {
   // ---- menu ----
   openMenu(tab = 'jobs') {
     this.controlsOpen = false;
+    this.partsMessage = '';
     this.menuTab = MENU_TABS.includes(tab) ? tab : 'jobs'; this.menuOpen = true; this.paused = true; this.renderMenu();
     this.el.menu.classList.remove('hidden'); this.el.menu.setAttribute('aria-hidden', 'false'); document.getElementById('hud').classList.add('dim');
     requestAnimationFrame(() => this.el.menu.focus({ preventScroll: true }));
@@ -337,12 +417,14 @@ export class Game {
     if (!this.resultOpen) document.getElementById('hud').classList.remove('dim');
   }
   renderMenu() {
-    const rows = this.missions.map((m, i) => {
-      const b = this.save.best[m.id]; const lock = !this.unlocked(i);
-      let best = '';
-      if (b) { best = b.score !== undefined ? `${b.score.toLocaleString()} pts` : b.time ? fmtT(b.time) : ''; if (b.medal) best += `<i>${b.medal}</i>`; }
-      return `<button type="button" class="m ${i === this.sel ? 'sel' : ''} ${lock ? 'locked' : ''} ${b ? 'done' : ''}" data-mission="${i}" ${lock ? 'disabled' : ''}><span class="n">${String(i + 1).padStart(2, '0')}</span><span class="t">${m.title}</span><span class="best">${lock ? 'LOCKED' : best || fmtCash(m.reward)}</span></button>`;
-    }).join('');
+    const jobs = { available: [], finished: [], locked: [] };
+    for (const [i, mission] of this.missions.entries()) {
+      const best = this.save.best[mission.id];
+      if (!this.unlocked(i)) { jobs.locked.push(mission); continue; }
+      const result = best?.time ? fmtT(best.time) : best?.score != null ? `${best.score.toLocaleString()} pts` : fmtCash(mission.reward);
+      const group = best ? jobs.finished : jobs.available;
+      group.push(`<button type="button" class="m ${i === this.sel ? 'sel' : ''}" data-mission="${i}"><span class="t">${esc(mission.title)}</span><span class="best">${result}</span></button>`);
+    }
     const r = this.save.rec;
     const records = [
       ['Top speed', r.speed ? `${Math.round(r.speed)} mph` : '—'], ['Longest air', r.air ? `${r.air.toFixed(2)} s` : '—'], ['Highest air', r.peak ? `${r.peak.toFixed(1)} m` : '—'],
@@ -378,15 +460,27 @@ export class Game {
     const inputHelp = (keyboard, gamepad) => `<span class="input-keyboard">${keyboard}</span><span class="input-gamepad">${gamepad}</span>`;
     if (this.menuTab === 'jobs') {
       title = 'Jobs';
-      const goal = missionGoal(this.missions[this.sel]);
-      content = `<div class="menu-grid"><div><div class="list">${rows}</div><details class="menu-extra"><summary>Details</summary><div class="menu-extra-content"><p data-brief>${esc(this.missions[this.sel]?.desc || '')}</p><p data-brief-goal ${goal ? '' : 'hidden'}>${esc(goal)}</p><section class="menu-card"><div class="h">Bounties</div>${bl}</section><div class="deed">${esc(storyLine)}</div><div class="deed">${esc(contractLine)}</div></div></details></div></div>`;
+      const selected = this.missions[this.sel], goal = missionGoal(selected);
+      const nextLocked = jobs.locked[0], previous = nextLocked && this.missions[this.missions.indexOf(nextLocked) - 1];
+      content = `<div class="dispatch-board"><div class="dispatch-list"><h2>Available jobs</h2><div class="list">${jobs.available.join('') || '<p>All jobs completed.</p>'}</div>
+        ${jobs.finished.length ? `<details class="menu-extra" ${this.save.best[selected.id] ? 'open' : ''}><summary>Completed · ${jobs.finished.length}</summary>${jobs.finished.join('')}</details>` : ''}
+        ${nextLocked ? `<details class="menu-extra"><summary>Locked jobs · ${jobs.locked.length}</summary><p>Finish ${esc(previous.title)} to unlock ${esc(nextLocked.title)}.</p></details>` : ''}
+        <details class="menu-extra"><summary>Bounties</summary>${bl}</details></div>
+        <article class="dispatch-brief"><h2 data-job-title>${esc(selected.title)}</h2><p data-brief>${esc(selected.desc)}</p><p class="dispatch-goal" data-brief-goal ${goal ? '' : 'hidden'}>${esc(goal)}</p>
+        <div class="dispatch-pay">Pay <b data-job-pay>${fmtCash(selected.reward)}</b></div><button type="button" class="dispatch-start" data-start-job>Start job <span aria-hidden="true">→</span></button></article></div>`;
+    } else if (this.menuTab === 'races') {
+      title = 'Races';
+      content = raceMenu(this.regatta, this.save.regatta, { cash: fmtCash, time: fmtT, distance: fmtDist });
+    } else if (this.menuTab === 'boat') {
+      title = 'Boat parts';
+      content = boatPartsMenu(this.save.boatParts, this.canFitBoatPart(), this.partsMessage || '', fmtCash);
     } else if (this.menuTab === 'world') {
       title = 'World';
       content = `<div class="world-grid"><section class="menu-card"><div class="h">Current picture</div><div class="kpis"><div class="kpi"><b>${encounterCount}</b><span>encounters</span></div><div class="kpi"><b>${regionsSeen}/${regionTotal}</b><span>regions</span></div><div class="kpi"><b>${incidentResolved}/${incidentHeard}</b><span>calls resolved</span></div><div class="kpi"><b>${wanted ? '★'.repeat(wanted) : 'Clear'}</b><span>FWC wanted</span></div><div class="kpi"><b>${citations}</b><span>citations</span></div><div class="kpi"><b>${Number(incidents.fwc) || 0}/${Number(incidents.runners) || 0}</b><span>FWC / runners</span></div></div></section><section class="menu-card"><div class="h">Standing</div><div class="standing"><span>Locals</span><b>${esc(standing.locals)}</b><em>${this.reputation ? this.reputation.score('locals').toFixed(1) : '0.0'}</em></div><div class="standing"><span>FWC</span><b>${esc(standing.fwc)}</b><em>${this.reputation ? this.reputation.score('fwc').toFixed(1) : '0.0'}</em></div><div class="standing"><span>Backchannel</span><b>${esc(standing.runners)}</b><em>${this.reputation ? this.reputation.score('runners').toFixed(1) : '0.0'}</em></div></section><section class="menu-card"><div class="h">Open threads</div><div class="deed"><b>Story</b>${esc(storyLine)}</div><div class="deed"><b>Resident work</b>${esc(contractLine)}</div><div class="deed"><b>Conditions</b>${esc(this.getWorldLabel?.() || 'South Florida backcountry')}</div></section><section class="menu-card"><div class="h">What people remember</div>${deedRows}</section><section class="menu-card field-notes"><div class="h">Field notes · ${fieldNoteCount} / ${fieldNotes.length || 3}</div><div class="field-note-grid">${fieldNoteRows}</div></section></div>`;
       const forecast = this.environment?.weatherForecast();
       if (forecast) {
         content = content.replace('<div class="world-grid">', '<div class="world-grid">' +
-          `<section class="menu-card"><div class="h">Weather</div><div class="deed"><b>Now</b>${esc(this.environment.weatherLabel())}</div><div class="deed"><b>Forecast</b>${esc(forecast.nextLabel)}${forecast.arrivalLabel ? ' around ' + esc(forecast.arrivalLabel) : ''}</div></section>`);
+          `<section class="menu-card"><div class="h">Weather</div><div class="deed"><b>Now</b>${esc(this.environment.weatherLabel())}</div><div class="deed"><b>Water</b>${esc(this.environment.marineReading?.() || this.environment.tideLabel?.() || '')}</div><div class="deed"><b>Forecast</b>${esc(forecast.nextLabel)}${forecast.arrivalLabel ? ' around ' + esc(forecast.arrivalLabel) : ''}</div></section>`);
       }
     } else if (this.menuTab === 'records') {
       title = 'Stats';
@@ -419,21 +513,41 @@ export class Game {
         (_, classes, heading) => `<details class="menu-extra menu-log${classes}"><summary>${labels[heading] || (heading.startsWith('Field notes') ? 'Discoveries' : heading.startsWith('Catch-and-release') ? 'Fishing' : heading)}</summary><div class="menu-extra-content">`)
         .replace(/<\/section>/g, '</div></details>');
     }
-    const tabs = { jobs: 'Jobs', world: 'World', records: 'Stats', system: 'Game' };
+    const tabs = { jobs: 'Jobs', races: 'Races', boat: 'Boat', world: 'World', records: 'Stats', system: 'Game' };
     const rail = MENU_TABS.map(tab => `<button type="button" class="rail-tab ${tab === this.menuTab ? 'active' : ''}" data-tab="${tab}" ${tab === this.menuTab ? 'aria-current="page"' : ''}>${tabs[tab]}</button>`).join('');
-    this.el.menu.innerHTML = `<nav class="menu-rail" aria-label="Pause menu">${rail}</nav><main class="menu-stage"><section class="menu-view"><header class="menu-head"><h1>${title}</h1></header>${content}</section></main><footer class="menu-keybar">${inputHelp('<span><b>Esc</b> Back</span>', '<span><b>B</b> Back</span>')}</footer>`;
+    this.el.menu.innerHTML = `<nav class="menu-rail" aria-label="Pause menu">${rail}<span class="menu-wallet" aria-label="Balance">${fmtCash(this.save.cash)}</span></nav><main class="menu-stage"><section class="menu-view">${this.menuTab === 'jobs' ? '' : `<header class="menu-head"><h1>${title}</h1></header>`}${content}</section></main><footer class="menu-keybar">${inputHelp('<span><b>Esc</b> Back</span>', '<span><b>B</b> Back</span>')}</footer>`;
     this.el.menu.querySelectorAll('[data-tab]').forEach(element => element.addEventListener('click', () => { this.menuTab = element.dataset.tab; this.renderMenu(); this.el.menu.focus({ preventScroll: true }); }));
+    this.el.menu.querySelector('[data-start-job]')?.addEventListener('click', () => {
+      if (this.unlocked(this.sel)) this.start(this.sel);
+    });
     this.el.menu.querySelectorAll('[data-mission]').forEach(element => {
-      element.addEventListener('click', () => { const i = +element.dataset.mission; if (this.unlocked(i)) { this.sel = i; this.start(i); } });
       const select = () => {
         const i = +element.dataset.mission;
         if (!this.unlocked(i)) return;
         this.sel = i; this.el.menu.querySelectorAll('.m').forEach(candidate => candidate.classList.toggle('sel', +candidate.dataset.mission === i));
+        const title = this.el.menu.querySelector('[data-job-title]'), pay = this.el.menu.querySelector('[data-job-pay]');
+        if (title) title.textContent = this.missions[i].title;
+        if (pay) pay.textContent = fmtCash(this.missions[i].reward);
         const brief = this.el.menu.querySelector('[data-brief]'); if (brief) brief.textContent = this.missions[i].desc;
         const goal = this.el.menu.querySelector('[data-brief-goal]');
         if (goal) { goal.textContent = missionGoal(this.missions[i]); goal.hidden = !goal.textContent; }
       };
       element.addEventListener('mouseenter', select); element.addEventListener('focus', select);
+      element.addEventListener('click', () => {
+        select();
+        this.el.menu.querySelector('[data-start-job]')?.focus();
+      });
+    });
+    this.el.menu.querySelectorAll('[data-race]').forEach(element => {
+      element.addEventListener('click', () => this.startMission(this.regatta[Number(element.dataset.race)]));
+    });
+    this.el.menu.querySelectorAll('[data-fit-part]').forEach(element => {
+      element.addEventListener('click', () => this.selectBoatPart(element.dataset.partSlot, element.dataset.fitPart));
+    });
+    this.el.menu.querySelector('[data-parts-pin]')?.addEventListener('click', () => {
+      this.navigation?.setPin(this.dockTie.x, this.dockTie.z, 'Tower dock');
+      this.closeMenu();
+      this.openMap();
     });
     this.el.menu.querySelectorAll('[data-action]').forEach((element, index) => {
       element.addEventListener('mouseenter', () => { this.systemSel = index; this.el.menu.querySelectorAll('.system-action').forEach((candidate, i) => candidate.classList.toggle('sel', i === index)); });
@@ -464,11 +578,14 @@ export class Game {
     this.renderMenu(); this.el.menu.focus({ preventScroll: true });
   }
   onKey(e) {
-    if (!this.playing) return;
+    if (!this.playing || this.traveling) return;
     if (this.resultOpen) {
-      if (e.code === 'Enter' || e.code === 'Space') this.closeResult();
+      const race = this.lastMission?.isRegatta;
+      const dock = document.activeElement?.matches?.('[data-race-dock]');
+      if (race && (e.code === 'KeyF' || e.code === 'KeyC' || (dock && (e.code === 'Enter' || e.code === 'Space')))) this.returnFromRace();
+      else if (e.code === 'Enter' || e.code === 'Space') this.closeResult();
       else if (e.code === 'KeyR' && this.lastMission) { this.closeResult(); this.startMission(this.lastMission); }
-      else if (e.code === 'KeyM' || e.code === 'Escape') { this.closeResult(); this.openMenu(); }
+      else if (e.code === 'KeyM' || e.code === 'Escape') { this.closeResult(); this.openMenu(race ? 'races' : 'jobs'); }
       e.preventDefault(); return;
     }
     if (this.menuOpen) {
@@ -480,6 +597,12 @@ export class Game {
       }
       if (this.menuTab === 'jobs' && (e.code === 'ArrowDown' || e.code === 'KeyS')) { this.moveJobSelection(1); e.preventDefault(); return; }
       if (this.menuTab === 'jobs' && (e.code === 'ArrowUp' || e.code === 'KeyW')) { this.moveJobSelection(-1); e.preventDefault(); return; }
+      if ((this.menuTab === 'races' || this.menuTab === 'boat') && (e.code === 'ArrowDown' || e.code === 'ArrowUp')) {
+        const rows = [...this.el.menu.querySelectorAll('[data-race], [data-fit-part], [data-parts-pin]')];
+        const current = rows.indexOf(document.activeElement), direction = e.code === 'ArrowDown' ? 1 : -1;
+        if (rows.length) rows[current < 0 ? 0 : (current + direction + rows.length) % rows.length].focus();
+        e.preventDefault(); return;
+      }
       if (this.menuTab === 'system' && (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ArrowUp' || e.code === 'KeyW')) {
         const count = Math.max(1, this.el.menu.querySelectorAll('[data-action]').length), direction = e.code === 'ArrowDown' || e.code === 'KeyS' ? 1 : -1;
         this.systemSel = (this.systemSel + count + direction) % count; this.renderMenu(); e.preventDefault(); return;
@@ -496,12 +619,16 @@ export class Game {
         if (focused?.matches?.('#menu button')) focused.click();
         else if (this.menuTab === 'jobs' && this.unlocked(this.sel)) this.start(this.sel);
         else if (this.menuTab === 'system') this.el.menu.querySelector('.system-action.sel')?.click();
+        else this.el.menu.querySelector('[data-race], [data-parts-pin], [data-fit-part]')?.focus();
         e.preventDefault(); return;
       }
       return;
     }
-    if (e.code === 'Tab') { e.preventDefault(); this.mapOpen ? this.closeMap() : this.openMap(); return; }
-    if (this.mapOpen) { if (e.code === 'Escape' || e.code === 'KeyM') this.closeMap(); return; }
+    if (this.mapOpen) {
+      if (e.code === 'Escape' || e.code === 'KeyM' || (e.code === 'Tab' && !e.isTrusted)) this.closeMap();
+      return;
+    }
+    if (e.code === 'Tab') { e.preventDefault(); this.openMap(); return; }
     if (e.code === 'KeyM') { this.openMenu('jobs'); return; }
     if (e.code === 'Escape') { this.openMenu('system'); return; }
     if ((e.code === 'KeyC' || e.code === 'KeyX') && this.fishing?.capturesInput(e)) return;
@@ -509,8 +636,16 @@ export class Game {
     if ((e.code === 'KeyE' || e.code === 'KeyF') && this.aftermath?.capturesInput(e.code)) return;
     if (e.code === 'KeyE' && this.marshFire?.capturesInput(e.code)) return;
     if (e.code === 'KeyE' && this.navigationAids?.capturesInput(e.code)) return;
-    if (e.code === 'KeyE' && !this.state && !this.paused) { if (this.dockJob) { if (this.unlocked(this.dockJob.i)) this.start(this.dockJob.i); else this.toast('Locked', `Finish ${this.missions[this.dockJob.i - 1].title} first`, 2); return; } if (this.dockCamp) { this.startRun(this.dockCamp); return; } if (this.atBoard) { this.openMenu(); return; } }
-    if (e.code === 'KeyR' && this.state && (this.state.m.countdown || this.state.m.restartOnR)) { this.start(this.missions.indexOf(this.state.m)); }
+    if (e.code === 'KeyE' && !this.state && !this.paused) {
+      if (this.dockJob) {
+        if (this.unlocked(this.dockJob.i)) this.start(this.dockJob.i);
+        else this.toast('Locked', `Finish ${this.missions[this.dockJob.i - 1].title} first`, 2);
+        return;
+      }
+      if (this.dockCamp) { this.startRun(this.dockCamp); return; }
+      if (this.atBoard) { this.openMenu(this.canFitBoatPart() ? 'boat' : 'jobs'); return; }
+    }
+    if (e.code === 'KeyR' && this.state && (this.state.m.countdown || this.state.m.restartOnR)) this.startMission(this.state.m);
   }
 
   // a surfaced gator under the hull: thump, hop, lose the chain
@@ -550,6 +685,8 @@ export class Game {
   findNoWakeZone(x, z) {
     const out = this.noWakeScan; out.key = ''; out.label = ''; out.kind = ''; out.d = Infinity; out.radius = 0; out.limit = 8; out.priority = 0; out.animal = null;
     if (this.world) {
+      const cove = this.world.swimCove;
+      if (cove) this.considerNoWake(out, x, z, 'gulf-cut-swim-cove', cove.name, 'cove', cove.x, cove.z, cove.radius, 5);
       for (const g of this.world.liveCamps.values()) {
         const c = g.userData.site; if (c) this.considerNoWake(out, x, z, `camp:${c.key}`, c.name, 'camp', c.tie.x, c.tie.z, 88);
       }
@@ -722,15 +859,23 @@ export class Game {
       const nc = this.nearCamp; const slow = this.mph() < 6, freeRide = !this.state && !this.fishing?.blocking() && !this.story?.blocking() && !this.aftermath?.blocking() && !this.encounters?.active && !this.life?.traffic?.activeCollision();
       this.updateNoWake(dt, freeRide);
       this.dockCamp = (freeRide && nc && Math.hypot(nc.camp.tie.x - p.pos.x, nc.camp.tie.z - p.pos.y) < 16 && slow) ? nc.camp : null;
-      this.dockJob = null; if (freeRide && slow) { let bd = 14; for (const j of this.jobs) { const d = this.dist(j.x, j.z); if (d < bd) { bd = d; this.dockJob = j; } } }
+      this.dockJob = null;
+      if (freeRide && slow) {
+        let closest = 14;
+        for (const job of this.jobs) {
+          if (!this.unlocked(job.i)) continue;
+          const distance = this.dist(job.x, job.z);
+          if (distance < closest) { closest = distance; this.dockJob = job; }
+        }
+      }
       this.atBoard = freeRide && slow && !this.dockJob && this.dist(this.dockTie.x, this.dockTie.z) < 18;
       this.el.prompt.classList.toggle('on', !!(this.dockCamp || this.dockJob || this.atBoard));
-      if (this.dockJob) { const m = this.dockJob.m, lock = !this.unlocked(this.dockJob.i); const goal = m.gold ? `gold ${fmtT(m.gold)}` : m.scoreMedal ? `gold ${m.scoreMedal[0].toLocaleString()}` : m.timeLimit ? `${fmtT(m.timeLimit)} limit` : fmtCash(m.reward); this.el.prompt.innerHTML = lock ? `<b>E</b> ${m.title} <i>· locked · finish ${this.missions[this.dockJob.i - 1].title}</i>` : `<b>E</b> ${m.title} <i>· ${goal}</i>`; }
+      if (this.dockJob) { const m = this.dockJob.m; const goal = m.gold ? `gold ${fmtT(m.gold)}` : m.scoreMedal ? `gold ${m.scoreMedal[0].toLocaleString()}` : m.timeLimit ? `${fmtT(m.timeLimit)} limit` : fmtCash(m.reward); this.el.prompt.innerHTML = `<b>E</b> ${m.title} <i>· ${goal}</i>`; }
       else if (this.dockCamp) this.el.prompt.innerHTML = `<b>E</b> take a run from ${this.dockCamp.name}`;
-      else if (this.atBoard) this.el.prompt.innerHTML = `<b>E</b> jobs board`;
+      else if (this.atBoard) this.el.prompt.innerHTML = `<b>E</b> ${this.canFitBoatPart() ? 'dock shop' : 'jobs board'}`;
     }
     const s = this.state;
-    if (s && !this.paused) {
+    if (s && !this.paused && !this.traveling) {
       if (s.cd > 0) {
         const before = Math.ceil(s.cd); s.cd -= dt; const after = Math.ceil(s.cd);
         if (after !== before) { if (after >= 1) { this.toast(String(after), '', 1); this.audio.countdown(); } else { this.toast('GO', '', 1); this.audio.countdown(true); this.inputLock = false; } }
@@ -754,7 +899,7 @@ export class Game {
       for (const k of mm) { const current = nearWp(k.x, k.z); emitMapMarker(this, k.x, k.z, current || k.r >= 5 ? 'objective' : 'dot', k.color, k.heading, current, k.glyph, k.locked, k.done, k.known, k.soft, k.r); }
       if (wp && !mm.some(k => nearWp(k.x, k.z))) emitMapMarker(this, wp.x, wp.z, 'objective', '#f07a2e', 0, true);
     } else {
-      for (const j of this.jobs) { const d = Math.hypot(j.x - px, j.z - pz); const unlocked = this.unlocked(j.i), on = d < 420; if (on) j.beacon.set(j.x, j.y, j.z, unlocked ? j.hex : 0x4a5550, false); else j.beacon.hide(); j.beacon.update(t); if (d < 1200) emitMapMarker(this, j.x, j.z, 'job', j.color, 0, false, j.glyph, !unlocked, this.save.done.includes(j.m.id)); }
+      for (const j of this.jobs) { const d = Math.hypot(j.x - px, j.z - pz); const unlocked = this.unlocked(j.i), on = unlocked && d < 420; if (on) j.beacon.set(j.x, j.y, j.z, j.hex, false); else j.beacon.hide(); j.beacon.update(t); if (unlocked && d < 1200) emitMapMarker(this, j.x, j.z, 'job', j.color, 0, false, j.glyph, false, this.save.done.includes(j.m.id)); }
       if (wp && !wp.story) emitMapMarker(this, wp.x, wp.z, 'objective', wp.color || '#7be08a', 0, true, '', false, false, false, true);
     }
     if (this.state) for (const j of this.jobs) j.beacon.hide();
@@ -788,7 +933,7 @@ export class Game {
       else if (s.m.gold) { tm = `${fmtT(s.t)}<small>gold ${fmtT(s.m.gold)}</small>`; e.timer.classList.remove('warn'); }
       else { tm = `${fmtT(s.t)}<small>elapsed</small>`; e.timer.classList.remove('warn'); }
       e.timer.innerHTML = tm;
-      e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '';
+      e.wp.textContent = this.navigation?.target?.label || this.wpTarget?.label || '';
     } else if (this.fishing?.hud()) {
       const h = this.fishing.hud();
       e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
@@ -797,12 +942,12 @@ export class Game {
       const h = this.story.hud();
       e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
       e.timer.innerHTML = ''; e.timer.classList.remove('warn');
-      e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '';
+      e.wp.textContent = this.navigation?.target?.label || this.wpTarget?.label || '';
     } else if (this.aftermath?.hud()) {
       const h = this.aftermath.hud();
       e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
       e.timer.innerHTML = ''; e.timer.classList.remove('warn');
-      e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label || 'objective'} <b>${fmtDist(this.dist(this.wpTarget.x, this.wpTarget.z))}</b>` : '';
+      e.wp.textContent = this.navigation?.target?.label || this.wpTarget?.label || '';
     } else if (this.discoveries?.hud()) {
       const h = this.discoveries.hud();
       e.mission.innerHTML = `<div class="title">${h.title}</div><div class="obj">${h.obj || ''}</div><div class="sub">${h.sub || ''}</div>`;
@@ -811,16 +956,13 @@ export class Game {
       const b = this.life.traffic.activeCollision(), c = b.collision, checking = c.stage === 'disabled', restarting = c.stage === 'restart';
       e.mission.innerHTML = `<div class="title">Collision aftermath</div><div class="obj">${checking ? `Idle below 5.5 mph and hold alongside ${b.profile.callsign}` : restarting ? `${b.profile.callsign} is restarting` : `${b.profile.callsign} reported the collision`}</div><div class="sub">${checking ? 'Stay until the crew accounts for everyone' : restarting ? 'The collision stays on the log, but you did not leave them' : 'FWC has your hull and direction'}</div>`;
       e.timer.innerHTML = checking ? `${Math.max(0, 7 - c.hold).toFixed(1)}<small>seconds alongside</small>` : restarting ? `${Math.max(0, 4.5 - c.t).toFixed(1)}<small>engine restart</small>` : '';
-      e.timer.classList.toggle('warn', checking && c.distance > 80); e.wp.innerHTML = this.wpTarget ? `${this.wpTarget.label} <b>${fmtDist(c.distance)}</b>` : '';
+      e.timer.classList.toggle('warn', checking && c.distance > 80); e.wp.textContent = this.navigation?.target?.label || this.wpTarget?.label || '';
     } else {
-      const b = this.bounties.today().filter(x => !x.done)[0];
-      const nc = this.nearCamp; const known = nc && this.save.camps.includes(nc.camp.key);
-      const campLine = nc ? `<div class="obj">${known ? nc.camp.name : 'Unknown camp'} · ${fmtDist(nc.d)}</div>` : '';
-      e.mission.innerHTML = `<div class="title">Free ride</div>${campLine}<div class="hint"><span class="input-keyboard">C · fish &nbsp; M · jobs board &nbsp; Tab · chart</span><span class="input-gamepad">X / Square · fish &nbsp; D-pad up · jobs &nbsp; View · chart</span></div>${b ? `<div class="sub">Bounty · ${b.text} · ${fmtCash(b.pay)}</div>` : ''}`;
+      const call = this.encounters?.callObjective?.();
+      e.mission.innerHTML = call ? `<div class="title">${call.title}</div><div class="obj">${call.obj}</div>` : '';
       e.timer.innerHTML = ''; e.wp.innerHTML = '';
-      this.wpTarget = (nc && nc.d > 60 && nc.d < 5000) ? { x: nc.camp.tie.x, z: nc.camp.tie.z, label: known ? nc.camp.name : 'camp' } : null;
+      if (!this.encounters?.active?.known && !this.wpTarget?.incident) this.wpTarget = null;
     }
-    e.cash.innerHTML = `${fmtCash(this.save.cash)}<b>${this.tricks.total.toLocaleString()} <span style="font-size:14px;letter-spacing:0.1em">pts</span></b>`;
     // trick feed
     const tr = this.tricks;
     const evs = tr.events.slice(-5).map(ev => `<div class="ev ${ev.bust ? 'bust' : ''}" style="opacity:${Math.max(0, 1 - (ev.t - 1.6) / 0.8).toFixed(2)}">${ev.text}${ev.points ? `<span>+${ev.points}</span>` : ''}</div>`).join('');
@@ -830,7 +972,7 @@ export class Game {
   // screen-space arrow to the current objective when it is off screen
   projectMarker(camera, w, h) {
     const a = this.el.arrow; const tgt = this.wpTarget;
-    if (!tgt) { a.style.display = 'none'; return; }
+    if (!tgt || this.navigation?.plan) { a.style.display = 'none'; return; }
     const v = this._v.set(tgt.x, 1.5, tgt.z).project(camera);
     const behind = v.z > 1;
     let sx = (v.x * 0.5 + 0.5) * w, sy = (-v.y * 0.5 + 0.5) * h;

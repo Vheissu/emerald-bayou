@@ -19,7 +19,9 @@ import { Game } from './game.js';
 import { crabFloat, fuelDrum, wreck, shack, kayak } from './markers.js';
 import { Tricks } from './tricks.js';
 import { World, disposeDetachedGeometries } from './world.js';
+import { bridgeCameraHeight } from './waterfrontbridge.js';
 import { WorldMap } from './worldmap.js';
+import { ChartNavigation } from './chartnavigation.js';
 import { Life } from './life.js';
 import { pickSite, buildSite } from './sites.js';
 import { person, canoe, setPersonClothImage, setPersonComplexion } from './folk.js';
@@ -229,7 +231,8 @@ async function init() {
   terrain.onDispose(c => { veg.disposeChunk(c); phys.removeTrunks(c.key); });
   let dockTie;
   {
-    const dEnd = new THREE.Vector2(dock.position.x - Math.sin(dock.rotation.y) * -16, dock.position.z - Math.cos(dock.rotation.y) * -16);
+    const tip = dock.localToWorld(new THREE.Vector3(0, 0, -16));
+    const dEnd = new THREE.Vector2(tip.x, tip.z);
     phys.obstacles.push({ ax: dock.position.x, az: dock.position.z, bx: dEnd.x, bz: dEnd.y, r: 1.2 });
     phys.obstacles.push({ x: tower.position.x, z: tower.position.z, r: 4.5 });
     const dd = new THREE.Vector2(dEnd.x - dock.position.x, dEnd.y - dock.position.z).normalize();
@@ -285,7 +288,7 @@ async function init() {
   const skiff = new SkiffAI((x, z, t, receiver) => water.boatWaveHeight(x, z, t, receiver)); skiff.mesh.visible = false; scene.add(skiff.mesh);
   const world = new World(terrain, scene, (x, z, t) => water.waveHeight(x, z, t), veg); world.phys = phys; world.wind = wind;
   world.homeWeather = dock.userData.dockWeather;
-  veg.blocked = (x, z) => world.blockedAt(x, z);
+  veg.blocked = (x, z) => world.vegetationBlockedAt(x, z);
   const game = new Game({ phys, T: terrain, scene, audio, tricks, manatees, gators, skiff, boat: boat.group, dockTie, startX, startZ, world });
   game.paused = true; // loading and the title screen are presentation states, not unobserved play time
   const terrainFocus = startupTerrainFocus({
@@ -295,6 +298,11 @@ async function init() {
   // elsewhere, so immediately pivot the pending stream before any more systems are constructed.
   const terrainRetarget = terrainFocus.retargeted ? terrain.prime(terrainFocus.x, terrainFocus.z) : null;
   const worldMap = new WorldMap(terrain, minimap, game, world); game.map = worldMap;
+  const chartNavigation = new ChartNavigation(terrain.hf.seed, world);
+  game.navigation = chartNavigation;
+  document.getElementById('minimap').addEventListener('click', () => {
+    if (game.playing && !game.paused) game.openMap();
+  });
   // the small life: fish, deadheads, other boats, anglers; birds and gators get their voices and their hooks into the game
   const life = new Life({ terrain, scene, water, camera, phys, plume, spray, audio, waveFn: (x, z, t) => water.waveHeight(x, z, t),
     boatWaveFn: (x, z, t, receiver) => water.boatWaveHeight(x, z, t, receiver), game }); game.life = life;
@@ -948,7 +956,8 @@ async function init() {
       const cameraCut = cameraViewCut || boomLimit < previousBoom - 0.01 || camPos.distanceToSquared(camDesired) > 6400;
       if (cameraCut) camPos.copy(camDesired); else camPos.lerp(camDesired, 1 - Math.exp(-dt * 5.5));
       camPos.y = Math.max(camPos.y, terrain.heightAt(camPos.x, camPos.z) + 0.9, water.level + 0.9);
-      if (cameraViewCut) camTarget.copy(camAim); else camTarget.lerp(camAim, 1 - Math.exp(-dt * 7));
+      camPos.y = bridgeCameraHeight(camPos.x, camPos.y, camPos.z, camPivot.y);
+      if (cameraCut) camTarget.copy(camAim); else camTarget.lerp(camAim, 1 - Math.exp(-dt * 7));
       cameraViewCut = false;
     }
     camera.position.copy(camPos);
@@ -1008,6 +1017,7 @@ async function init() {
     audio.outboard(outboardMix.level, outboardMix.pitch, outboardMix.x, outboardMix.z, outboardMix.id);
     audio.truck(world.truckLevel);
     water.updateMurk(terrain, camera.position);
+    if (started) chartNavigation.update(dt, phys, game.wpTarget, water.level);
     if (worldMap.open && (frameNo++ & 3) === 0) worldMap.render();
     water.update(time);
     water.followCamera(camera.position);
@@ -1107,7 +1117,7 @@ async function init() {
     plume.update(dt, time, water.level, windX, windZ);
 
     audio.update(started ? phys.rpm : 0, started ? Math.max(0, phys.throttle) : 0, started ? phys.speed : 0, time);
-    minimap.update(phys, yaw, game.mapMarkers);
+    minimap.update(phys, yaw, game.mapMarkers, started ? chartNavigation : null);
     game.projectMarker(camera, window.innerWidth, window.innerHeight);
 
     // render
@@ -1131,7 +1141,7 @@ async function init() {
     // first resumed frame to stall; the much larger post, water, shadow and chart attachments are still released.
     cancelEnvironmentReflectionJob();
     pipeline.hibernate(); water.hibernate(); veg.marsh.clear();
-    minimap.releaseTiles(); worldMap.hibernate();
+    minimap.releaseTiles(); worldMap.hibernate(); chartNavigation.suspend();
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; water.uniforms.shadowOn.value = 0; }
     resizeDrawingSurface(renderer, 1, 1, 1, false); qualityController.reset(); void audio.suspend();
     pageLifecycle.hibernated = true; pageLifecycle.hiddenAt = Date.now(); pageLifecycle.releasedAttachmentBytes = Math.max(0, before - attachmentBytes());

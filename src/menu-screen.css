@@ -84,3 +84,36 @@ body:has(#menu:not(.hidden)) #hud { opacity:0; }
 @media (prefers-reduced-motion:reduce) {
   #start, #menu, #start .title-action, #menu button { transition:none; }
 }
+
+/* The dock board keeps the list in shadow and the selected dispatch on paper. */
+#menu { background:linear-gradient(90deg,rgba(9,20,17,.96),rgba(9,20,17,.88) 42%,rgba(9,20,17,.28)); }
+#menu .menu-rail { gap:3px; align-items:center; border-bottom:1px solid #6a7465; }
+#menu .rail-tab { min-width:0; min-height:40px; padding:7px clamp(8px,1.4vw,24px); font-size:17px; font-weight:600; }
+#menu .rail-tab.active { background:transparent; color:#f6d49b; box-shadow:inset 0 -3px #eac78f; }
+#menu .menu-wallet { margin-left:auto; padding-left:10px; font-size:22px; font-weight:650; white-space:nowrap; font-variant-numeric:tabular-nums; }
+#menu .dispatch-board { display:grid; grid-template-columns:minmax(220px,320px) minmax(280px,430px); gap:clamp(22px,4vw,66px); align-items:start; }
+#menu .dispatch-list h2 { font-size:22px; margin:0 0 14px; font-weight:600; }
+#menu .dispatch-list .list { margin:0; max-height:40vh; }
+#menu .dispatch-list .m { min-height:48px; grid-template-columns:minmax(0,1fr) auto; padding:10px 12px; border-left:0; }
+#menu .dispatch-list .m .t { font-size:19px; letter-spacing:.01em; text-transform:none; }
+#menu .dispatch-list .m .best { grid-column:2; font-size:14px; color:inherit; }
+#menu .dispatch-list .m:is(.sel,:focus-visible,:hover) { background:#d5c8a9; color:#152a23; }
+#menu .dispatch-list .menu-extra { margin:13px 0; border-top:1px solid #586357; }
+#menu .dispatch-list .menu-extra summary { font-size:15px; letter-spacing:.025em; text-transform:none; }
+#menu .dispatch-brief { color:#26372d; background:#ece5d1; padding:clamp(20px,2.8vw,40px); text-shadow:none; }
+#menu .dispatch-brief h2 { margin:0 0 16px; font:600 clamp(31px,3.2vw,48px)/1 "Emerald Condensed","Avenir Next Condensed",sans-serif; }
+#menu .dispatch-brief p { font:500 16px/1.5 "Avenir Next",sans-serif; margin:0 0 17px; max-width:38ch; }
+#menu .dispatch-brief .dispatch-goal { font-size:14px; }
+#menu .dispatch-pay { display:flex; justify-content:space-between; align-items:baseline; border-top:1px solid #a6ab95; padding:12px 0; font-size:17px; }
+#menu .dispatch-pay b { font-size:25px; font-variant-numeric:tabular-nums; }
+#menu .dispatch-start { width:100%; text-align:left; padding:10px 14px; border:0; background:#254539; color:#f9f4e7; font:600 18px "Avenir Next Condensed","Emerald Condensed",sans-serif; cursor:pointer; }
+#menu .dispatch-start span { float:right; }
+#menu .dispatch-start:is(:focus-visible,:hover) { background:#3c6450; }
+@media(max-width:720px){
+  #menu .menu-rail { overflow-x:auto; }
+  #menu .rail-tab { flex:0 0 auto; font-size:14px; padding:6px 8px; }
+  #menu .menu-wallet { font-size:15px; }
+  #menu .dispatch-board { grid-template-columns:1fr; gap:15px; }
+  #menu .dispatch-list .menu-extra { margin:4px 0; }
+  #menu .dispatch-brief { max-width:460px; }
+}

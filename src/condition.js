@@ -10,8 +10,9 @@ export class BoatCondition {
   constructor(o) {
     Object.assign(this, o); // game, phys, water, environment, audio, startX, startZ
     const saved = this.game.save.boatCondition || {};
+    const capacity = this.phys.tuning?.capacity ?? 18;
     this.state = this.game.save.boatCondition = {
-      fuel: clamp(Number(saved.fuel ?? 18), 0, 18),
+      fuel: clamp(Number(saved.fuel ?? 18) || 0, 0, capacity),
       hull: clamp(Number(saved.hull ?? 100), 0, 100),
       engine: clamp(Number(saved.engine ?? 100), 0, 100),
       bilge: clamp(Number(saved.bilge ?? 0), 0, 1),
@@ -20,7 +21,7 @@ export class BoatCondition {
       scars: normalizeHullScars(saved.scars),
       scarSerial: Math.max(0, Math.min(1_000_000, Math.trunc(Number(saved.scarSerial) || 0))),
     };
-    this.maxFuel = 18; this.enabled = false; this.serviceHere = null; this.towPending = false;
+    this.maxFuel = capacity; this.enabled = false; this.serviceHere = null; this.towPending = false;
     this.towStage = ''; this.towT = 0; this.towHold = 0; this.traffic = null; this.radio = null;
     this.damageCd = 0; this.persistT = 8; this.hudT = 0; this.misfireT = 4; this.powerCut = 0; this.warned = {};
     this.clearHeld = false; this.clearProgress = 0; this.foulingAbuseT = 0;
@@ -195,8 +196,9 @@ export class BoatCondition {
   }
 
   damage(hull, engine = 0) {
-    const S = this.state; S.hull = Math.max(0, S.hull - hull); S.engine = Math.max(0, S.engine - engine);
-    S.bilge = clamp(S.bilge + hull * 0.0018); this.persistT = Math.min(this.persistT, 1.5);
+    const S = this.state, damage = hull * (this.phys.tuning?.damage ?? 1);
+    S.hull = Math.max(0, S.hull - damage); S.engine = Math.max(0, S.engine - engine);
+    S.bilge = clamp(S.bilge + damage * 0.0018); this.persistT = Math.min(this.persistT, 1.5);
   }
 
   needsCageClear() { return this.state.cageFouling > 0.012; }
@@ -357,12 +359,13 @@ export class BoatCondition {
     this.enabled = enabled; const S = this.state, p = this.phys;
     this.serviceHere = enabled && !this.game.paused ? this.serviceLocation() : null;
     if (enabled && !this.game.paused) {
-      const gph = 0.55 + p.rpm * p.rpm * 13.2 + Math.max(0, p.throttle) * 1.1;
+      const lampLoad = this.environment.spotOn ? ((p.tuning?.beamPower ?? 1) - 1) * 0.08 : 0;
+      const gph = (0.55 + p.rpm * p.rpm * 13.2 + Math.max(0, p.throttle) * 1.1) * (p.tuning?.fuelBurn ?? 1) + lampLoad;
       S.fuel = Math.max(0, S.fuel - gph * dt / 3600);
       this.processDamage(dt);
       this.ensureHullScars(); this.syncHullScars();
       const pumpPowered = S.fuel > 0.03 && S.engine > 8;
-      S.bilge = clamp(S.bilge + boatFloodRate(S.hull, S.breach, S.bilge, p.wet, pumpPowered) * dt);
+      S.bilge = clamp(S.bilge + boatFloodRate(S.hull, S.breach, S.bilge, p.wet, pumpPowered, p.tuning?.pump) * dt);
       this.updateCageFouling(dt);
       this.persistT -= dt; if (this.persistT <= 0) { this.persistT = 8; this.game.persist(); }
       this.updateWarnings();
@@ -377,7 +380,9 @@ export class BoatCondition {
     const S = this.state, anchor = this.anchor?.hud?.();
     const row = (name, text, pct) => `<div class="condition-row"><span>${name}</span><b>${text}</b><i><em style="width:${clamp(pct) * 100}%"></em></i></div>`;
     const anchorRow = anchor?.active ? row('Anchor', anchor.text, 1 - anchor.load) : '';
-    this.el.innerHTML = row('Fuel', `${S.fuel.toFixed(1)} gal`, S.fuel / this.maxFuel) + row('Hull', `${Math.round(S.hull)}%`, S.hull / 100) + row('Engine', `${Math.round(S.engine)}%`, S.engine / 100) + (S.cageFouling > 0.012 ? row('Cage', `${Math.round(S.cageFouling * 100)}% wrap`, 1 - S.cageFouling) : '') + (S.breach > 0.025 ? row('Breach', `${Math.round(S.breach * 100)}%`, 1 - S.breach) : '') + (S.bilge > 0.035 ? row('Bilge', `${Math.round(S.bilge * 100)}%`, 1 - S.bilge) : '') + anchorRow;
+    this.el.innerHTML = (S.fuel < this.maxFuel * 0.25 ? row('Fuel', `${S.fuel.toFixed(1)} gal`, S.fuel / this.maxFuel) : '')
+      + (S.hull < 75 ? row('Hull', `${Math.round(S.hull)}%`, S.hull / 100) : '')
+      + (S.engine < 65 ? row('Engine', `${Math.round(S.engine)}%`, S.engine / 100) : '') + (S.cageFouling > 0.012 ? row('Cage', `${Math.round(S.cageFouling * 100)}% wrap`, 1 - S.cageFouling) : '') + (S.breach > 0.025 ? row('Breach', `${Math.round(S.breach * 100)}%`, 1 - S.breach) : '') + (S.bilge > 0.035 ? row('Bilge', `${Math.round(S.bilge * 100)}%`, 1 - S.bilge) : '') + anchorRow;
     this.el.classList.toggle('warn', S.fuel < 3.6 || S.hull < 50 || S.engine < 40 || S.cageFouling > 0.08 || S.breach > 0.08 || S.bilge > 0.55 || anchor?.warning);
     if (!this.enabled || this.game.paused) { this.promptEl.classList.remove('on'); return; }
     if (this.towPending) {
@@ -385,7 +390,8 @@ export class BoatCondition {
       this.promptEl.innerHTML = `<b>TOW</b> ${this.towStage === 'line' ? 'FWC 27 alongside · line coming aboard' : `FWC 27 inbound${dist ? ` · ${dist}` : ''}`}`; this.promptEl.classList.add('on');
     } else if (this.serviceHere) {
       const cost = this.estimate(this.serviceHere), note = this.serviceHere.note ? ` · ${this.serviceHere.note}` : '';
-      this.promptEl.innerHTML = `<b>F</b> ${cost > 1 || S.bilge > 0.01 ? `service at ${this.serviceHere.name} · $${cost}${note}` : `boat ready · ${this.serviceHere.name}${note}`}`; this.promptEl.classList.add('on');
+      this.promptEl.innerHTML = `<b>F</b> Service boat · $${cost}${note}`;
+      this.promptEl.classList.toggle('on', cost > 1 || S.bilge > 0.01);
     } else if (this.needsTow()) { this.promptEl.innerHTML = '<b>T</b> call a tow to the tower · up to $120'; this.promptEl.classList.add('on'); }
     else if (this.needsCageClear()) {
       const ready = this.foulingResult.ready;

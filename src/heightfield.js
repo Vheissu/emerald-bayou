@@ -273,15 +273,15 @@ export class WorldHeight {
         out[k] = 255 * Math.min(1, still * (1 - c.lake * 0.6)); out[k + 1] = 255 * Math.min(1, still * shade * (c.h < -0.15 ? 1 : 0.3)); out[k + 2] = 255 * c.lake;
       } else if (style === 'chart') {
         const c = this.computeBase(x, z); const h = c.h;
-        if (c.s > 0.55 || h < -2.6) { const t = Math.min(1, -h / 5); out[k] = 96 - t * 20; out[k + 1] = 186 - t * 30; out[k + 2] = 162 - t * 25; }
-        else if (h < -0.3) { out[k] = 84; out[k + 1] = 142; out[k + 2] = 118; } // marsh pools
-        else if (c.prairie > 0.5 && h < 1.2) { out[k] = 116; out[k + 1] = 138; out[k + 2] = 84; } // sawgrass
-        else { const t = Math.min(1, (h - 0.3) / 5); out[k] = 60 + t * 18; out[k + 1] = 98 + t * 18; out[k + 2] = 66 + t * 10; }
+        if (c.s > 0.55 || h < -2.6) { const t = smooth(0, 6, -h); out[k] = 87 - t * 19; out[k + 1] = 121 - t * 17; out[k + 2] = 135 - t * 16; }
+        else if (h < -0.3) { out[k] = 77; out[k + 1] = 106; out[k + 2] = 111; } // marsh pools
+        else if (c.prairie > 0.5 && h < 1.2) { out[k] = 100; out[k + 1] = 108; out[k + 2] = 91; } // sawgrass
+        else { const t = smooth(0.3, 5.3, h); out[k] = 71 + t * 11; out[k + 1] = 84 + t * 12; out[k + 2] = 73 + t * 10; }
       } else {
         const h = this.compute(x, z);
-        if (h < -0.1) { const t = Math.min(1, -h / 4); out[k] = 112 - t * 30; out[k + 1] = 196 - t * 30; out[k + 2] = 170 - t * 25; }
-        else if (h < 0.6) { out[k] = 92; out[k + 1] = 138; out[k + 2] = 108; }
-        else { const t = Math.min(1, (h - 0.6) / 5); out[k] = 58 + t * 20; out[k + 1] = 96 + t * 20; out[k + 2] = 70 + t * 10; }
+        if (h < -0.1) { const t = smooth(0, 5, -h); out[k] = 95 - t * 25; out[k + 1] = 128 - t * 22; out[k + 2] = 139 - t * 15; }
+        else if (h < 0.6) { out[k] = 105; out[k + 1] = 114; out[k + 2] = 96; }
+        else { const t = smooth(0.6, 5.6, h); out[k] = 71 + t * 11; out[k + 1] = 84 + t * 12; out[k + 2] = 73 + t * 10; }
       }
       out[k + 3] = 255;
     }

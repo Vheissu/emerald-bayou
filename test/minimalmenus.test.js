@@ -66,9 +66,11 @@ test('both input modes remain available through the explicit Controls action', (
   assert.match(result.html, /RT \/ LT/); assert.match(result.html, /W \/ S/); assert.match(result.html, /A \/ Cross/);
 });
 
-test('job briefings are behind a collapsed disclosure and new-game confirmation stays explicit', () => {
+test('the selected dispatch shows its goal and pay while bounties stay folded and save deletion stays explicit', () => {
   const jobs = menu('jobs').html;
-  assert.match(jobs, /<details class="menu-extra"><summary>Details<\/summary>/);
+  assert.match(jobs, /<article class="dispatch-brief">/);
+  assert.match(jobs, /data-job-pay>\$75<\/b>/);
+  assert.match(jobs, /<details class="menu-extra"><summary>Bounties<\/summary>/);
   assert.doesNotMatch(jobs, /<details[^>]*\bopen\b|class="d"|Bankroll|Work the water/);
   assert.match(jobs, /data-brief>The optional job briefing/);
   assert.match(jobs, /data-brief-goal >Gold 1:00.0/);

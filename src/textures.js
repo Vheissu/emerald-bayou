@@ -438,6 +438,20 @@ function makePlankTexture() {
 }
 export function plank() { return sharedSurfaceTexture('plank', makePlankTexture); }
 
+let paintedCypress;
+export function loadPaintedCypress() {
+  if (paintedCypress) return paintedCypress;
+  if (!globalThis.document?.createElementNS || globalThis.navigator?.connection?.saveData) return null;
+  const url = new URL('../assets/environment/painted-cypress.webp', import.meta.url);
+  paintedCypress = new THREE.TextureLoader().loadAsync(url.href).then(texture => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.anisotropy = 4;
+    return sharedResource(texture);
+  }).catch(() => null);
+  return paintedCypress;
+}
+
 export function cageMesh() {
   const S = 64; const c = canvas(S, S); const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, S, S);

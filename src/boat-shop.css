@@ -1,0 +1,68 @@
+#menu .parts-dock {
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px 24px;
+  align-items:center;
+  margin-bottom:8px;
+}
+#menu .parts-dock p, #menu .parts-message { margin:0; font-size:15px; }
+#menu .parts-message { min-height:1.25em; margin-bottom:16px; color:#ded6b4; }
+#menu .parts-dock button, #result .race-dock {
+  appearance:none;
+  padding:8px 0;
+  background:none;
+  border:none;
+  color:inherit;
+  cursor:pointer;
+  font:inherit;
+  text-decoration:underline;
+  text-underline-offset:4px;
+}
+#menu .parts-dock button:focus-visible, #result .race-dock:focus-visible {
+  outline:2px solid currentColor;
+  outline-offset:6px;
+}
+#result .race-dock { margin-top:12px; }
+#result .race-dock small { margin-left:10px; opacity:.72; }
+#menu .parts-catalog { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px 38px; max-width:940px; }
+#menu .parts-category h2 { margin:0 0 8px; font-size:18px; font-weight:650; }
+#menu .parts-row, #menu .race-choice {
+  appearance:none;
+  display:grid;
+  width:100%;
+  align-items:center;
+  text-align:left;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:16px;
+  padding:9px 8px;
+  border:0;
+  border-bottom:1px solid rgba(244,242,237,.2);
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  cursor:pointer;
+}
+#menu .parts-row:hover, #menu .race-choice:hover { background:rgba(244,242,237,.10); }
+#menu .parts-row:focus-visible, #menu .race-choice:focus-visible { outline:2px solid var(--foam); outline-offset:-2px; }
+#menu .parts-row[aria-disabled="true"] { cursor:default; }
+#menu :is(.race-choice,.parts-row) strong { display:block; font-weight:650; }
+#menu :is(.race-choice,.parts-row) small { display:block; margin-top:3px; font-size:13px; color:inherit; opacity:.75; }
+#menu .race-list { max-width:780px; }
+#menu .race-choice { align-items:start; padding-block:15px; }
+#menu .race-choice strong { font-size:22px; }
+#menu .race-purse { text-align:right; font-variant-numeric:tabular-nums; }
+#menu .race-purse > span { display:block; margin-top:6px; font-size:13px; text-decoration:underline; text-underline-offset:3px; }
+#menu .parts-price { font-variant-numeric:tabular-nums; }
+#menu .parts-chip {
+  display:inline-block;
+  width:19px;
+  height:9px;
+  margin-right:8px;
+  border-top:2px solid var(--stripe);
+  background:var(--band);
+}
+@media (max-width:620px) {
+  #menu .parts-catalog { grid-template-columns:1fr; }
+  #menu .race-choice { grid-template-columns:1fr; gap:8px; }
+  #menu .race-purse { text-align:left; }
+}

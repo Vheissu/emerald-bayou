@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cachedResource } from './cache.js';
-import { plank } from './textures.js';
+import { loadPaintedCypress, plank } from './textures.js';
 import { registerWetMaterial } from './surfacewetness.js';
 
 // Objective markers: a soft light column rising from a ring on the water (waypoint / checkpoint gate),
@@ -276,12 +276,10 @@ export function shack() {
 // The screen door, bait window and raised duckboards belong to the fishing cabin at Mullet Bend.
 export function dressMulletCabin(sh, terrain) {
   const painted = material('mullet-painted-cypress', { color: 0xd6d8c8, roughness: 0.88 });
-  if (!painted.map && !painted.userData.textureRequested && globalThis.document?.createElementNS && !globalThis.navigator?.connection?.saveData) {
+  if (!painted.map && !painted.userData.textureRequested) {
     painted.userData.textureRequested = true;
-    new THREE.TextureLoader().load(new URL('../assets/environment/painted-cypress.webp', import.meta.url).href, texture => {
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-      texture.anisotropy = 4;
+    loadPaintedCypress()?.then(texture => {
+      if (!texture) return;
       painted.map = texture;
       painted.needsUpdate = true;
     });

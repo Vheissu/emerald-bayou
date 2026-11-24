@@ -1,3 +1,6 @@
+import { fmtDist } from './game.js';
+import { ROUTE_COLOR } from './chartnavigation.js';
+
 // The radar: 200 m tiles rendered by the terrain workers on demand and cached, rotated so forward is up, zooming out
 // with speed, with everything alive and worth knowing about drawn over it as blips: the objective pinned to the rim
 // when it is off the radar, job posts with their glyphs, camps and homesteads, ramps, other boats (pointed the way
@@ -28,7 +31,6 @@ const drawHouse = (c, x, y, r, fill, stroke = INK) => { c.beginPath(); c.moveTo(
 const drawTriangle = (c, x, y, angle, r, fill, stroke = INK) => { c.save(); c.translate(x, y); c.rotate(angle); c.beginPath(); c.moveTo(0, -r); c.lineTo(r * 0.7, r * 0.8); c.lineTo(0, r * 0.35); c.lineTo(-r * 0.7, r * 0.8); c.closePath(); c.fillStyle = fill; c.fill(); c.lineWidth = 1.5; c.strokeStyle = stroke; c.stroke(); c.restore(); };
 const drawFlag = (c, x, y, r) => { c.fillStyle = '#f3ede0'; c.fillRect(x - r * 0.55, y - r * 0.6, r * 1.1, r * 0.8); c.fillStyle = '#0b1512'; const s = r * 0.275; for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) if ((i + j) & 1) c.fillRect(x - r * 0.55 + i * s, y - r * 0.6 + j * s, s, s); c.fillRect(x - r * 0.62, y - r * 0.7, r * 0.12, r * 1.5); };
 const drawStar = (c, x, y, r, color) => { c.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i & 1 ? r * 0.45 : r; c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); } c.closePath(); c.fillStyle = color; c.fill(); };
-const drawLock = (c, x, y, r) => { c.fillStyle = '#0b1512'; c.fillRect(x - r * 0.45, y - r * 0.1, r * 0.9, r * 0.7); c.beginPath(); c.arc(x, y - r * 0.1, r * 0.3, Math.PI, 0); c.lineWidth = r * 0.16; c.strokeStyle = '#0b1512'; c.stroke(); };
 
 export class Minimap {
   constructor(terrain, profile = {}) {
@@ -97,7 +99,7 @@ export class Minimap {
       pixels, estimatedBackingBytes: pixels * 4, estimatedLimitBytes: minimapTileBackingBytes(this.cacheLimit),
     };
   }
-  update(boat, camYaw, markers = []) {
+  update(boat, camYaw, markers = [], navigation = null) {
     const c = this.ctx, W = this.canvas.width, H = this.canvas.height;
     const CX = W / 2, CY = H * 0.62;
     this.pulse += 1 / 60;
@@ -106,13 +108,15 @@ export class Minimap {
     const k = this.scale, rot = boat.heading; // rotate so forward is up
     c.clearRect(0, 0, W, H);
     c.save();
-    c.fillStyle = 'rgba(30,60,50,0.55)'; c.fillRect(0, 0, W, H);
+    c.fillStyle = '#32434a'; c.fillRect(0, 0, W, H);
     c.translate(CX, CY); c.rotate(rot); c.scale(k, k); c.translate(-boat.pos.x, -boat.pos.y);
     c.globalAlpha = 0.9;
     const R = Math.hypot(CX, CY) / k + MINIMAP_TILE_SIZE;
     const i0 = Math.floor((boat.pos.x - R) / MINIMAP_TILE_SIZE), i1 = Math.floor((boat.pos.x + R) / MINIMAP_TILE_SIZE), j0 = Math.floor((boat.pos.y - R) / MINIMAP_TILE_SIZE), j1 = Math.floor((boat.pos.y + R) / MINIMAP_TILE_SIZE);
     c.imageSmoothingEnabled = true;
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const img = this.tile(i, j); if (img) c.drawImage(img, i * MINIMAP_TILE_SIZE, j * MINIMAP_TILE_SIZE, MINIMAP_TILE_SIZE, MINIMAP_TILE_SIZE); }
+    c.globalAlpha = 1;
+    navigation?.plot(c, k, 2);
     c.restore();
     // world -> radar
     const cr = Math.cos(rot), sr = Math.sin(rot);
@@ -143,15 +147,18 @@ export class Minimap {
           c.beginPath(); c.moveTo(sx - 3, sy); c.lineTo(sx + 3, sy); c.moveTo(sx, sy - 3); c.lineTo(sx, sy + 3); c.strokeStyle = 'rgba(185,220,255,0.85)'; c.stroke(); c.restore(); break;
         }
         case 'objective': {
+          const target = navigation?.target;
+          const following = target && Math.hypot(mk.x - target.x, mk.z - target.z) < 4;
           const col = mk.color || '#f07a2e';
-          if (!pinned) { const pr = 9 + (this.pulse * 1.2 % 1) * 10; c.beginPath(); c.arc(sx, sy, pr, 0, 6.283); c.lineWidth = 2; c.strokeStyle = col; c.globalAlpha = 1 - (this.pulse * 1.2 % 1); c.stroke(); c.globalAlpha = 1; }
+          if (following) break;
           drawRim(c, sx, sy, mk.soft ? 6 : 7, col, INK, 2.5);
           if (pinned) { const ang = Math.atan2(sy - CY, sx - CX); c.save(); c.translate(sx, sy); c.rotate(ang); c.beginPath(); c.moveTo(14, 0); c.lineTo(6, -6); c.lineTo(6, 6); c.closePath(); c.fillStyle = col; c.fill(); c.restore(); }
           break;
         }
         case 'job': {
-          const r = 11; drawRim(c, sx, sy, r, mk.locked ? 'rgba(140,146,140,0.85)' : mk.color, mk.done ? '#e5c063' : INK, mk.done ? 3 : 2);
-          if (mk.locked) drawLock(c, sx, sy, r * 0.8); else if (mk.glyph === 'flag') drawFlag(c, sx, sy, r * 0.85); else if (mk.glyph === 'star') drawStar(c, sx, sy, r * 0.62, '#0b1512'); else drawGlyph(c, sx, sy, mk.glyph, 15);
+          if (mk.locked) break;
+          const r = 10; drawRim(c, sx, sy, r, mk.color, mk.done ? '#e5c063' : INK, mk.done ? 3 : 2);
+          if (mk.glyph === 'flag') drawFlag(c, sx, sy, r * 0.85); else if (mk.glyph === 'star') drawStar(c, sx, sy, r * 0.62, '#0b1512'); else drawGlyph(c, sx, sy, mk.glyph, 15);
           break;
         }
         case 'camp': drawHouse(c, sx, sy, 7, mk.known ? '#7be08a' : 'rgba(230,224,208,0.55)'); if (mk.known) drawGlyph(c, sx, sy + 2, '$', 9); break;
@@ -172,6 +179,13 @@ export class Minimap {
         default: drawRim(c, sx, sy, mk.r || 4, mk.color || '#f3ede0', 'rgba(0,0,0,0.5)', 1.5);
       }
     }
+    if (navigation?.target) {
+      const mx = (navigation.target.x - boat.pos.x) * k, mz = (navigation.target.z - boat.pos.y) * k;
+      const dx = cr * mx - sr * mz, dy = sr * mx + cr * mz;
+      const shrink = Math.min(1, (CX - inset) / Math.max(1, Math.abs(dx)),
+        (dy < 0 ? CY - inset : H - CY - inset) / Math.max(1, Math.abs(dy)));
+      drawRoutePin(c, CX + dx * shrink, CY + dy * shrink, 2);
+    }
     // north marker
     c.save(); c.translate(CX, CY);
     const r = Math.min(W, H) * 0.44;
@@ -181,16 +195,35 @@ export class Minimap {
     // player arrow
     c.fillStyle = '#f4f7f4'; c.strokeStyle = INK; c.lineWidth = 2; c.beginPath(); c.moveTo(0, -13); c.lineTo(9, 9); c.lineTo(0, 4); c.lineTo(-9, 9); c.closePath(); c.fill(); c.stroke();
     c.restore();
-    // edge fade
-    c.globalCompositeOperation = 'destination-in';
-    if (!this.edgeGradient || this.edgeGradientWidth !== W || this.edgeGradientHeight !== H) {
-      this.edgeGradient = c.createRadialGradient(CX, CY, 20, CX, CY, W * 0.62);
-      this.edgeGradient.addColorStop(0, 'rgba(0,0,0,1)'); this.edgeGradient.addColorStop(0.85, 'rgba(0,0,0,1)'); this.edgeGradient.addColorStop(1, 'rgba(0,0,0,0.6)');
-      this.edgeGradientWidth = W; this.edgeGradientHeight = H;
+    if (navigation?.target) {
+      const remaining = navigation.progress ? fmtDist(navigation.progress.remaining) : '';
+      const cue = navigation.guidance(fmtDist);
+      const primary = remaining && navigation.status === 'ready' ? remaining : cue;
+      const secondary = remaining && cue && navigation.status === 'ready' ? cue : '';
+      c.save();
+      c.font = `650 26px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'top';
+      const width = Math.max(c.measureText(primary).width, secondary ? c.measureText(secondary).width * 0.8 : 0);
+      c.fillStyle = 'rgba(16,26,30,0.9)'; c.fillRect(0, 0, width + 34, secondary ? 68 : 45);
+      c.fillStyle = '#f6efe2'; c.fillText(primary, 15, 8);
+      if (secondary) {
+        c.fillStyle = ROUTE_COLOR; c.font = `600 21px ${FONT}`; c.fillText(secondary, 15, 36);
+      }
+      c.restore();
+      const description = [navigation.target.label, remaining, cue].filter(Boolean).join('. ');
+      if (description !== this.navigationLabel) {
+        this.navigationLabel = description; this.canvas.setAttribute('aria-label', `Minimap. ${description}`);
+      }
+    } else if (this.navigationLabel !== '') {
+      this.navigationLabel = ''; this.canvas.setAttribute('aria-label', 'Minimap');
     }
-    c.fillStyle = this.edgeGradient; c.fillRect(0, 0, W, H);
-    c.globalCompositeOperation = 'source-over';
-    c.strokeStyle = 'rgba(190,220,205,0.35)'; c.lineWidth = 3; c.strokeRect(1.5, 1.5, W - 3, H - 3);
     this.speedEl.textContent = Math.round(boat.speed * 2.23694);
   }
+}
+
+export function drawRoutePin(c, x, y, scale = 1) {
+  c.save(); c.translate(x, y); c.scale(scale, scale);
+  c.beginPath(); c.moveTo(0, 6); c.lineTo(-5, -0.5); c.bezierCurveTo(-9, -9, 9, -9, 5, -0.5); c.closePath();
+  c.fillStyle = ROUTE_COLOR; c.fill(); c.strokeStyle = '#1e2d35'; c.lineWidth = 1.4; c.stroke();
+  c.beginPath(); c.arc(0, -2.5, 1.75, 0, 2 * Math.PI); c.fillStyle = '#1e2d35'; c.fill();
+  c.restore();
 }
