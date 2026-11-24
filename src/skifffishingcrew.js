@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createCreelFish } from './skiffdockgear.js';
 import { animatePerson, cast, fishingLine, person, rodTip, setLine } from './folk.js';
 import { mulberry32 } from './noise.js';
 import { registerWetMaterial } from './surfacewetness.js';
@@ -149,9 +150,11 @@ export function buildFishingCrew(boat, index) {
   line.visible = float.visible = false;
   boat.mesh.add(helm, angler, pedestal, line, float);
 
+  const hookedFish = createCreelFish();
+  hookedFish.visible = false; boat.mesh.add(hookedFish);
   const rig = angler.userData;
   const crew = {
-    helm, angler, line, float, standing: { ...rig.base }, raised: 0, hail: 0,
+    helm, angler, line, float, hookedFish, hasBite: false, distantSet: 0, standing: { ...rig.base }, raised: 0, hail: 0,
     castSide: index === 0 ? 1 : -1, phase: '', wait: 0, castTime: 0, rigging: 'idle', random,
     player: { x: 0, z: 0, speed: 0 }, tip: new THREE.Vector3(), tipLocal: new THREE.Vector3(), castFrom: new THREE.Vector3(),
     castTo: new THREE.Vector3(), lure: new THREE.Vector3(), retrieveFrom: new THREE.Vector3(),
@@ -199,6 +202,7 @@ function beginReel(crew, seconds) {
 
 function landCast(crew, time, ctx, waveAt) {
   const { castTo, lure } = crew;
+  crew.hasBite = false;
   crew.rigging = 'soaking';
   crew.castTime = 0;
   castTo.y = waveAt(castTo.x, castTo.z, time);
@@ -230,9 +234,10 @@ function launchCast(crew) {
   crew.wait = 2.5;
 }
 
-function updateFishingLine(crew, boat, dt, time, ctx, waveAt, visible) {
+function updateFishingLine(crew, boat, trip, dt, time, ctx, waveAt, visible) {
   const active = crew.rigging === 'airborne' || crew.rigging === 'soaking' || crew.rigging === 'reeling';
   crew.line.visible = crew.float.visible = visible && active;
+  crew.hookedFish.visible = false;
   if (!active) return;
   const { lure, castFrom, castTo, tip } = crew;
   const rig = crew.angler.userData;
@@ -246,6 +251,7 @@ function updateFishingLine(crew, boat, dt, time, ctx, waveAt, visible) {
   } else if (crew.rigging === 'soaking') {
     const nudge = Math.max(0, 1 - Math.abs(crew.castTime - crew.bite) * 3.4);
     lure.y = waveAt(lure.x, lure.z, time) - nudge * 0.045;
+    if (crew.castTime >= crew.bite && (trip.catchCount || 0) < 4) crew.hasBite = true;
     if (nudge > 0.72 && rig.tug <= 0) rig.tug = 0.65;
     if (crew.castTime > crew.soak) beginReel(crew, 2.8 + crew.random() * 1.4);
   } else {
@@ -254,7 +260,16 @@ function updateFishingLine(crew, boat, dt, time, ctx, waveAt, visible) {
     const surface = waveAt(lure.x, lure.z, time);
     const settling = Math.max(0, crew.retrieveFrom.y - surface) * (1 - progress) ** 6;
     lure.y = lerp(surface + settling, tip.y, progress ** 4);
+    crew.hookedFish.visible = visible && crew.hasBite && progress > .56;
+    if (crew.hookedFish.visible) {
+      boat.mesh.worldToLocal(crew.hookedFish.position.copy(lure));
+      crew.hookedFish.rotation.set(.15 * Math.cos(time * 13), time * 2.1, .27 * Math.sin(time * 16));
+      crew.float.visible = false;
+    }
     if (progress === 1) {
+      if (crew.hasBite) trip.catchCount = Math.min(4, (trip.catchCount || 0) + 1);
+      crew.hasBite = false;
+      crew.hookedFish.visible = false;
       crew.rigging = 'idle';
       crew.wait = 2 + crew.random() * 2.2;
       crew.line.visible = crew.float.visible = false;
@@ -303,7 +318,19 @@ export function updateFishingCrew(crew, boat, trip, dt, time, ctx, waveAt) {
   angler.position.z = lerp(-0.95, -0.62, crew.raised);
   angler.position.x = 0.02 + side * 0.12 * crew.raised;
 
-  if (!nearby && crew.rigging === 'idle') return;
+  // At a distant station keep the working time without posing a separate cast.
+  // A shortened or interrupted set earns nothing. Visible catches come from the reel.
+  if (nearby || stopping) crew.distantSet = 0;
+  if (!nearby && crew.rigging === 'idle') {
+    if (!stopping && (trip.catchCount || 0) < 4) {
+      crew.distantSet += dt;
+      if (crew.distantSet >= 23) {
+        trip.catchCount = (trip.catchCount || 0) + 1;
+        crew.distantSet = 0;
+      }
+    }
+    return;
+  }
   const anglerRig = angler.userData, helmRig = helm.userData, uprightPose = crew.standing;
   Object.assign(anglerRig.base, {
     hy: lerp(0.53, uprightPose.hy, crew.raised),
@@ -355,7 +382,7 @@ export function updateFishingCrew(crew, boat, trip, dt, time, ctx, waveAt) {
       plantLeftHand(crew.arm, angler, restingArm * 0.9);
     }
   }
-  updateFishingLine(crew, boat, dt, time, ctx, waveAt, nearby && distance < 85);
+  updateFishingLine(crew, boat, trip, dt, time, ctx, waveAt, nearby && distance < 85);
 
   if (!nearby) return;
   Object.assign(helmRig.base, {

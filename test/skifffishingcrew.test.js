@@ -66,3 +66,29 @@ test('a cast over exposed ground stays stowed and a close approach draws a visib
   const grip = motor.localToWorld(new THREE.Vector3(-0.16, 0.22, -0.80));
   assert.ok(leftHand.distanceTo(grip) < 0.055);
 });
+
+test('only a retrieved bite puts a fish in the creel', () => {
+  const { crew, trip, advance } = setup();
+  trip.catchCount = 0;
+  advance(4);
+  trip.phase = 'returning';
+  advance(2);
+  assert.equal(trip.catchCount, 0);
+  trip.phase = 'fishing';
+  advance(31);
+  assert.ok(trip.catchCount >= 1 && trip.catchCount <= 2);
+  assert.equal(crew.hookedFish.visible, false);
+});
+
+test('distant crews finish their sets, but spend no fishing time in transit', () => {
+  const { trip, ctx, advance } = setup();
+  ctx.bx = 400; trip.catchCount = 0;
+  advance(22);
+  assert.equal(trip.catchCount, 0);
+  trip.phase = 'returning';
+  advance(25);
+  assert.equal(trip.catchCount, 0);
+  trip.phase = 'fishing';
+  advance(130);
+  assert.equal(trip.catchCount, 4);
+});

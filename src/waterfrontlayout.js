@@ -19,6 +19,19 @@ export const FISHING_PIERS = [
   { x: -23.5, head: -9.4, z: -0.9, deck: 0.82 },
 ];
 
+export const PIER_ROOF = { offsetX: 1.7, rise: 2.31, length: 3.75, width: 2.42, pitch: 0.12 };
+
+// Stop the falling drops at the sloping tin, including dry space over the catch bench.
+export function underPierRoof(x, y, z) {
+  if (y > 3.45 || x < -24 || x > -17 || z < -2.2 || z > 31.2) return false;
+  for (const pier of FISHING_PIERS) {
+    if (Math.abs(x - pier.x - PIER_ROOF.offsetX) <= PIER_ROOF.length / 2 &&
+      Math.abs(z - pier.z) <= PIER_ROOF.width / 2 &&
+      y <= pier.deck + PIER_ROOF.rise - (z - pier.z) * Math.tan(PIER_ROOF.pitch)) return true;
+  }
+  return false;
+}
+
 // Keep the tied boats on the outside of the two piers, away from the swim cove.
 export const MOORING_TRAVEL = Object.freeze({ end: 0.38, inward: 0.16, outward: 0.36, yaw: 0.09 });
 export const COVE_MOORINGS = FISHING_PIERS.map((pier, i) => {

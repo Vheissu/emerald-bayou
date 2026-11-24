@@ -1,3 +1,4 @@
+import { underPierRoof } from './waterfrontlayout.js';
 import * as THREE from 'three';
 import { lunarAgeAt, lunarIllumination, lunarNightLight, lunarPhaseAt, lunarPhaseName, lunarTideRange } from './lunar.js';
 import { updateAttributePrefix } from './cache.js';
@@ -415,7 +416,7 @@ export class Precipitation {
     const slant = windSpeed * 0.74;
     for (let i = 0; i < rn; i++) {
       const j = i * 6; let x = R.pos[j] + rainDX + windDir.x * slant * dt, y = R.pos[j + 1] - R.speed[i] * dt, z = R.pos[j + 2] + rainDZ + windDir.z * slant * dt;
-      if (y < 0) { y += 42; x = (Math.random() - 0.5) * 100; z = (Math.random() - 0.5) * 100; }
+      if (y < 0 || (y < 4.8 && underPierRoof(camera.x+x, waterLevel+y, camera.z+z))) { y += 42; x = (Math.random() - 0.5) * 100; z = (Math.random() - 0.5) * 100; }
       if (x > 50) x -= 100; else if (x < -50) x += 100;
       if (z > 50) z -= 100; else if (z < -50) z += 100;
       const streakTime = 0.032 + rainAmt * 0.022;
@@ -428,7 +429,7 @@ export class Precipitation {
     H.geo.setDrawRange(0, hn); H.mat.opacity = 0.25 + hailAmt * 0.75; H.points.visible = hn > 0;
     for (let i = 0; i < hn; i++) {
       const j = i * 3; let x = H.pos[j] + hailDX + windDir.x * slant * 0.55 * dt, y = H.pos[j + 1] - H.speed[i] * dt, z = H.pos[j + 2] + hailDZ + windDir.z * slant * 0.55 * dt;
-      if (y < 0) { y += 35; x = (Math.random() - 0.5) * 70; z = (Math.random() - 0.5) * 70; }
+      if (y < 0 || (y < 4.8 && underPierRoof(camera.x+x, waterLevel+y, camera.z+z))) { y += 35; x = (Math.random() - 0.5) * 70; z = (Math.random() - 0.5) * 70; }
       if (x > 35) x -= 70; else if (x < -35) x += 70;
       if (z > 35) z -= 70; else if (z < -35) z += 70;
       H.pos[j] = x; H.pos[j + 1] = y; H.pos[j + 2] = z;

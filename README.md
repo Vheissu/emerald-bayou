@@ -44,11 +44,11 @@ On the east bank, look for shells and broken reeds along the high-water line. Th
 
 ### Fishing crews
 
-Watch the piers on a clear morning. The painted skiff leaves first and anchors off the bank north of Gulf Cut. The alloy skiff follows a different route around the sandbar and under the bridge. At each spot the angler stands to cast. You can follow the float from splashdown to the retrieve.
+Watch the piers on a clear morning. The skipper carries an iced cooler down from the workbench and the angler follows with the bait pail. They step through the opening in the rail and stow the gear before casting off. The painted skiff leaves first and anchors off the bank north of Gulf Cut. The alloy skiff follows a different route around the sandbar and under the bridge. At each spot the angler stands to cast. You can follow the float from splashdown to the retrieve.
 
 An idle pass can get a wave. Run close at speed and the angler reels in and braces. Other skippers watch your approach and ease off when they need room. Canoe crews shorten their paddle strokes as your wake reaches them.
 
-When a squall is due, the fishing crews head for their own piers. They slow in the approach, swing the bow out and back alongside. They wait there through the storm before heading out again.
+When a squall is due, the fishing crews head for their own piers. They slow in the approach, swing the bow out and back alongside. Once tied up, they carry the gear back under the tin roof. The skipper opens the cooler and lays each fish in the receiving pan. If the weather turns before they board, both crew members take their gear back to shelter.
 
 <table><tr>
 <td width="50%"><img src="docs/screenshots/27-fishing-departure.jpg" alt="The painted skiff casting off from the north fishing pier"></td>
@@ -57,6 +57,16 @@ When a squall is due, the fishing crews head for their own piers. They slow in t
 <td><img src="docs/screenshots/29-storm-return.jpg" alt="The fishing crew returning to Gulf Cut in the rain"></td>
 <td><img src="docs/screenshots/30-canoe-close-pass.jpg" alt="The survey canoe crew watches a passing airboat"></td>
 </tr></table>
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/31-dock-loading.jpg" alt="The skipper carries the iced cooler while the angler follows with a bait pail"></td>
+<td width="50%"><img src="docs/screenshots/32-crew-boarding.jpg" alt="The skipper steps from the pier tread into the tied skiff"></td>
+</tr><tr>
+<td><img src="docs/screenshots/33-landing-catch.jpg" alt="The skipper transfers a mullet from the cooler to the receiving pan"></td>
+<td><img src="docs/screenshots/34-dock-shelter.jpg" alt="The fishing crew waits out the squall under the pier's work light"></td>
+</tr></table>
+
+[Watch the catch being unloaded](docs/screenshots/landing-catch.webp)
 
 ## Races and boat parts
 

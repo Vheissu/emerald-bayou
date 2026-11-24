@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { WorldHeight } from '../src/heightfield.js';
 import { AirboatPhysics } from '../src/airboat.js';
 import { bridgeCameraHeight } from '../src/waterfrontbridge.js';
-import { COVE, GULF_CUT, bridgeOverheadAt, bridgeZAt, swimmerStep, waterfrontColliders, waterfrontGroundOccupied, waterfrontWaterOccupied } from '../src/waterfrontlayout.js';
+import { COVE, FISHING_PIERS, GULF_CUT, PIER_ROOF, underPierRoof, bridgeOverheadAt, bridgeZAt, swimmerStep, waterfrontColliders, waterfrontGroundOccupied, waterfrontWaterOccupied } from '../src/waterfrontlayout.js';
 
 test('the Gulf Cut bridge provides an unobstructed navigation span and solid piles', () => {
   const { x, z, channelWest, channelEast } = GULF_CUT;
@@ -47,4 +47,14 @@ test('swimmers finish getting ashore before they return after a wake or storm', 
   assert.equal(swimmerStep(s, { ...input, safe: true, dt: 9 }), 'shore');
   assert.equal(swimmerStep(s, { ...input, safe: true, dt: 2 }), 'swim');
   assert.equal(swimmerStep(s, { ...input, daylight: false }), 'retreat');
+});
+
+test('rain stops under both pier roofs and falls outside their eaves', () => {
+  for (const pier of FISHING_PIERS) {
+    const x = pier.x + PIER_ROOF.offsetX, y = pier.deck + PIER_ROOF.rise;
+    assert.equal(underPierRoof(x, y - .4, pier.z), true);
+    assert.equal(underPierRoof(x, y + .1, pier.z), false);
+    assert.equal(underPierRoof(x + PIER_ROOF.length / 2 + .1, y - 1, pier.z), false);
+    assert.equal(underPierRoof(x, y - 1, pier.z + PIER_ROOF.width / 2 + .1), false);
+  }
 });

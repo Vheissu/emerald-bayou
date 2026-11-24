@@ -1,19 +1,21 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise.js';
 import { attachDockResident, updateDockResidents } from './dockresidents.js';
-import { bucket, chair, cooler, fishingLine, person, poseSwimmer } from './folk.js';
+import { chair, cooler, fishingLine, person, poseSwimmer } from './folk.js';
 import { loadAuthoredLanding } from './mulletlanding.js';
 import { animateSite } from './sites.js';
 import { cageMesh, loadPaintedCypress, plank, scaleTextureUvs } from './textures.js';
 import { addBeam, addBox, tintGeometry, waterfrontMesh, waterfrontSurface } from './waterfrontgeometry.js';
 import { buildGulfCutBridge, placeFabFenders, updateGulfCutBridge } from './waterfrontbridge.js';
 import { buildMooredSkiffs, updateMooredSkiffs } from './mooredskiffs.js';
-import { COVE, FISHING_PIERS, GULF_CUT, WATERFRONT_HOUSES, swimmerStep } from './waterfrontlayout.js';
+import { COVE, COVE_MOORINGS, FISHING_PIERS, GULF_CUT, PIER_ROOF, WATERFRONT_HOUSES, swimmerStep } from './waterfrontlayout.js';
 
 const cabin = waterfrontSurface(0xffffff);
 const weatherboards = waterfrontSurface(0xffffff);
 const steel = waterfrontSurface(0xffffff, { metalness: 0.43, roughness: 0.65 });
 const glass = waterfrontSurface(0xffffff, { roughness: 0.2, metalness: 0.27, emissive: 0xd69f58, emissiveIntensity: 0 });
+const lampEnamel = new THREE.MeshStandardMaterial({color: 0x515c54, roughness: .58, side: THREE.DoubleSide});
+const lampGlobe = new THREE.MeshStandardMaterial({color: 0xd8cbb2, emissive: 0xffc379, emissiveIntensity: 0});
 const greyCanvas = waterfrontSurface(0xffffff, { side: THREE.DoubleSide });
 let wetTimber, warning, screenMesh;
 const wood = () => wetTimber ??= waterfrontSurface(0xd9cdb4, { map: plank() });
@@ -207,9 +209,10 @@ function buildWaterfrontHouse(h, terrain, rr) {
   return group;
 }
 
-function buildFishingPier(pier, terrain, rr) {
+function buildFishingPier(berth, terrain, rr) {
   const group = new THREE.Group(), support = [], flooring = [], metal = [];
   group.name = 'Fishing pier';
+  const { pier } = berth;
   const { x, head, z, deck } = pier;
   const length = head - x, backX = head - 3.55;
   for (let along = x + 0.25; along < head + 0.1; along += 2.55) for (const side of [-1, 1]) {
@@ -230,27 +233,56 @@ function buildFishingPier(pier, terrain, rr) {
     for (let a = x + 0.15; a < backX - 0.1; a += 1.88) addBox(support, 0xa59980, 0.094, 0.94, 0.095, a, deck + 0.47, z + side * 0.93);
     addBox(support, 0xb0a088, backX - x, 0.08, 0.078, (x + backX) / 2, deck + 0.91, z + side * 0.93);
   }
-  // An open rail section at the head is low enough to cast over or sit on.
+  // Leave a real boarding opening between the bow and stern mooring cleats.
   for (const side of [-1, 1]) {
-    addBox(support, 0xaa9679, 3.92, 0.12, 0.09, head - 1.6, deck + 0.46, z + 1.5 * side);
-    for (const along of [head - 2.7, head - 0.02]) addBox(support, 0xaa9679, 0.106, 0.56, 0.091, along, deck + 0.25, z + side * 1.5);
+    const railZ = z + side * 1.5;
+    const spans = side === berth.side
+      ? [[backX - .09, berth.x - .7], [berth.x + .7, head + .32]]
+      : [[backX - .09, head + .32]];
+    for (const [start, end] of spans) {
+      addBox(support, 0xaa9679, end - start, .12, .09, (start + end) / 2, deck + .46, railZ);
+      for (const post of [start + .07, end - .07]) {
+        addBox(support, 0x97876e, .1, .56, .09, post, deck + .24, railZ);
+      }
+    }
+  }
+  const outer = z + berth.side * 1.67;
+  addBox(support, 0x99896f, 1.06, .085, .23, berth.x, deck - .17, outer);
+  for (const dx of [-.4,.4]) {
+    addBox(metal, 0x545a51, .055, .27, .07, berth.x + dx, deck - .20, z + berth.side * 1.57);
+    addBox(metal, 0x545a51, .055, .045, .24, berth.x + dx, deck - .235, outer);
+  }
+  for (const ridge of [-.055, .025, .095]) {
+    addBox(metal, 0x625d4d, .99, .009, .013, berth.x, deck - .125, outer + ridge);
   }
   addBox(support, 0x8e7d65, 0.22, 0.12, 2.45, x + 2.3, deck + 2.27, z);
   for (const offset of [-1, 1]) addBox(support, 0x9d8b71, 0.14, 2.36, 0.14, x + 2.3, deck + 1.14, z + offset * 0.91);
-  const roof = new THREE.BoxGeometry(3.75, 0.08, 2.42).rotateX(0.12).translate(x + 1.7, deck + 2.31, z);
+  addBox(metal, 0x454c43, .073, .15, .073, x + 2.85, deck + 2.23, z + berth.side * .42);
+  const roof = new THREE.BoxGeometry(PIER_ROOF.length, .08, PIER_ROOF.width)
+    .rotateX(PIER_ROOF.pitch).translate(x + PIER_ROOF.offsetX, deck + PIER_ROOF.rise, z);
+  for (let ribX = x-.11; ribX < x + 3.55; ribX += .23) {
+    const rib = new THREE.BoxGeometry(.025, .033, PIER_ROOF.width).rotateX(PIER_ROOF.pitch)
+      .translate(ribX, deck + PIER_ROOF.rise + .042, z);
+    tintGeometry(metal, rib, 0x7e877a);
+  }
   tintGeometry(metal, roof, 0x737e76);
   addBox(metal, 0x7f8178, 3.8, 0.12, 0.07, x + 1.7, deck + 2.18, z + 1.225);
 
   const deckFallback = waterfrontMesh(flooring, wood());
   deckFallback.name = 'Fishing pier floor';
   group.add(waterfrontMesh(support, wood()), deckFallback, waterfrontMesh(metal, steel));
-  for (const [along, side] of [[head - 1.6, -0.71], [head - 2.75, 0.61]]) {
-    const gear = side > 0 ? cooler(rr) : bucket();
-    gear.position.set(along, deck, z + side);
-    gear.rotation.y = 0.2 + rr() * 4;
-    group.add(gear);
-  }
-  return { group, deckFallback };
+  // A shaded work lamp above the fish bench catches the figures under
+  // the tin roof when the storm darkens the end of the pier.
+  const lx = x + 2.85, ly = deck + 2.08, lz = z + berth.side * .42;
+  const shade = new THREE.Mesh(new THREE.ConeGeometry(.15,.085,14,1,true), lampEnamel);
+  shade.position.set(lx,ly+.06,lz);
+  const lampGlass = new THREE.Mesh(new THREE.SphereGeometry(.057,10,6), lampGlobe.clone());
+  lampGlass.scale.set(1,1.28,1); lampGlass.position.set(lx,ly,lz);
+  const lamp = new THREE.PointLight(0xffd595,0,6.4,2);
+  lamp.position.set(lx,ly-.065,lz);
+  group.add(shade, lampGlass, lamp);
+  return { group, deckFallback, lamp, lampGlass };
+
 }
 
 function addAngler(pier, owner, root, rr, side) {
@@ -266,9 +298,9 @@ function addAngler(pier, owner, root, rr, side) {
   p.userData.line = line;
   p.userData.lineTarget = new THREE.Vector3();
   p.userData.castCd = side > 0 ? 1.4 : 6;
-  const shelter = x + 2.3;
+  const shelter = x + 1.65;
   attachDockResident(p, [p.position, new THREE.Vector3(head - 1.5, deck, z), new THREE.Vector3(shelter, deck, z),
-    new THREE.Vector3(shelter, deck, z + side * 0.38)]);
+    new THREE.Vector3(x + .52, deck, z - side * .48)]);
   root.userData.people.push(p);
   root.userData.dockResidents.push(p);
 }
@@ -392,7 +424,7 @@ export function buildWaterfront(terrain, vegetation) {
     weatherboards.bumpScale = 0.013;
     weatherboards.needsUpdate = true;
   });
-  const docks = FISHING_PIERS.map(pier => buildFishingPier(pier, terrain, rr));
+  const docks = COVE_MOORINGS.map(berth => buildFishingPier(berth, terrain, rr));
   for (const [i, dock] of docks.entries()) {
     group.add(dock.group);
     addAngler(FISHING_PIERS[i], dock.group, group, rr, i > 0 ? 1 : -1);
@@ -436,7 +468,7 @@ export function buildWaterfront(terrain, vegetation) {
     }
   });
   const mooredSkiffs = buildMooredSkiffs(group);
-  return { group, bridge, cove, laundry, mooredSkiffs, fishingTrips: mooredSkiffs.map(boat => boat.trip), mooringColliders: mooredSkiffs.map(boat => boat.obstacle) };
+  return { group, bridge, cove, docks, laundry, mooredSkiffs, fishingTrips: mooredSkiffs.map(boat => boat.trip), mooringColliders: mooredSkiffs.map(boat => boat.obstacle) };
 }
 
 function updateSwimmer(s, dt, terrain, time, waveAt, ctx, weather) {
@@ -492,6 +524,12 @@ export function updateWaterfront(waterfront, terrain, time, waveAt, wind, ctx, e
   if (distZ * distZ + ctx.bx * ctx.bx < 610 ** 2) updateGulfCutBridge(waterfront.bridge, time, environment?.night ?? 0, environment);
   updateMooredSkiffs(waterfront.mooredSkiffs, time, waveAt, ctx, environment);
   if ((ctx.bx - COVE.x) ** 2 + (ctx.bz - COVE.z) ** 2 > 205 ** 2) return;
+  for (const dock of waterfront.docks) {
+    const wet = environment?.sampleStormAt?.(dock.lamp.position.x, dock.lamp.position.z) ?? 0;
+    const dim = Math.max(environment?.night ?? 0, THREE.MathUtils.smoothstep(wet, .35, .76));
+    dock.lamp.intensity = 6.8 * dim;
+    dock.lampGlass.material.emissiveIntensity = 1.9 * dim;
+  }
   glass.emissiveIntensity = (environment?.night ?? 0) * 0.44;
   for (const [i, cloth] of waterfront.laundry.entries()) {
     const gust = (wind?.y ?? 0.6) * 0.19;

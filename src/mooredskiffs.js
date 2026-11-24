@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { buildSkiff } from './npc.js';
+import { createDockShift, stepDockShift } from './skiffdockshift.js';
+import { updateDockActors } from './skiffdockactors.js';
+import { buildDockGear, createCreelFish, setDockCatch } from './skiffdockgear.js';
 import { buildFishingCrew, updateFishingCrew } from './skifffishingcrew.js';
 import { createFishingTrip, stepFishingTrip } from './skifffishingtrip.js';
 import { sampleHullSurface } from './hullsurface.js';
@@ -176,10 +179,6 @@ function dressSkiff(mesh, berth, index) {
     tintGeometry(rubber, cylinder, index === 0 ? 0x9d988c : 0x30353a, (x, y) => y > 0.18 ? 1 : 0.75);
     addBox(hardware, 0x656253, 0.027, 0.23, 0.015, inside * 0.83, 0.455, z);
   }
-  // The painted boat keeps a canvas engine cover and the other carries a small bait box.
-  const box = index === 0 ? [0x7f6c52, 0.83, 0.2, 0.49, 0, 0.55, 0.43] : [0x9aaf9e, 0.56, 0.31, 0.38, 0.14, 0.27, -0.31];
-  addBox(hardware, ...box);
-  for (const x of [-0.15, 0.18]) addBox(hardware, 0xc5bc9f, 0.029, 0.024, box[3] + 0.005, box[4] + x, box[5] + box[2] * 0.5, box[6]);
   mesh.add(waterfrontMesh(hardware, dockMetal), waterfrontMesh(rubber, fenderRubber));
 }
 
@@ -218,6 +217,11 @@ export function buildMooredSkiffs(group) {
     const boat = { berth, mesh, motion, trip, controls, surface: { waterHeight: 0 }, pitch: 0, roll: 0, impactRoll: 0, contactHold: 0, lastWake: 0 };
     trip.mesh = mesh; trip.navigationLights = true; trip.navigationLightLayout = fishingLights; trip.wakeMaxSpeed = 5.5; trip.wakeScale = 0.095;
     boat.crew = buildFishingCrew(boat, index);
+    boat.dockShift = createDockShift(berth, index);
+    boat.dockGear = buildDockGear(boat, index, group);
+    boat.dockGear.sortFish = createCreelFish();
+    boat.dockGear.sortFish.visible = false;
+    group.add(boat.dockGear.sortFish);
     boat.obstacle = { ax: berth.x, az: berth.z, bx: berth.x, bz: berth.z, r: 0.86, tag: 'boat',
       onHit: (speed, nx, nz, player) => {
         const kick = Math.min(1.4, speed * 0.27);
@@ -284,7 +288,9 @@ function updateTrip(boat, boats, dt, wind, wake, ctx, environment) {
   nearby.length = 0;
   for (const neighbor of boats) if (neighbor !== boat) nearby.push(neighbor.trip);
   if (environment?.traffic?.boats) for (const b of environment.traffic.boats) if (b.active) nearby.push(b);
+  controls.crewReady = boat.dockShift.ready;
   stepFishingTrip(trip, dt, controls);
+  stepDockShift(boat.dockShift, trip, dt, controls.daylight);
   trip.active = !trip.secured;
 }
 
@@ -360,7 +366,11 @@ export function updateMooredSkiffs(boats, time, waveAt, ctx, environment) {
     syncHull(boat);
     updateFishingAnchor(boat, dt, ctx);
     updateOutboard(boat, dt, ctx);
-    updateFishingCrew(boat.crew, boat, trip, dt, time, ctx, field);
+    if (!updateDockActors(boat, boat.dockShift, dt, time, ctx)) {
+      updateFishingCrew(boat.crew, boat, trip, dt, time, ctx, field);
+    }
+    const creel = boat.dockShift.gear.cooler;
+    setDockCatch(boat.dockGear, creel.count, creel.open ?? 0, boat.dockShift.landedCount);
     for (const line of boat.lines) {
       line.mesh.visible = trip.secured; line.coil.visible = !trip.secured;
       line.end.copy(line.eye).applyMatrix4(mesh.matrix);

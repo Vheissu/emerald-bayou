@@ -31,7 +31,7 @@ export function createFishingTrip(berth, index) {
     berth, course, length, index, station: { x: end.x, z: end.z },
     x: berth.x, z: berth.z, heading: BOW_OUT, turn: 0, speed: 0, vx: 0, vz: 0, courseSpeed: 0, progress: 0,
     phase: 'berthed', alarm: 0, reaction: '', greeting: 0, greeted: false, outOfEarshot: 0,
-    storm: false, secured: true, reverse: false,
+    storm: false, secured: true, reverse: false, catchCount: 0,
     timer: 15 + 9 * index, clearFor: 0, trips: 0, offset: 0, offsetGoal: 0, scanIn: 0, room: 16,
     point: new Vector3(), tangent: new Vector3(), probe: new Vector3(), probeTangent: new Vector3(),
   };
@@ -255,12 +255,13 @@ export function stepFishingTrip(trip, dt, context = {}) {
   if (trip.phase === 'berthed') {
     const clear = !goHome && daylight > .32 && trip.alarm < .25;
     if (clear) trip.timer -= dt;
-    if (trip.timer > 0 || !clear) return trip;
+    if (trip.timer > 0 || !clear || context.crewReady === false) return trip;
     trip.scanIn -= dt;
     if (trip.scanIn > 0) return trip;
     trip.scanIn = .25;
     if (passingClearance(trip, context, 1, 0) < 4) return trip;
     trip.phase = 'departing';
+    trip.catchCount = 0;
     trip.secured = false;
     trip.scanIn = 0;
   }
