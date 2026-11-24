@@ -605,7 +605,8 @@ export class AirboatPhysics {
     this.dyn = new Map(); // keyed obstacle sets that come and go with the streamed world (docks, logs, other boats)
     this.hitTag = ''; this.hitObj = null;
     this.lastFloat = new THREE.Vector2(x, z);
-    this.loaded = 0; // passenger / cargo mass factor
+    this.loaded = 0; // passenger / mission cargo mass factor
+    this.freightLoad = 0; // fish, ice and trade tote
     this.towDrag = 0; // extra quadratic drag from something on a rope behind the boat
     this.tuning = STOCK_BOAT_TUNING;
     this.powerScale = 1; this.steerScale = 1; this.damageLoad = 0; this.damageList = 0; this.damageTrim = 0; this.damageSink = 0;
@@ -736,7 +737,7 @@ export class AirboatPhysics {
 
     const fwd = this.forward(this._f), rgt = this.right(this._r);
     const tune = this.tuning;
-    const massF = tune.mass + this.loaded * 0.18 + (this.damageLoad || 0), previousGrounded = this.grounded;
+    const massF = tune.mass + (this.loaded + this.freightLoad) * 0.18 + (this.damageLoad || 0), previousGrounded = this.grounded;
     this.hit = 0; this.hitTag = ''; this.hitObj = null; this.bottomStrike = 0;
 
     // ---- support surfaces under the hull ----

@@ -68,6 +68,22 @@ When a squall is due, the fishing crews head for their own piers. They slow in t
 
 [Watch the catch being unloaded](docs/screenshots/landing-catch.webp)
 
+### Catch deliveries
+
+Look for the gold **$** marks at Gulf Cut on the chart. When a crew brings in mullet, idle beside its skiff and press **E** (or **A / Cross** on a controller) to help unload. Stay until the crew packs the last fish to earn $14. That pays for your first mullet, even if you arrived broke.
+
+Press the same button to buy the fish you can afford at $14 each. You can carry up to four. Look beside the driver's seat to see your catch on ice. The chart plots a water route to Tower Dock, and your load stays aboard if you quit along the way.
+
+Slow down by the **FISH BOUGHT** sign at Tower Dock and unload for $44 per fish. That's $30 profit on each mullet. Press the dock interaction again to spend your earnings at the parts counter.
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/35-catch-unloading.jpg" alt="The player's airboat holds a line alongside the crew unloading at Gulf Cut"></td>
+<td width="50%"><img src="docs/screenshots/36-fish-freight.jpg" alt="Three purchased mullet on ice in the cooler beside the driver's seat"></td>
+</tr><tr>
+<td><img src="docs/screenshots/37-catch-route.jpg" alt="The chart plots the delivery from Gulf Cut through the bridge to Tower Dock"></td>
+<td><img src="docs/screenshots/38-fish-buyer.jpg" alt="The Tower Dock buyer weighs a three-mullet delivery after paying $132"></td>
+</tr></table>
+
 ## Races and boat parts
 
 Open **M → Races** to enter the North Reach Sprint, the two-lap Tower Circuit or the solo Red Bend Time Trial. The two head-to-head courses pay for second place as well as first. After a finish, **Return to dock** takes you back to the tower to spend your purse. There’s enough in a $155 second-place sprint finish to fit the $145 deep rudder blades.

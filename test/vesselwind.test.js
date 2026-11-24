@@ -85,3 +85,16 @@ test('calm and invalid wind inputs clear retained outputs safely', () => {
   const load = airboatWindLoad(null, 0, boat(), { ax: 9 });
   assert.deepEqual(load, { ax: 0, az: 0, yaw: 0, heel: 0, apparentSpeed: 0, crosswind: 0 });
 });
+
+test('a purchased fish load changes draft and wind response independently of mission cargo', () => {
+  const terrain = { heightAt: () => -3, gradAt: (x, z, out) => out.set(0, 0) };
+  const full = new AirboatPhysics(terrain, 0, 0, 0), empty = new AirboatPhysics(terrain, 0, 0, 0);
+  full.freightLoad = .126;
+  const input = { throttle: 0, steer: 0, pitch: 0 };
+  for (let i = 0; i < 240; i++) for (const p of [full, empty]) p.update(1/60, input, () => 0, i/60);
+  assert.ok(full.y < empty.y);
+  assert.ok(airboatWindLoad({x: 1, z: 0}, 16, full, {}).ax < airboatWindLoad({x: 1, z: 0}, 16, empty, {}).ax);
+  full.reset(0, 0, 0);
+  assert.equal(full.freightLoad, .126);
+  assert.equal(full.loaded, 0);
+});

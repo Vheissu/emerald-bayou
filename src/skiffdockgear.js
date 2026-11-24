@@ -248,31 +248,38 @@ export function createCreelFish() {
   return carrier;
 }
 
-export function buildDockGear(boat, index, parent) {
+export function buildCatchCooler(index = 0) {
   const geometry = models[index] ??= {
-    cooler: buildCooler(index), tackle: buildPail(index), lid: buildLid(index).rotateY(index === 0 ? Math.PI : 0), ice: buildIce(index),
+    cooler: buildCooler(index), lid: buildLid(index).rotateY(index === 0 ? Math.PI : 0), ice: buildIce(index),
   };
   const cooler = new THREE.Mesh(geometry.cooler, shellFinish);
-  const tackle = new THREE.Mesh(geometry.tackle, shellFinish);
   const lid = new THREE.Mesh(geometry.lid, shellFinish);
   const ice = new THREE.Mesh(geometry.ice, iceFinish);
   cooler.name = 'Insulated catch cooler';
-  tackle.name = 'Bait pail';
   lid.name = 'Cooler lid';
   ice.name = 'Ice bed';
-  // The two benches face opposite ways. Keep the open lid beyond the fish,
-  // leaving both hands a clear path between the ice and the receiving pan.
-  const hingeSide = boat.berth.side;
+  const hingeSide = index === 0 ? 1 : -1;
   lid.position.set(0, 0.238, hingeSide * 0.164);
   ice.receiveShadow = true;
   cooler.add(ice, lid);
   const contents = addFish(cooler, fishPoses);
+  for (const prop of [cooler, lid]) prop.castShadow = prop.receiveShadow = true;
+  return { cooler, lid, hingeSide, contents };
+}
+
+export function buildDockGear(boat, index, parent) {
+  const container = buildCatchCooler(index);
+  const { cooler } = container;
+  const geometry = models[index];
+  geometry.tackle ??= buildPail(index);
+  const tackle = new THREE.Mesh(geometry.tackle, shellFinish);
+  tackle.name = 'Bait pail';
   const { pier, side } = boat.berth;
   cooler.position.set(pier.x + 1.6, pier.deck, pier.z - side * 0.52);
   tackle.position.set(pier.x + 1.7, pier.deck, pier.z + side * 0.52);
-  for (const prop of [cooler, tackle, lid]) prop.castShadow = prop.receiveShadow = true;
+  tackle.castShadow = tackle.receiveShadow = true;
   parent.add(cooler, tackle);
-  return { cooler, tackle, lid, hingeSide, contents, ...makeBench(boat.berth, parent) };
+  return { ...container, tackle, ...makeBench(boat.berth, parent) };
 }
 
 function showFish(mesh, count) {
@@ -280,8 +287,12 @@ function showFish(mesh, count) {
   mesh.visible = mesh.count > 0;
 }
 
-export function setDockCatch(gear, count, open = 0, landedCount = 0) {
+export function setCatchCooler(gear, count, open = 0) {
   showFish(gear.contents, count);
-  showFish(gear.landedFish, landedCount);
   gear.lid.rotation.x = gear.hingeSide * THREE.MathUtils.clamp(open, 0, 1) * 1.64;
+}
+
+export function setDockCatch(gear, count, open = 0, landedCount = 0) {
+  setCatchCooler(gear, count, open);
+  showFish(gear.landedFish, landedCount);
 }

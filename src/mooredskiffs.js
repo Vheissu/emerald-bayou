@@ -246,7 +246,11 @@ export function buildMooredSkiffs(group) {
     anchorMesh.name = 'Fishing skiff anchor rode'; anchorMesh.visible = false;
     boat.anchor = { mesh: anchorMesh, eye: new THREE.Vector3(side * .58, .46, -1.59),
       post: new THREE.Vector3(), end: new THREE.Vector3(), bottom: new THREE.Vector3(), paid: 0, length: 0 };
-    group.add(mesh, anchorMesh);
+    const workRope = lineMesh();
+    workRope.name = 'Unloading line'; workRope.visible = false;
+    boat.workLine = { mesh: workRope, post: new THREE.Vector3(), end: new THREE.Vector3(),
+      eye: new THREE.Vector3(), probe: new THREE.Vector3(), inUse: false, length: 0 };
+    group.add(mesh, anchorMesh, workRope);
     return boat;
   });
 }
@@ -261,6 +265,12 @@ function stepTiedHull(boat, dt, wind, windDir, wake, ctx) {
     const dx = (line.post.x - line.end.x) * tension, dz = (line.post.z - line.end.z) * tension;
     pullX += dx; pullZ += dz;
     torque += (line.end.z - z) * dx - (line.end.x - x) * dz;
+  }
+  if (boat.workLine.inUse) {
+    const {post, end, length} = boat.workLine, span = post.distanceTo(end);
+    const tension = clamp((span - length) * 2.7, 0, 1.8) / Math.max(.1, span);
+    pullX += (end.x - post.x) * tension;
+    pullZ += (end.z - post.z) * tension;
   }
   const kick = clamp((wake - boat.lastWake) / Math.max(0.01, dt), -2, 2);
   const wakeReach = clamp((z - ctx.bz) * 0.08, -1, 1);
@@ -288,9 +298,14 @@ function updateTrip(boat, boats, dt, wind, wake, ctx, environment) {
   nearby.length = 0;
   for (const neighbor of boats) if (neighbor !== boat) nearby.push(neighbor.trip);
   if (environment?.traffic?.boats) for (const b of environment.traffic.boats) if (b.active) nearby.push(b);
-  controls.crewReady = boat.dockShift.ready;
+  const unloadingHelp = ctx.catchHelp?.at.index === trip.index;
+  if (unloadingHelp && trip.secured) trip.timer = Math.max(trip.timer, 8);
+  controls.crewReady = boat.dockShift.ready && !unloadingHelp;
   stepFishingTrip(trip, dt, controls);
-  stepDockShift(boat.dockShift, trip, dt, controls.daylight);
+  // A second boat tending the landing lets the crew work through its catch faster.
+  // Keep boarding and weather routines on their usual clock.
+  const assisting = unloadingHelp && boat.dockShift.sorting;
+  stepDockShift(boat.dockShift, trip, assisting ? dt * 1.35 : dt, controls.daylight);
   trip.active = !trip.secured;
 }
 
@@ -312,6 +327,28 @@ function updateFishingAnchor(boat, dt, ctx) {
   anchor.end.lerpVectors(anchor.post, anchor.bottom, anchor.paid);
   anchor.length = anchor.post.distanceTo(anchor.end) + .09 * anchor.paid;
   bendLine(anchor);
+}
+
+// An extra line from the skiff's outer bow cleat to the nearest cleat on
+// the helper's boat steadies the skiff while the crew works the landing.
+function updateUnloadingLine(boat, ctx) {
+  const line = boat.workLine, player = ctx.playerHull;
+  const helping = ctx.catchHelp?.at.index === boat.trip.index && boat.trip.secured && !!player;
+  line.mesh.visible = helping;
+  if (!helping) { line.inUse = false; return; }
+  boat.mesh.localToWorld(line.post.set(boat.berth.side*.69,.546,-1.38));
+  if (!line.inUse) {
+    let nearest = Infinity;
+    for (const x of [-1.05, 1.05]) for (const z of [-2, 2.2]) {
+      player.localToWorld(line.probe.set(x,.685,z));
+      const gap = line.post.distanceToSquared(line.probe);
+      if (gap < nearest) { nearest = gap; line.eye.set(x,.685,z); }
+    }
+    line.length = Math.sqrt(nearest) + .075;
+    line.inUse = true;
+  }
+  player.localToWorld(line.end.copy(line.eye));
+  bendLine(line);
 }
 
 function updateOutboard(boat, dt, ctx) {
@@ -364,6 +401,7 @@ export function updateMooredSkiffs(boats, time, waveAt, ctx, environment) {
     boat.roll += (boat.surface.waterRoll * .85 + heel + boat.impactRoll + clamp(turn * trip.speed * .025, -.12, .12) - boat.roll) * response;
     if (dt > 0) boat.lastWake = wake;
     syncHull(boat);
+    updateUnloadingLine(boat, ctx);
     updateFishingAnchor(boat, dt, ctx);
     updateOutboard(boat, dt, ctx);
     if (!updateDockActors(boat, boat.dockShift, dt, time, ctx)) {

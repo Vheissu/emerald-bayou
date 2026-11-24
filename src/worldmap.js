@@ -5,6 +5,7 @@ import { MAX_DRAW_PIXELS, pixelRatioFor } from './renderquality.js';
 import { drawRoutePin, minimapTileColumn, minimapTileRow } from './hud.js';
 import { ROUTE_COLOR } from './chartnavigation.js';
 import { bridgeZAt, GULF_CUT, COVE } from './waterfrontlayout.js';
+import { CATCH_SELLERS } from './catchtrade.js';
 
 const MILE = 1609.344;
 const REGION_LABEL_OFFSET = {
@@ -265,6 +266,23 @@ export class WorldMap {
       pick(x, y, berth.x, berth.z, 'Tower dock');
       c.fillStyle = '#e5c063'; c.beginPath(); c.moveTo(x, y - 7 * dpr); c.lineTo(x + 5 * dpr, y + 5 * dpr); c.lineTo(x - 5 * dpr, y + 5 * dpr); c.closePath(); c.fill();
       label(x, y, 'Tower dock', '#e5c063');
+    }
+    if (this.scale > 0.08) {
+      const closeDocks = this.scale > 0.72;
+      // The two piers overlap at overview zoom. One mark opens an approach to
+      // the north pier, and closer zoom shows both independent pickup points.
+      const sellers = closeDocks ? CATCH_SELLERS : [CATCH_SELLERS[0]];
+      for (const seller of sellers) {
+        const [x, y] = toS(seller.x, seller.z);
+        if (x < -70 || y < -35 || x > W + 35 || y > H + 35) continue;
+        pick(x, y, seller.x, seller.z, seller.name);
+        c.beginPath(); c.arc(x, y, 7 * dpr, 0, Math.PI * 2);
+        c.fillStyle = '#e5c063'; c.fill();
+        c.lineWidth = 2 * dpr; c.strokeStyle = 'rgba(8,20,15,0.9)'; c.stroke();
+        c.font = font(11, 800); c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#0b1512';
+        c.fillText('$', x, y + dpr);
+        label(x, y, closeDocks ? seller.name : 'Gulf Cut fish sales', '#e5c063', 12, 9 * dpr);
+      }
     }
     // camps: known ones named, seen ones as marks
     const seen = this.G.save.seen || [], known = this.G.save.camps || [];

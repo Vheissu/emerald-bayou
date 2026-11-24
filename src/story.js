@@ -177,6 +177,13 @@ export class StoryDirector {
   persist() { this.game.save.story = this.state; this.game.persist(); }
   busy() { return ['search', 'choice', 'delivery'].includes(this.state.stage) || Boolean(this.passage?.busy()) || Boolean(this.stormLine?.busy()) || Boolean(this.contracts?.blocking()); }
   blocking() { return this.busy(); }
+  catchTradeBusy() {
+    // Automatic radio leads remain on the chart without claiming dock jobs.
+    const stage = this.state.stage;
+    return this.wantInput || stage === 'choice' || stage === 'delivery'
+      || this.passage?.state?.stage === 'delivery' || this.stormLine?.state?.stage === 'escort'
+      || this.contracts?.blocking();
+  }
   capturesInput(code) { return this.wantInput && (code === 'KeyE' || code === 'KeyF'); }
 
   canInteract() {

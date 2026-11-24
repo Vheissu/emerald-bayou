@@ -13,6 +13,8 @@ import { createParticleLighting, shareSpotlightUniforms, updateParticleLighting 
 import { SceneLightPool } from './scenelightpool.js';
 import { Pipeline } from './post.js';
 import { Minimap } from './hud.js';
+import { buildCatchFreight, updateCatchFreight } from './catchfreight.js';
+import { buildFishReceiver, updateFishReceiver } from './fishreceiving.js';
 import { EngineAudio, selectOutboardSource } from './audio.js';
 import * as TEX from './textures.js';
 import { mulberry32 } from './noise.js';
@@ -290,6 +292,10 @@ async function init() {
   const world = new World(terrain, scene, (x, z, t) => water.waveHeight(x, z, t), veg); world.phys = phys; world.wind = wind;
   world.homeWeather = dock.userData.dockWeather;
   veg.blocked = (x, z) => world.vegetationBlockedAt(x, z);
+  world.context.playerHull = boat.group;
+  const catchFreight = buildCatchFreight(boat.group);
+  const fishReceiver = buildFishReceiver(dock);
+  const freightState = { speed: 0, inspect: false };
   const game = new Game({ phys, T: terrain, scene, audio, tricks, manatees, gators, skiff, boat: boat.group, dockTie, startX, startZ, world });
   game.paused = true; // loading and the title screen are presentation states, not unobserved play time
   const terrainFocus = startupTerrainFocus({
@@ -474,7 +480,7 @@ async function init() {
   const sceneTransforms = new SceneTransformCache(scene);
   let deferredShaderWarmup = { objects: 0, materials: 0, variants: 0, completed: 0, failures: 0, retainedObjects: 0, retainedCompleted: 0, retainedFailures: 0, durationMs: 0 };
   let controller = null, cameraView = BOAT_CAMERA_CHASE, setCameraView = () => false;
-  window.__dbg = { renderer, camera, scene, sceneLightPool, sceneTransforms, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, shorebirds, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
+  window.__dbg = { catchFreight, fishReceiver, renderer, camera, scene, sceneLightPool, sceneTransforms, terrain, phys, water, pipeline, sky, veg, boat, audio, spray, plume, game, tricks, gators, skiff, waders, shorebirds, manatees, dolphins, fishing, anchor, nocturnal, marshFire, world, worldMap, life, birds, environment, environmentReflections, currents, regions, encounters, incidents, story, contracts: story.contracts, aftermath, discoveries, navigationAids, directedNavigationLights, outboardMix, condition, ecology, reputation, law, hazards, radio, startup, modelStats: modelLoadingStats, startupMetrics: () => ({ ...startupTiming, terrainPrime, terrainRetarget, terrainFocus: { ...terrainFocus }, terrainReadiness: { ...terrainReadinessState }, environmentMap: environmentReflections.resourceStats(), deferredShaderWarmup: { ...deferredShaderWarmup } }), debugSceneGraphStats, debugResourceSnapshot, mode: 'full', renderQuality: () => ({
     profile: renderProfile.id, preference: qualityPreference, gpuRenderer, pixelRatio: renderPixelRatio, displayPixelRatio: renderer.getPixelRatio(), displayPixels: renderer.domElement.width * renderer.domElement.height, maxDrawPixels: renderProfile.maxDrawPixels, cinematicMaxDrawPixels: MAX_DRAW_PIXELS,
     hibernated: pageHibernated, adaptive: qualityController.snapshot(), ...pipeline.memoryStats(), reflection: water.memoryStats(), estimatedShadowBytes: sun.shadow.map ? renderProfile.shadowMapSize ** 2 * 4 : 0,
   }), controllerStats: () => controller?.snapshot?.() || { connected: false }, cameraStats: () => ({ mode: cameraView, fov: camera.fov, driverVisible: playerDriver?.visible !== false }) };
@@ -873,6 +879,10 @@ async function init() {
 
     const boatReset = phys.prevFloor === null;
     if (started && !game.paused) {
+      // The fish hold has its own load. Mission cleanup can release a
+      // passenger without lifting a paid consignment out of the hull.
+      const marketLot = game.catchTrade.cargo;
+      phys.freightLoad = marketLot ? .07 + .014 * marketLot.count : 0;
       currents.flowAt(phys.pos.x, phys.pos.y, currentFlow);
       phys.update(dt, input, playerWater, time, currentFlow);
     }
@@ -882,6 +892,11 @@ async function init() {
     phys.forward(fwd2); phys.right(rgt2);
     tricks.update(dt, time);
     game.update(dt, time);
+    const freightDt = started && !game.paused ? dt : 0;
+    freightState.speed = phys.speed;
+    freightState.inspect = !!game.catchTrade.cargo && game.dist(dockTie.x, dockTie.z) < 14;
+    updateCatchFreight(catchFreight, game.catchTrade.cargo, freightDt, freightState);
+    updateFishReceiver(fishReceiver, game.catchTrade, phys, environment, freightDt, time);
     story.update(dt, time, started && !game.paused && !fishing.blocking() && !life.traffic.activeCollision());
     encounters.update(dt, time, started && !fishing.blocking() && !story.blocking() && !aftermath.blocking() && !life.traffic.activeCollision());
     condition.update(dt, time, started);
@@ -1019,6 +1034,7 @@ async function init() {
     manatees.update(dt, time, phys.pos.x, phys.pos.y);
     gators.update(dt, time, phys.pos.x, phys.pos.y, phys.speed, phys.heading, environment.spotOn, environment.night, environment.restrictedVisibility, environment.values.storm, environment.waterLevel);
     waders.update(started && !game.paused ? dt : 0, time, phys.pos.x, phys.pos.y, phys.speed, environment.waterLevel);
+    world.context.catchHelp = game.catchTrade.helping;
     world.update(dt, time, phys.pos.x, phys.pos.y);
     shorebirds.update(started && !game.paused ? dt : 0, time, phys, water.level, world.context, environment);
     // Do not start resident shifts or write their first-seen state while the title card is still open.
@@ -1028,7 +1044,7 @@ async function init() {
     audio.outboard(outboardMix.level, outboardMix.pitch, outboardMix.x, outboardMix.z, outboardMix.id);
     audio.truck(world.truckLevel);
     water.updateMurk(terrain, camera.position);
-    if (started) chartNavigation.update(dt, phys, game.wpTarget, water.level);
+    if (started) chartNavigation.update(dt, phys, game.navigationTarget(), water.level);
     if (worldMap.open && (frameNo++ & 3) === 0) worldMap.render();
     water.update(time);
     water.followCamera(camera.position);

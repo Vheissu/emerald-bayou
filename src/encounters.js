@@ -1792,7 +1792,7 @@ export class EncounterDirector {
 
   point(x, z, label, color) {
     this.game.wpTarget = { x, z, label, color, encounter: true };
-    this.game.el.wp.innerHTML = `${label} <b>${fmtDist(this.game.dist(x, z))}</b>`;
+    if (!this.game.catchRouteTarget?.()) this.game.el.wp.innerHTML = `${label} <b>${fmtDist(this.game.dist(x, z))}</b>`;
   }
 
   known(e, title, line) {
@@ -3216,6 +3216,27 @@ export class EncounterDirector {
   }
 
   callObjective() { return riverCallObjective(this.active); }
+
+  catchTradeBusy() {
+    if (this.law?.pursuit || (this.enabled && this.prompting)) return true;
+    const encounter = this.active;
+    if (!encounter) return false;
+    const { type, state } = encounter;
+    switch (type) {
+      case 'patrol': return state === 'check' || state === 'pursuit' || (state === 'approach' && encounter.wanted && encounter.known);
+      case 'distress': return state === 'aboard' || state === 'repair';
+      case 'airrescue': return encounter.marked;
+      case 'grounding': return state === 'tow';
+      case 'fire': return encounter.aboard || encounter.suppressing;
+      case 'wrangler': return state === 'helping';
+      case 'manatee': return state === 'cutting' || state === 'reported' || state === 'rescue';
+      case 'spotlight': return state === 'reported';
+      case 'race': return state === 'countdown' || state === 'running';
+      case 'smuggler': return state === 'chase';
+      case 'netline': return state === 'reported' || state === 'tipped' || state === 'recovering';
+      default: return isRiverCall(type) && state !== 'offer';
+    }
+  }
 
   canInteract() { return !this.game.dockCamp && !this.game.dockJob && !this.game.atBoard; }
 

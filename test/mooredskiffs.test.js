@@ -80,3 +80,25 @@ test('a crew leaves its lines on the pier, fishes at anchor and ties up again in
   assert.equal(boat.crew.line.visible, false);
   assert.equal(boat.trip.active, false);
 });
+
+test('helping unload secures a line to the nearest player cleat and holds the berth', () => {
+  const group = new THREE.Group(), boats = buildMooredSkiffs(group);
+  const [boat] = boats, playerHull = new THREE.Group();
+  playerHull.position.set(boat.berth.x + 8, .2, boat.berth.z + 1);
+  playerHull.rotation.y = -.45;
+  const ctx = { bx: playerHull.position.x, bz: playerHull.position.z, residentDt: .05,
+    catchHelp: {at: {index: 0}}, playerHull };
+  boat.trip.timer = 0;
+  updateMooredSkiffs(boats, 1, () => 0, ctx);
+  assert.ok(boat.trip.secured && boat.trip.timer > 7);
+  assert.ok(boat.workLine.mesh.visible && !boats[1].workLine.mesh.visible);
+  const local = playerHull.worldToLocal(boat.workLine.end.clone());
+  assert.ok(Math.abs(Math.abs(local.x) - 1.05) < 1e-8);
+  const cleat = boat.workLine.eye.clone();
+  playerHull.position.z += .17;
+  updateMooredSkiffs(boats, 1.05, () => 0, ctx);
+  assert.ok(boat.workLine.end.distanceTo(playerHull.localToWorld(cleat)) < 1e-8);
+  ctx.catchHelp = null;
+  updateMooredSkiffs(boats, 1.1, () => 0, ctx);
+  assert.equal(boat.workLine.mesh.visible, false);
+});

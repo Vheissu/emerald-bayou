@@ -41,7 +41,7 @@ export function airboatWindLoad(windDirection, windSpeed = 0, boat, out = {}) {
   const airCoefficient = projectedCoefficient(airX, airZ, lateralX, lateralZ);
   const calmCoefficient = projectedCoefficient(calmX, calmZ, lateralX, lateralZ);
   const wet = clamp(finite(boat.wet), 0, 1), exposure = 0.58 + (1 - wet) * 0.42;
-  const mass = clamp(1 + Math.max(0, finite(boat.loaded)) * 0.18 + Math.max(0, finite(boat.damageLoad)), 0.55, 3);
+  const mass = clamp(1 + Math.max(0, finite(boat.loaded) + finite(boat.freightLoad)) * 0.18 + Math.max(0, finite(boat.damageLoad)), 0.55, 3);
   const scale = exposure / mass;
 
   out.ax = (airX * airSpeed * airCoefficient - calmX * calmSpeed * calmCoefficient) * scale;
